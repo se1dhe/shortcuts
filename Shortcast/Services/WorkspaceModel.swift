@@ -179,6 +179,7 @@ final class WorkspaceModel {
 
         // Delete any leftover from the previous run.
         cleanUpTempInput()
+        cleanUpOrphanedInputFiles(settings: settings)
 
         // Copy the input file into the working directory so every downstream
         // consumer (AVAsset, Gemma4VideoProcessor, etc.) has unrestricted file-
@@ -835,6 +836,20 @@ final class WorkspaceModel {
             try? FileManager.default.removeItem(at: url)
         }
         tempInputURLs.removeAll()
+    }
+
+    func cleanUpOrphanedInputFiles(settings: AppSettings) {
+        guard let workDir = settings.workingDirectory else { return }
+        let inputDir = workDir.appendingPathComponent("input", isDirectory: true)
+        let didAccess = workDir.startAccessingSecurityScopedResource()
+        defer { if didAccess { workDir.stopAccessingSecurityScopedResource() } }
+
+        guard let contents = try? FileManager.default.contentsOfDirectory(at: inputDir, includingPropertiesForKeys: nil) else { return }
+        for url in contents {
+            if !tempInputURLs.contains(url) {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
     }
 
     // MARK: - Publishing (single-video flow)

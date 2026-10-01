@@ -32,6 +32,7 @@ struct ShortcastApp: App {
                 .environment(languageManager)
                 .environment(movieShorts)
                 .task {
+                    workspace.cleanUpOrphanedInputFiles(settings: settings)
                     await FontDownloadService.shared.ensureFontsInstalled()
                     await modelManager.prepareIfNeeded()
                 }

@@ -46,14 +46,20 @@ enum JSONVariantParser {
         return nil
     }
 
-    /// Fixes the two glitches that break otherwise-good model JSON: a property
-    /// name that dropped its opening quote (`  foo": …` → `  "foo": …`, a token
-    /// the model sometimes mis-samples) and trailing commas before `}`/`]`.
+    /// Fixes glitches that break otherwise-good model JSON:
+    /// - Key missing its opening quote (`  foo": …` → `  "foo": …`)
+    /// - Duplicate commas inside lists/objects (`,,` or `, ,` → `,`)
+    /// - Leading commas after opening brackets (`[,` or `{,` → `[` or `{`)
+    /// - Trailing commas before closing braces/brackets (`,}` or `,]` → `}` or `]`)
     static func repairDrift(_ json: String) -> String {
         var s = json
         // Key missing its opening quote (after `{`, `,` or a newline).
         s = regexReplace(s, #"([\n\r{,]\s*)([A-Za-z_][A-Za-z0-9_]*)("\s*:)"#, with: "$1\"$2$3")
-        // Trailing comma before a closing brace/bracket.
+        // Duplicate commas inside lists or objects: `,,` or `, ,` -> `,`
+        s = regexReplace(s, #",(?:\s*,)+"#, with: ",")
+        // Leading comma after an opening bracket/brace: `[,` or `{,` -> `[` or `{`
+        s = regexReplace(s, #"(\[|\{)\s*,"#, with: "$1")
+        // Trailing comma before a closing brace/bracket: `,]` or `,}` -> `]` or `}`
         s = regexReplace(s, #",(\s*[}\]])"#, with: "$1")
         return s
     }

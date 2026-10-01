@@ -10,8 +10,8 @@ public enum CinemaAudioMasteringService {
     /// Target integrated loudness (-14.0 LUFS) conforming to modern mobile social networks (Reels, TikTok, Shorts).
     public static let targetLUFS: Double = -14.0
 
-    /// Maximum true peak level (-1.0 dBTP) to avoid inter-sample clipping on mobile DACs and lossy audio codecs (AAC/Opus).
-    public static let targetTruePeak: Double = -1.0
+    /// Maximum true peak level (-1.5 dBTP) to avoid inter-sample clipping on mobile DACs and lossy audio codecs (AAC/Opus).
+    public static let targetTruePeak: Double = -1.5
 
     /// Loudness range target (7.0 LRA) optimized for dialog clarity and punch on small smartphone speakers.
     public static let targetLRA: Double = 7.0
@@ -38,8 +38,8 @@ public enum CinemaAudioMasteringService {
         /// Optional background music track URL.
         public var musicURL: URL?
 
-        /// Dialogue volume boost in dB (default: +2.5 dB for clean, natural dialogue elevation without 0 dBFS digital clipping).
-        public var dialogueBoostDB: Float = 2.5
+        /// Dialogue volume boost in dB (default: +2.0 dB for clean, natural dialogue elevation without 0 dBFS digital clipping).
+        public var dialogueBoostDB: Float = 2.0
 
         /// Music volume during dialogue (-14.0 dB for clear vocal intelligibility).
         public var musicDuckingDB: Float = -14.0
@@ -70,7 +70,7 @@ public enum CinemaAudioMasteringService {
 
         public init(
             musicURL: URL? = nil,
-            dialogueBoostDB: Float = 10.5,
+            dialogueBoostDB: Float = 2.0,
             musicDuckingDB: Float = -14.0,
             musicRestingDB: Float = -6.0,
             duckingAttackDuration: Double = 0.10,
@@ -170,32 +170,14 @@ public enum CinemaAudioMasteringService {
         // 1. Dialogue track with boost for clarity on smartphone speakers (-14 LUFS mobile standard)
         let dialogueParams = AVMutableAudioMixInputParameters(track: compAudioTrack)
         let dialogueBoostLinear = Float(pow(10.0, Double(config.dialogueBoostDB) / 20.0))
-        let fadeSec = 0.18
 
-        if duration.seconds > fadeSec {
-            let fadeStartTime = CMTime(seconds: duration.seconds - fadeSec, preferredTimescale: 600)
-            // Ramp 1: Sustained boosted volume until fade start (strictly non-overlapping)
-            let bodyRange = CMTimeRange(start: .zero, duration: fadeStartTime)
-            dialogueParams.setVolumeRamp(
-                fromStartVolume: dialogueBoostLinear,
-                toEndVolume: dialogueBoostLinear,
-                timeRange: bodyRange
-            )
-            // Ramp 2: Smooth fade-out to zero at the tail (starts exactly where Ramp 1 ends)
-            let tailDuration = CMTime(seconds: fadeSec, preferredTimescale: 600)
-            let tailRange = CMTimeRange(start: fadeStartTime, duration: tailDuration)
-            dialogueParams.setVolumeRamp(
-                fromStartVolume: dialogueBoostLinear,
-                toEndVolume: 0.0,
-                timeRange: tailRange
-            )
-        } else {
-            dialogueParams.setVolumeRamp(
-                fromStartVolume: dialogueBoostLinear,
-                toEndVolume: dialogueBoostLinear,
-                timeRange: timeRange
-            )
-        }
+        applyDialogueVolumeRamps(
+            to: dialogueParams,
+            duration: duration,
+            boostLinear: dialogueBoostLinear,
+            fadeInDuration: 0.05,
+            fadeOutDuration: 0.18
+        )
         inputParameters.append(dialogueParams)
 
         // 2. Background music track with sidechain ducking (-14dB during speech, smooth rise in pauses)
@@ -324,6 +306,66 @@ public enum CinemaAudioMasteringService {
             }
         }
         return merged
+    }
+
+    /// Schedules smooth fade-in (e.g. 0.05s), sustained boosted dialogue body, and fade-out (e.g. 0.18s)
+    /// to eliminate audio DC offset clicks and harsh transitions at clip boundaries.
+    static func applyDialogueVolumeRamps(
+        to dialogueParams: AVMutableAudioMixInputParameters,
+        duration: CMTime,
+        boostLinear: Float,
+        fadeInDuration: Double = 0.05,
+        fadeOutDuration: Double = 0.18
+    ) {
+        let totalSec = duration.seconds
+        guard totalSec > 0 else {
+            dialogueParams.setVolume(boostLinear, at: .zero)
+            return
+        }
+
+        if totalSec > (fadeInDuration + fadeOutDuration) {
+            let fadeInTime = CMTime(seconds: fadeInDuration, preferredTimescale: 600)
+            let fadeOutStartTime = CMTime(seconds: totalSec - fadeOutDuration, preferredTimescale: 600)
+            let fadeOutDurationTime = CMTime(seconds: fadeOutDuration, preferredTimescale: 600)
+            let bodyDurationTime = CMTime(seconds: totalSec - fadeInDuration - fadeOutDuration, preferredTimescale: 600)
+
+            // Ramp 1: Smooth fade-in from 0 to boosted dialogue level to avoid onset pops/clicks
+            dialogueParams.setVolumeRamp(
+                fromStartVolume: 0.0,
+                toEndVolume: boostLinear,
+                timeRange: CMTimeRange(start: .zero, duration: fadeInTime)
+            )
+
+            // Ramp 2: Sustained boosted dialogue level across clip body
+            dialogueParams.setVolumeRamp(
+                fromStartVolume: boostLinear,
+                toEndVolume: boostLinear,
+                timeRange: CMTimeRange(start: fadeInTime, duration: bodyDurationTime)
+            )
+
+            // Ramp 3: Smooth fade-out to zero at clip tail to avoid abrupt cutoff clicks
+            dialogueParams.setVolumeRamp(
+                fromStartVolume: boostLinear,
+                toEndVolume: 0.0,
+                timeRange: CMTimeRange(start: fadeOutStartTime, duration: fadeOutDurationTime)
+            )
+        } else {
+            // Ultra-short clips: split evenly between fade-in and fade-out
+            let midSec = totalSec / 2.0
+            let midTime = CMTime(seconds: midSec, preferredTimescale: 600)
+            let remainingTime = CMTime(seconds: totalSec - midSec, preferredTimescale: 600)
+
+            dialogueParams.setVolumeRamp(
+                fromStartVolume: 0.0,
+                toEndVolume: boostLinear,
+                timeRange: CMTimeRange(start: .zero, duration: midTime)
+            )
+            dialogueParams.setVolumeRamp(
+                fromStartVolume: boostLinear,
+                toEndVolume: 0.0,
+                timeRange: CMTimeRange(start: midTime, duration: remainingTime)
+            )
+        }
     }
 
     /// Schedules precise, non-overlapping volume ramps for background music sidechain ducking.

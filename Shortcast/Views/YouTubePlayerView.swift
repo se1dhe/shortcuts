@@ -41,7 +41,11 @@ struct YouTubePlayerView: View {
         }
         .frame(width: 640, height: 480)
         .task { await loadStream() }
-        .onDisappear { player?.pause() }
+        .onDisappear {
+            player?.pause()
+            player?.replaceCurrentItem(with: nil)
+            player = nil
+        }
     }
 
     private func loadStream() async {
@@ -69,4 +73,8 @@ private struct PlayerContainerView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: AVPlayerView, context: Context) {}
+
+    static func dismantleNSView(_ nsView: AVPlayerView, coordinator: ()) {
+        nsView.player = nil
+    }
 }

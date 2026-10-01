@@ -390,39 +390,47 @@ enum SubtitleRenderer {
         instruction.layerInstructions = [layerInstruction]
         videoComposition.instructions = [instruction]
 
-        let parentLayer = CALayer()
-                parentLayer.frame = CGRect(origin: .zero, size: CGSize(width: renderW, height: renderH))
-
-        let videoLayer = CALayer()
-        videoLayer.frame = parentLayer.frame
-        parentLayer.addSublayer(videoLayer)
-
         let subtitleContainer = await makeSubtitleLayer(
             asset: asset,
             segments: segments, appearance: appearance,
             videoSize: CGSize(width: renderW, height: renderH),
             totalDuration: CMTimeGetSeconds(duration))
-        parentLayer.addSublayer(subtitleContainer)
 
-        if let watermarkText, !watermarkText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            WatermarkRenderer.addWatermark(
-                to: parentLayer,
-                text: watermarkText,
-                appearance: watermarkAppearance,
-                renderSize: CGSize(width: renderW, height: renderH),
-                totalDuration: CMTimeGetSeconds(duration))
-        }
-        if let promoCode, PromoOverlayConfig(promoCode: promoCode).isValid {
-            PromoOverlayRenderer.addBanner(
-                to: parentLayer,
-                promoCode: promoCode,
-                renderSize: CGSize(width: renderW, height: renderH),
-                total: CMTimeGetSeconds(duration),
-                holdSeconds: promoHoldSeconds)
-        }
+        let parentLayer = CALayer()
+        let videoLayer = CALayer()
 
-        videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
-            postProcessingAsVideoLayer: videoLayer, in: parentLayer)
+        do {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            defer { CATransaction.commit() }
+
+            parentLayer.frame = CGRect(origin: .zero, size: CGSize(width: renderW, height: renderH))
+
+            videoLayer.frame = parentLayer.frame
+            parentLayer.addSublayer(videoLayer)
+
+            parentLayer.addSublayer(subtitleContainer)
+
+            if let watermarkText, !watermarkText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                WatermarkRenderer.addWatermark(
+                    to: parentLayer,
+                    text: watermarkText,
+                    appearance: watermarkAppearance,
+                    renderSize: CGSize(width: renderW, height: renderH),
+                    totalDuration: CMTimeGetSeconds(duration))
+            }
+            if let promoCode, PromoOverlayConfig(promoCode: promoCode).isValid {
+                PromoOverlayRenderer.addBanner(
+                    to: parentLayer,
+                    promoCode: promoCode,
+                    renderSize: CGSize(width: renderW, height: renderH),
+                    total: CMTimeGetSeconds(duration),
+                    holdSeconds: promoHoldSeconds)
+            }
+
+            videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
+                postProcessingAsVideoLayer: videoLayer, in: parentLayer)
+        }
 
         try await export(composition, videoComposition: videoComposition, to: outputURL)
     }
@@ -789,14 +797,15 @@ enum SubtitleRenderer {
         videoSize: CGSize,
         totalDuration: Double
     ) async -> CALayer {
-        let container = CALayer()
-        container.frame = CGRect(origin: .zero, size: videoSize)
-        container.backgroundColor = CGColor(gray: 0, alpha: 0)
-        
         let W = videoSize.width
         let H = videoSize.height
         var snaps = buildKineticSnaps(segments: segments, maxWords: appearance.normalized.maxWordsPerCaption)
-        guard !snaps.isEmpty else { return container }
+        guard !snaps.isEmpty else {
+            let emptyContainer = CALayer()
+            emptyContainer.frame = CGRect(origin: .zero, size: videoSize)
+            emptyContainer.backgroundColor = CGColor(gray: 0, alpha: 0)
+            return emptyContainer
+        }
         
         // Phase 3 & 4: Per-Shot Dynamic Face Detection with Temporal Hysteresis
         if let asset {
@@ -834,6 +843,14 @@ enum SubtitleRenderer {
             }
         }
         
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+
+        let container = CALayer()
+        container.frame = CGRect(origin: .zero, size: videoSize)
+        container.backgroundColor = CGColor(gray: 0, alpha: 0)
+
         let baseFontSize = W * appearance.normalized.fontSizeScale
         let usableW = min(W - 80.0, SubtitleLayoutEngine.defaultSafeWidth)
         
@@ -981,6 +998,10 @@ enum SubtitleRenderer {
         totalDuration: Double,
         karaokeWord: String? = nil
     ) -> CALayer {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+
         let appearance = rawAppearance.normalized
         let w = videoSize.width
         let h = videoSize.height

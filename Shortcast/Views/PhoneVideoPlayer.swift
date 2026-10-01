@@ -39,6 +39,9 @@ struct PhoneVideoPlayer: NSViewRepresentable {
     static func dismantleNSView(_ nsView: AVPlayerView, coordinator: Coordinator) {
         coordinator.player?.pause()
         coordinator.looper?.disableLooping()
+        coordinator.player?.removeAllItems()
+        coordinator.player?.replaceCurrentItem(with: nil)
+        coordinator.player = nil
         nsView.player = nil
     }
 

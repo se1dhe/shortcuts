@@ -101,18 +101,24 @@ enum WatermarkRenderer {
         instruction.layerInstructions = [layerInstruction]
         videoComposition.instructions = [instruction]
 
-        let parentLayer = CALayer()
-        let videoLayer = CALayer()
-        parentLayer.frame = CGRect(origin: .zero, size: renderSize)
-        videoLayer.frame = parentLayer.frame
-        parentLayer.addSublayer(videoLayer)
+        do {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            defer { CATransaction.commit() }
 
-        addWatermark(
-            to: parentLayer, text: text, appearance: appearance,
-            renderSize: renderSize, totalDuration: total)
+            let parentLayer = CALayer()
+            let videoLayer = CALayer()
+            parentLayer.frame = CGRect(origin: .zero, size: renderSize)
+            videoLayer.frame = parentLayer.frame
+            parentLayer.addSublayer(videoLayer)
 
-        videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
-            postProcessingAsVideoLayer: videoLayer, in: parentLayer)
+            addWatermark(
+                to: parentLayer, text: text, appearance: appearance,
+                renderSize: renderSize, totalDuration: total)
+
+            videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
+                postProcessingAsVideoLayer: videoLayer, in: parentLayer)
+        }
 
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("shortcast-wm-\(UUID().uuidString).mp4")
@@ -131,6 +137,10 @@ enum WatermarkRenderer {
         renderSize: CGSize,
         totalDuration: Double
     ) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+
         let watermark = makeLayers(text: text, appearance: appearance, renderSize: renderSize)
 
         switch appearance.animation {

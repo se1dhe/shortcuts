@@ -318,6 +318,8 @@ struct ClipPlayerSheet: View {
         .task { await load() }
         .onDisappear {
             player?.pause()
+            player?.replaceCurrentItem(with: nil)
+            player = nil
             if let temporaryURL {
                 try? FileManager.default.removeItem(at: temporaryURL)
             }

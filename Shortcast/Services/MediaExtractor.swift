@@ -104,11 +104,11 @@ enum MediaExtractor {
         ]
 
         do {
-            try await ProcessRunner.shared.run(executableURL: ffmpeg, arguments: hardwareArguments)
+            _ = try await ProcessRunner.shared.run(executableURL: ffmpeg, arguments: hardwareArguments)
         } catch {
             try? FileManager.default.removeItem(at: outputURL)
             do {
-                try await ProcessRunner.shared.run(executableURL: ffmpeg, arguments: softwareArguments)
+                _ = try await ProcessRunner.shared.run(executableURL: ffmpeg, arguments: softwareArguments)
             } catch {
                 try? FileManager.default.removeItem(at: outputURL)
                 throw MediaExtractorError.inputConversionFailed(shortError(error))

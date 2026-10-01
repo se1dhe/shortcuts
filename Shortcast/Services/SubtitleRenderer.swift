@@ -641,11 +641,10 @@ enum SubtitleRenderer {
                 .traits: [NSFontDescriptor.TraitKey.weight: NSFont.Weight.bold.rawValue]
             ])
             let matched = descriptor.matchingFontDescriptor(withMandatoryKeys: [.family])
-            if let matched = matched {
-                let font = NSFont(descriptor: matched, size: size)
-                if font != nil {
+            if let matched {
+                if let font = NSFont(descriptor: matched, size: size) {
                     // Apply bold weight via font manager for variable fonts
-                    let boldFont = NSFontManager.shared.convert(font!, toHaveTrait: .boldFontMask)
+                    let boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
                     return boldFont
                 }
             }

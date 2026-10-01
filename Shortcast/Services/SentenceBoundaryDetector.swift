@@ -152,6 +152,67 @@ public struct SentenceBoundaryDetector: SentenceBoundaryDetecting {
 
     public func snapToSentenceStart(timestamp: Double, in segments: [TranscriptSegment]) -> Double {
         let sentences = detectSentences(in: segments)
+        return snapToSentenceStart(timestamp: timestamp, sentences: sentences)
+    }
+
+    public func snapToSentenceEnd(timestamp: Double, maxAllowedDuration: Double, in segments: [TranscriptSegment]) -> Double {
+        let sentences = detectSentences(in: segments)
+        return snapToSentenceEnd(timestamp: timestamp, maxAllowedDuration: maxAllowedDuration, sentences: sentences)
+    }
+
+    public func findPreviousSentenceEnd(before: Double, in segments: [TranscriptSegment]) -> Double? {
+        let sentences = detectSentences(in: segments)
+        return findPreviousSentenceEnd(before: before, sentences: sentences)
+    }
+
+    public func refineSceneBoundary(
+        range: TimeSegment,
+        maxAllowedDuration: Double,
+        in segments: [TranscriptSegment]
+    ) -> TimeSegment {
+        let maxLimit = maxAllowedDuration > 0 ? maxAllowedDuration : maxShortsDuration
+        let sentences = detectSentences(in: segments)
+        let refinedStart = snapToSentenceStart(timestamp: range.start, sentences: sentences)
+        var refinedEnd = snapToSentenceEnd(timestamp: range.end, maxAllowedDuration: maxLimit, sentences: sentences)
+
+        // Invariant guard: ensure refinedEnd is strictly after refinedStart
+        if refinedEnd <= refinedStart {
+            refinedEnd = max(range.end, refinedStart + minSegmentDuration)
+        }
+
+        // If refined range exceeds maxLimit, search backwards for the previous complete sentence ending
+        if (refinedEnd - refinedStart) > maxLimit {
+            let maxCutPoint = refinedStart + maxLimit
+            if let safeEnd = findPreviousSentenceEnd(before: maxCutPoint, sentences: sentences), safeEnd > refinedStart {
+                refinedEnd = safeEnd
+            } else {
+                // Fallback: clamp without exceeding maxLimit
+                refinedEnd = min(refinedEnd, refinedStart + maxLimit)
+            }
+        }
+
+        // Ensure minimum duration threshold if candidate dialogue allows
+        if (refinedEnd - refinedStart) < minSegmentDuration {
+            // Look for a sentence ending that reaches at least minSegmentDuration while staying within maxLimit
+            if let extendedSentence = sentences.first(where: {
+                let candidateEnd = $0.end + tailPadding
+                return (candidateEnd - refinedStart) >= minSegmentDuration && (candidateEnd - refinedStart) <= maxLimit
+            }) {
+                refinedEnd = extendedSentence.end + tailPadding
+            }
+        }
+
+        // Final invariant guard
+        if refinedEnd <= refinedStart {
+            refinedEnd = max(range.end, refinedStart + minSegmentDuration)
+        }
+
+        return TimeSegment(start: refinedStart, end: refinedEnd)
+    }
+
+    // MARK: - Internal Precomputed Helpers
+
+    func snapToSentenceStart(timestamp: Double, sentences: [DetectedSentence]) -> Double {
         guard !sentences.isEmpty else {
             return max(0.0, timestamp - headPadding)
         }
@@ -182,8 +243,7 @@ public struct SentenceBoundaryDetector: SentenceBoundaryDetecting {
         return max(0.0, timestamp - headPadding)
     }
 
-    public func snapToSentenceEnd(timestamp: Double, maxAllowedDuration: Double, in segments: [TranscriptSegment]) -> Double {
-        let sentences = detectSentences(in: segments)
+    func snapToSentenceEnd(timestamp: Double, maxAllowedDuration: Double, sentences: [DetectedSentence]) -> Double {
         guard !sentences.isEmpty else {
             return timestamp + tailPadding
         }
@@ -193,7 +253,17 @@ public struct SentenceBoundaryDetector: SentenceBoundaryDetecting {
             return enclosing.end + tailPadding
         }
 
-        // 2. Closest sentence by end timestamp
+        // 2. If timestamp is before all sentences: keep timestamp plus tailPadding
+        if let first = sentences.first, timestamp < first.start {
+            return timestamp + tailPadding
+        }
+
+        // 3. If timestamp is after all sentences: keep timestamp plus tailPadding (avoid jumping back to earlier dialogue)
+        if let last = sentences.last, timestamp > last.end {
+            return timestamp + tailPadding
+        }
+
+        // 4. In a pause between sentences: find closest sentence by end timestamp
         let closest = sentences.min(by: {
             abs(timestamp - $0.end) < abs(timestamp - $1.end)
         })
@@ -204,47 +274,11 @@ public struct SentenceBoundaryDetector: SentenceBoundaryDetecting {
         return timestamp + tailPadding
     }
 
-    public func findPreviousSentenceEnd(before: Double, in segments: [TranscriptSegment]) -> Double? {
-        let sentences = detectSentences(in: segments)
+    func findPreviousSentenceEnd(before: Double, sentences: [DetectedSentence]) -> Double? {
         let candidates = sentences.compactMap { s -> Double? in
             let endWithPadding = s.end + tailPadding
             return endWithPadding <= (before + 0.001) ? endWithPadding : nil
         }
         return candidates.max()
-    }
-
-    public func refineSceneBoundary(
-        range: TimeSegment,
-        maxAllowedDuration: Double,
-        in segments: [TranscriptSegment]
-    ) -> TimeSegment {
-        let maxLimit = maxAllowedDuration > 0 ? maxAllowedDuration : maxShortsDuration
-        let refinedStart = snapToSentenceStart(timestamp: range.start, in: segments)
-        var refinedEnd = snapToSentenceEnd(timestamp: range.end, maxAllowedDuration: maxLimit, in: segments)
-
-        // If refined range exceeds maxLimit, search backwards for the previous complete sentence ending
-        if (refinedEnd - refinedStart) > maxLimit {
-            let maxCutPoint = refinedStart + maxLimit
-            if let safeEnd = findPreviousSentenceEnd(before: maxCutPoint, in: segments), safeEnd > refinedStart {
-                refinedEnd = safeEnd
-            } else {
-                // Fallback: clamp without exceeding maxLimit
-                refinedEnd = min(refinedEnd, refinedStart + maxLimit)
-            }
-        }
-
-        // Ensure minimum duration threshold if candidate dialogue allows
-        if (refinedEnd - refinedStart) < minSegmentDuration {
-            let sentences = detectSentences(in: segments)
-            // Look for a sentence ending that reaches at least minSegmentDuration while staying within maxLimit
-            if let extendedSentence = sentences.first(where: {
-                let candidateEnd = $0.end + tailPadding
-                return (candidateEnd - refinedStart) >= minSegmentDuration && (candidateEnd - refinedStart) <= maxLimit
-            }) {
-                refinedEnd = extendedSentence.end + tailPadding
-            }
-        }
-
-        return TimeSegment(start: refinedStart, end: refinedEnd)
     }
 }

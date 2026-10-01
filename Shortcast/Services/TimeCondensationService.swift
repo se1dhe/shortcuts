@@ -4,6 +4,11 @@ import AVFoundation
 struct CondensedSegment: Sendable {
     let timeRange: CMTimeRange
     let needsCrossfade: Bool
+
+    init(timeRange: CMTimeRange, needsCrossfade: Bool) {
+        self.timeRange = timeRange
+        self.needsCrossfade = needsCrossfade
+    }
 }
 
 /// Service responsible for conversational pacing and silence condensation in viral shorts.
@@ -23,36 +28,41 @@ struct TimeCondensationService: Sendable {
         
         var currentStart = segments[0].start
         var currentEnd = segments[0].end
-        let totalDuration = segments.last?.end ?? 0.0
+        let clipStart = segments.first?.start ?? 0.0
+        let clipEnd = segments.last?.end ?? clipStart
+        let totalDuration = max(clipEnd - clipStart, 0.01)
         
         for i in 1..<segments.count {
             let nextSegment = segments[i]
             let gap = nextSegment.start - currentEnd
             
             // Linear acceleration towards the end (up to 50% faster pacing in the punchline act)
-            let progress = totalDuration > 0 ? min(max(0.0, currentEnd / totalDuration), 1.0) : 0.0
+            let progress = min(max(0.0, (currentEnd - clipStart) / totalDuration), 1.0)
             let adjustedMaxPause = maxPause * (1.0 - (progress * 0.5))
             
-            if gap > adjustedMaxPause {
-                // Gap is too large: commit current range with subtle natural padding
-                let expandedEnd = currentEnd + (adjustedMaxPause / 2.0)
+            // Natural conversational pauses in dialogue (< 1.4s) must NEVER be cut!
+            let minPauseThreshold = max(1.4, adjustedMaxPause)
+            
+            if gap > minPauseThreshold {
+                // Gap is too large (dead air > 1.4s): commit current range with 0.30s room tone padding
+                let expandedEnd = currentEnd + 0.30
                 let safeEnd = max(currentStart + 0.05, expandedEnd)
                 rangesToKeep.append(CMTimeRange(
                     start: CMTime(seconds: currentStart, preferredTimescale: 600),
                     duration: CMTime(seconds: safeEnd - currentStart, preferredTimescale: 600)
                 ))
                 
-                // Start next range
-                currentStart = max(currentStart, nextSegment.start - (adjustedMaxPause / 2.0))
+                // Start next range with 0.20s room tone padding before speech
+                currentStart = max(safeEnd, nextSegment.start - 0.20)
                 currentEnd = max(currentStart + 0.05, nextSegment.end)
             } else {
-                // Merge into current range, handling potential overlapping transcripts
+                // Natural dialogue pause (<= 1.4s): merge into current range
                 currentEnd = max(currentEnd, nextSegment.end)
             }
         }
         
-        // Append the final range
-        let finalEnd = max(currentStart + 0.05, currentEnd + 0.1)
+        // Append the final range with 0.45s tail padding to prevent cutting decaying consonants
+        let finalEnd = max(currentStart + 0.05, currentEnd + 0.45)
         rangesToKeep.append(CMTimeRange(
             start: CMTime(seconds: currentStart, preferredTimescale: 600),
             duration: CMTime(seconds: finalEnd - currentStart, preferredTimescale: 600)

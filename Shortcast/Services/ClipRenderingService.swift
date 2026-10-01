@@ -11,7 +11,8 @@ struct ClipRenderingService {
         captionLanguage: String?,
         modelManager: ModelManager,
         settings: AppSettings,
-        transcription: TranscriptionService
+        transcription: TranscriptionService,
+        boundaryDetector: SentenceBoundaryDetecting = SentenceBoundaryDetector()
     ) async throws {
         FontDownloadService.shared.registerBundledFonts()
         clip.stage = .cutting
@@ -79,7 +80,30 @@ struct ClipRenderingService {
         
         let mood = clip.candidate.mood ?? .default
         let rawRanges: [CMTimeRange]
-        if speechTuples.count > 1 {
+        if clipRanges.count == 1, let singleRange = clipRanges.first {
+            // For continuous scenes (clipRanges.count == 1):
+            // Treat the candidate scene as a continuous shot unless there are extreme silence pauses (> 2.5s)
+            let hasExtremePause = (1..<speechTuples.count).contains { i in
+                (speechTuples[i].start - speechTuples[i - 1].end) > 2.5
+            }
+            if !hasExtremePause {
+                let start = max(0, singleRange.start)
+                let duration = max(0.01, singleRange.end - start)
+                rawRanges = [CMTimeRange(
+                    start: CMTime(seconds: start, preferredTimescale: 600),
+                    duration: CMTime(seconds: duration, preferredTimescale: 600)
+                )]
+            } else if speechTuples.count > 1 {
+                rawRanges = TimeCondensationService.condenseTime(segments: speechTuples, mood: mood)
+            } else {
+                let start = max(0, singleRange.start)
+                let duration = max(0.01, singleRange.end - start)
+                rawRanges = [CMTimeRange(
+                    start: CMTime(seconds: start, preferredTimescale: 600),
+                    duration: CMTime(seconds: duration, preferredTimescale: 600)
+                )]
+            }
+        } else if speechTuples.count > 1 {
             rawRanges = TimeCondensationService.condenseTime(segments: speechTuples, mood: mood)
         } else if let first = speechTuples.first {
             rawRanges = [CMTimeRange(
@@ -109,7 +133,14 @@ struct ClipRenderingService {
                 runningSeconds += rangeSec
             } else {
                 let remaining = maxAllowedSeconds - runningSeconds
-                if remaining > 3.0 {
+                let cutLimit = range.start.seconds + remaining
+                if let safeEnd = boundaryDetector.findPreviousSentenceEnd(before: cutLimit, in: transcript.segments),
+                   safeEnd > (range.start.seconds + 5.0) {
+                    cappedRanges.append(CMTimeRange(
+                        start: range.start,
+                        duration: CMTime(seconds: safeEnd - range.start.seconds, preferredTimescale: 600)
+                    ))
+                } else if remaining > 5.0 {
                     cappedRanges.append(CMTimeRange(
                         start: range.start,
                         duration: CMTime(seconds: remaining, preferredTimescale: 600)

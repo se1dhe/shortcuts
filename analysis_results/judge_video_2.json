@@ -1,0 +1,47 @@
+{
+  "video_analysis": {
+    "visual_style": {
+      "color_grading": "Dark, cinematic, cool tones (blues, greens, grays)",
+      "aspect_ratio": "1:1 (Square, suitable for Instagram/TikTok shorts)",
+      "composition": "Close-ups and medium shots to emphasize facial expressions and tension"
+    },
+    "subtitles": {
+      "font": "Bold, sans-serif, all-caps",
+      "color": "White",
+      "stroke_shadow": "Black drop shadow and slight stroke for high contrast against dark backgrounds",
+      "placement": "Center, lower-middle of the screen, typical for short-form content",
+      "animation": "Dynamic, word-by-word appearance (karaoke style) to keep viewer retention",
+      "language": "Russian"
+    },
+    "pacing_and_cuts": {
+      "overall_pacing": "Fast-paced, high tension dialogue",
+      "cuts": "Frequent cuts between characters (shot-reverse-shot) to build dynamic tension"
+    },
+    "audio_video_sync": {
+      "sync_status": "Noticeable lip-sync mismatch",
+      "desync_details": "The Russian dubbing does not perfectly match the original lip movements (English). It's a localized dub over the original English visual. The audio track itself is synced with the subtitle appearance, but lip flaps are out of sync with the Russian audio."
+    },
+    "scene_breakdown": [
+      {
+        "timestamp": "00:00 - 00:21",
+        "description": "Judge speaks to the defendant, giving him advice. Cuts between Judge and Defendant.",
+        "text_shown": ["ОГЛЯНИСЬ", "ТЫ СТОИШЬ", "ИЗ ВЕЛИЧАЙШИХ", "ЭТОЙ", "ОН ПОСТРОЕН", "В ТО,", "И ТОЛЬКО", "ЗА ПОСЛЕДСТВИЯ", "СВОИХ", "ТЫ ХОЧЕШЬ", "СПРАВЕДЛИВОСТИ?", "ЕЗЖАЙ", "ОСТАНОВИСЬ", "В ИНДИАНАПОЛИСЕ.", "ПЕРЕТЯГИВАНИЕ", "СЛАДКАЯ", "СОЛЕНЫЙ", "И КРУПНЕЙШЕЕ", "КОЛЕСО", "АВГУСТА.", "ТЕБЕ ПОНРАВИТСЯ."]
+      },
+      {
+        "timestamp": "00:22 - 00:27",
+        "description": "Judge speaks to the lawyer (Hank). Side profile of Judge.",
+        "text_shown": ["ВАЛИЛ", "ПОДАЛЬШЕ,", "ГДЕ ЛЮДИ", "МНЕНИЕ.", "ТУДА."]
+      },
+      {
+        "timestamp": "00:27 - 00:54",
+        "description": "Lawyer speaks to police officers in a room. Fast dialogue. Lawyer handles a cup.",
+        "text_shown": ["80%", "ИЗ-ЗА", "ВЫПИВКИ.", "ПРИЗНАНИЕ", "ОТ НЕГО.", "ДОБРОВОЛЬНЫЙ", "ОБРАЗЕЦ", "ВОТ, ДЕРЖИ,", "НАПОЛНЯЙ.", "КОФЕ.", "ТЫ ИДЕШЬ", "Я ПРАВ,", "ВРАСПЛОХ.", "ПОЛУЧИТЬ", "ИЗ ОБРАЗЦА", "ОТЛИЧНАЯ", "МОЖЕТЕ", "К ОБЕДУ", "ОБВИНЕНИЕ", "СТУДИЯ,", "МЫ ДОЛЖНЫ", "ИЗЪЯТЬ", "МАШИНУ."]
+      },
+      {
+        "timestamp": "00:55 - 00:57",
+        "description": "Cars driving on a road. Flashback/action sequence.",
+        "text_shown": ["ЧТО ПРОИЗОШЛО?", "ПОМНЮ."]
+      }
+    ]
+  }
+}

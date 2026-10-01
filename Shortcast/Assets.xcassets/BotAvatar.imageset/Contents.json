@@ -1,0 +1,12 @@
+{
+  "images" : [
+    {
+      "filename" : "BotAvatar.jpg",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

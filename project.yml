@@ -1,0 +1,77 @@
+# XcodeGen project definition for Shortcast.
+# Regenerate the .xcodeproj with:  xcodegen generate
+name: Shortcast
+options:
+  bundleIdPrefix: app.shortcast
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+packages:
+  # Vendored: native Gemma 4 multimodal inference (MIT). Source lives in Vendor/.
+  # Pulls in mlx-swift, mlx-swift-lm, swift-transformers transitively.
+  Gemma4Swift:
+    path: Vendor/gemma-4-swift-mlx
+  # Qwen 3.5 9B (the "Director" that finds viral moments from a transcript).
+  # Same MLX stack Gemma4Swift already resolves — declaring the products here
+  # just makes them linkable from the app target. Do NOT pin mlx-swift directly:
+  # let it stay transitive so it respects Gemma's 0.31.3 floor (single source).
+  mlx-swift-lm:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    branch: main
+  swift-huggingface:
+    url: https://github.com/huggingface/swift-huggingface
+    from: "0.9.0"
+  # WhisperKit caps swift-transformers at <1.2.0; Gemma only needs >=1.1.6, so
+  # 1.1.x satisfies the whole graph. (mlx-swift-lm doesn't depend on it at all.)
+  swift-transformers:
+    url: https://github.com/huggingface/swift-transformers
+    from: "1.1.6"
+  # On-device transcription, used only as a fallback when a long video has no
+  # .srt/.vtt alongside it. Lazy: the Whisper model never downloads otherwise.
+  WhisperKit:
+    url: https://github.com/argmaxinc/WhisperKit
+    from: "0.9.0"
+
+targets:
+  Shortcast:
+    type: application
+    platform: macOS
+    sources:
+      - path: Shortcast
+    dependencies:
+      - package: Gemma4Swift
+        product: Gemma4Swift
+      - package: mlx-swift-lm
+        product: MLXVLM         # VLMModelFactory — Qwen 3.5 9B is a VLM package
+      - package: mlx-swift-lm
+        product: MLXLMCommon     # ChatSession, GenerateParameters, ModelContainer
+      - package: mlx-swift-lm
+        product: MLXHuggingFace  # #hubDownloader(), #huggingFaceTokenizerLoader()
+      - package: swift-huggingface
+        product: HuggingFace
+      - package: swift-transformers
+        product: Tokenizers
+      - package: WhisperKit
+        product: WhisperKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.shortcast.Shortcast
+        PRODUCT_NAME: Short Generator
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Shortcast/Info.plist
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        ENABLE_HARDENED_RUNTIME: NO
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        DEAD_CODE_STRIPPING: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        COMBINE_HIDPI_IMAGES: YES
+        ENABLE_PREVIEWS: YES
+        MACOSX_DEPLOYMENT_TARGET: "15.0"
+        KNOWN_REGIONS: en, ru, uk

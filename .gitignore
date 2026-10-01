@@ -1,0 +1,59 @@
+# Xcode / build
+build/
+DerivedData/
+.derivedData/
+.build/
+.build_derived/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcuserstate
+*.moved-aside
+
+# XcodeGen generates this from project.yml — do not commit
+Shortcast.xcodeproj/
+
+# Swift Package Manager
+.swiftpm/
+Package.resolved
+
+# Vendored dependency: keep source, drop its git history & samples
+Vendor/gemma-4-swift-mlx/.git/
+Vendor/gemma-4-swift-mlx/.build/
+
+# Claude Code local config / scratch
+.claude/
+
+# Gemini / Antigravity scratch
+.gemini/
+
+# macOS
+.DS_Store
+
+# Runtime artifacts — never commit
+render-cache/
+input/
+etalon/
+судья/
+.playwright-mcp/
+cookies.txt
+*.log
+
+# Downloaded / compiled binaries
+bin/
+tools/
+
+# Generated videos & media
+*.mp4
+*.srt
+
+# One-off patch / fix / test scripts
+patch_*.py
+fix_*.py
+scratch_*.py
+remove_*.py
+test_*.swift
+test_*.py
+
+# Distribution artifacts
+*.dmg
+dist/

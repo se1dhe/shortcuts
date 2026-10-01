@@ -1,0 +1,98 @@
+[
+  {
+    "start_time": "00:00",
+    "end_time": "00:06",
+    "description": "Scene in a dimly lit bar with warm lighting. Characters are in military uniforms. The sequence starts with a close-up of a hand on a rifle, then cuts to a conversation between a man in a black uniform and a man in a green uniform.",
+    "subtitles": {
+      "font": "Bold, sans-serif",
+      "color": "Yellow",
+      "animation": "Appears word-by-word or in short phrases"
+    },
+    "pacing": "Moderate",
+    "transitions": "Hard cuts between speakers and objects."
+  },
+  {
+    "start_time": "00:07",
+    "end_time": "00:13",
+    "description": "Scene cuts to a different room with slightly cooler lighting. Brad Pitt's character is shown speaking, intercut with a shot of a woman crawling on the floor in distress.",
+    "subtitles": {
+      "font": "Bold, sans-serif",
+      "color": "Yellow",
+      "animation": "Appears word-by-word or in short phrases"
+    },
+    "pacing": "Slightly faster due to the cut to the distressed woman",
+    "transitions": "Hard cuts."
+  },
+  {
+    "start_time": "00:14",
+    "end_time": "00:20",
+    "description": "Returns to the bar setting. A man in a black uniform is smoking. The tension escalates as one man grabs another. Includes a cut back to the crawling woman, now with men in the background. The scene ends with a man holding up three fingers.",
+    "subtitles": {
+      "font": "Bold, sans-serif",
+      "color": "Yellow with occasional red words for emphasis (e.g., 'Auf Wiedersehen')",
+      "animation": "Appears word-by-word or in short phrases"
+    },
+    "pacing": "Tense and quickening",
+    "transitions": "Hard cuts."
+  },
+  {
+    "start_time": "00:21",
+    "end_time": "00:30",
+    "description": "Scene in the room with Brad Pitt and the woman. The woman is looking up while lying down. Brad Pitt is shown examining a piece of paper. Another man is also seen speaking to the woman.",
+    "subtitles": {
+      "font": "Bold, sans-serif",
+      "color": "Yellow",
+      "animation": "Appears word-by-word or in short phrases"
+    },
+    "pacing": "Moderate",
+    "transitions": "Hard cuts."
+  },
+  {
+    "start_time": "00:31",
+    "end_time": "00:39",
+    "description": "Scene shifts to a grand, brightly lit hall. Characters are dressed in elegant formal wear (tuxedos and evening gowns). Brad Pitt, in a white tuxedo, is speaking with the woman. The camera also shows two other men in tuxedos.",
+    "subtitles": {
+      "font": "Bold, sans-serif",
+      "color": "Yellow with occasional red words (e.g., 'Buongiorno')",
+      "animation": "Appears word-by-word or in short phrases"
+    },
+    "pacing": "Relaxed but formal",
+    "transitions": "Hard cuts."
+  },
+  {
+    "start_time": "00:40",
+    "end_time": "00:43",
+    "description": "Brief return to the room with Brad Pitt. A man in a brown vest speaks, followed by a shot of Brad Pitt.",
+    "subtitles": {
+      "font": "Bold, sans-serif",
+      "color": "Yellow",
+      "animation": "Appears word-by-word or in short phrases"
+    },
+    "pacing": "Fast",
+    "transitions": "Hard cuts."
+  },
+  {
+    "start_time": "00:44",
+    "end_time": "00:48",
+    "description": "Back in the grand hall. The two men in tuxedos are conversing, one speaking animatedly. Cuts to a close-up of a man in uniform laughing uproariously.",
+    "subtitles": {
+      "font": "Bold, sans-serif",
+      "color": "Yellow with occasional red words (e.g., 'Margaretti')",
+      "animation": "Appears word-by-word or in short phrases"
+    },
+    "pacing": "Energetic",
+    "transitions": "Hard cuts."
+  },
+  {
+    "start_time": "00:49",
+    "end_time": "00:52",
+    "description": "Final scene in a forest setting with a low camera angle. Brad Pitt is pointing a knife towards the camera. Cuts to a shot of another man looking downwards.",
+    "subtitles": {
+      "font": "Bold, sans-serif",
+      "color": "Yellow",
+      "animation": "Appears word-by-word or in short phrases"
+    },
+    "pacing": "Climactic",
+    "transitions": "Hard cuts."
+  }
+]

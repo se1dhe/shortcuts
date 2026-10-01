@@ -1,0 +1,30 @@
+{
+  "video_analysis": {
+    "visual_style": "Dark, tense atmosphere with high contrast lighting. Cool color palette (blues and greens) contrasting with the orange prisoner jumpsuits and warm lights of the ferries.",
+    "subtitles_text_style": "Bold, sans-serif font, predominantly yellow with some white. The text is dynamically placed across the screen, tracking characters or appearing in central positions. Modern, punchy animation style, appearing word-by-word or phrase-by-phrase to emphasize dialogue.",
+    "pacing": "Fast-paced and tense, building up to a climax at the midnight deadline. The rapid dialogue and cross-cutting between locations increase the urgency.",
+    "cuts_and_transitions": "Frequent, abrupt hard cuts between multiple parallel storylines: the civilian ferry, the prisoner ferry, and the Joker/Batman confrontation. Cross-cutting heightens the suspense.",
+    "scenes": [
+      {
+        "timestamp": "00:00 - 00:15",
+        "description": "Tense situation on the ferries. A man in a suit argues about the danger of the other ferry blowing them up. A prisoner in an orange jumpsuit steps forward, telling the man he doesn't want to die but doesn't know how to take a life.",
+        "text_shown": "НУ ДАВАЙТЕ! НАЖИМАЙТЕ! МЫ ПОКА ЖИВЫ. ОНИ ВЕДЬ НАС НЕ ВЗОРВАЛИ. ТЫ НЕ ХОЧЕШЬ УМИРАТЬ, НО ТЫ НЕ ЗНАЕШЬ КАК ЗАБРАТЬ ЖИЗНЬ. ЭТИ ЛЮДИ УБЬЮТ ТЕБЯ И ДОБЕРУТСЯ ДО КНОПКИ. ОТДАЙ ЭТО МНЕ."
+      },
+      {
+        "timestamp": "00:15 - 00:33",
+        "description": "Cross-cuts between the Joker observing and the ferries. The man in the suit holds the detonator. The prisoner demands the detonator, saying he will do what the man should have done 10 minutes ago.",
+        "text_shown": "НИКТО НЕ ХОЧЕТ МАРАТЬ РУКИ. ЧТО Ж, Я НАЖМУ. ПРЕСТУПНИКИ НА ТОМ ПАРОМЕ СВОЙ ВЫБОР СДЕЛАЛИ. НАМ НЕТ СМЫСЛА УМИРАТЬ ВМЕСТЕ. ОТДАЙ МНЕ ЭТО. МОЖЕШЬ СКАЗАТЬ ИМ, ЧТО Я ОТНЯЛ СИЛОЙ. Я СДЕЛАЮ ТО, ЧТО ТЫ ДОЛЖЕН БЫЛ СДЕЛАТЬ 10 МИНУТ НАЗАД."
+      },
+      {
+        "timestamp": "00:33 - 00:49",
+        "description": "The Joker looks out. The prisoner handles the detonator. The Joker and Batman fight. The Joker expects a fireworks explosion as he counts down.",
+        "text_shown": "НАМ ЛУЧШЕ ПЕРЕСТАТЬ ДРАТЬСЯ, А ТО МЫ ПРОПУСТИМ ФЕЙЕРВЕРК. НЕ БУДЕТ НИКАКОГО ФЕЙЕРВЕРКА. UUU... 1, 2..."
+      },
+      {
+        "timestamp": "00:49 - 01:00",
+        "description": "Midnight strikes on the clock. No explosion occurs. Batman confronts the Joker about his failed social experiment.",
+        "text_shown": "ЧТО ТЫ ХОТЕЛ ДОКАЗАТЬ? ЧТО ВСЕ В ГЛУБИНЕ ДУШИ ТАК ЖЕ УРОДЛИВЫ КАК И ТЫ? НИ НА КОГО НЕЛЬЗЯ ПОЛОЖИТЬСЯ. ТЫ ОДИН!"
+      }
+    ]
+  }
+}

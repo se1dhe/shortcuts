@@ -1,0 +1,34 @@
+{
+  "video_analysis": {
+    "overall_style": "Fast-paced montage of scenes from 'The Fifth Element', featuring character Ruby Rhod. High energy, dynamic cuts.",
+    "subtitles": {
+      "font": "Bold, sans-serif, all-caps, stylized",
+      "colors": ["Yellow", "White"],
+      "placement": "Center-left, center, or center-right, changing position dynamically to maintain energy",
+      "animation": "Pop-in, scale up, some jitter or shake effects to emphasize words"
+    },
+    "pacing": "Rapid, frantic, matching the character's energetic dialogue",
+    "events": [
+      {
+        "timestamp": "00:00-00:03",
+        "description": "Ruby Rhod talking fast. Text: 'КОРБЕН ДЕТКА В ЧЕМ ДЕЛО? ЧТО ЗА БРЕД? НЕТ ТАК НЕ ПОЙДЕТ'. Colors alternate between yellow and white."
+      },
+      {
+        "timestamp": "00:03-00:10",
+        "description": "Cut to Korben Dallas, then back to Ruby. Text: 'НИ ОГНЯ НИ КУРАЖА', 'ПУЛЕМЕТ ПА ПА ПА ПА ПА', 'ТАК ЧТО ЗАВТРА С 5 ДО 7 ПРИТВОРИСЬ ЧТО ЗНАЕШЬ БОЛЬШЕ ДВУХ СЛОВ'."
+      },
+      {
+        "timestamp": "00:10-00:23",
+        "description": "Korben grabs Ruby. Text: 'ТЕБЯ МОЖНО НА МИНУТКУ', 'Я НЕ НА ПОДПЕВКЕ', 'БУДЕШЬ КРУТИТЬСЯ ЗА ДВОИХ'."
+      },
+      {
+        "timestamp": "00:23-00:33",
+        "description": "Ruby broadcasting. Text: 'КОРБЕН ДАЛЛАС', 'КАК ПРОШЛО?', 'КОРБЕН ЗНАЕШЬ Я САМ НЕ СВОЙ'."
+      },
+      {
+        "timestamp": "00:33-00:53",
+        "description": "Various chaotic scenes. Text: 'РУБИ РОД НА 2 ЧАСА К ВАШИМ УСЛУГАМ', 'УРА! НУ ЧТО ЗА ЛЮДИ', 'БУДЬ ЭТО БОМБА...', 'ЧЕГО ВИЗЖАТЬ?', 'Я УХОЖУ!'"
+      }
+    ]
+  }
+}

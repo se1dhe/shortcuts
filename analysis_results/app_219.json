@@ -1,0 +1,30 @@
+{
+  "general": {
+    "visual_style": "Dark, moody lighting with a cool/blueish color grading. High contrast and cinematic framing typical of a modern dramatic film.",
+    "text_subtitles": "Standard sans-serif subtitles in white with a dark outline/shadow, positioned at the bottom center of the frame. They are static and appear/disappear without animation.",
+    "pacing": "The pacing starts off relatively fast with the younger man speaking and gesturing, slows down during the intense close-up confrontation, and features a dramatic pause before he leaves the room. The transition to the final scene is abrupt, instantly changing the mood.",
+    "cuts_transitions": "The video uses standard straight cuts. The dialogue in the hospital utilizes classic shot-reverse-shot editing. There is a hard cut at 0:39 transitioning from the hospital to the courtroom."
+  },
+  "events": [
+    {
+      "timestamp": "0:00 - 0:10",
+      "scene": "Hospital Room - Pacing",
+      "description": "The scene opens in a dimly lit hospital room. A younger man (Robert Downey Jr.) in a dress shirt and tie paces around, turning to speak animatedly and somewhat sarcastically to an older man (Robert Duvall) lying in a hospital bed. The camera cuts between the younger man's movements and the older man's static, observing presence."
+    },
+    {
+      "timestamp": "0:10 - 0:21",
+      "scene": "Hospital Room - Confrontation",
+      "description": "The camera moves to tight close-ups on both characters' faces. The younger man leans in closely, intensely questioning the older man about lying under oath. The older man responds firmly. The editing uses direct cuts between their faces to heighten the tension."
+    },
+    {
+      "timestamp": "0:21 - 0:39",
+      "scene": "Hospital Room - Departure",
+      "description": "The tension breaks slightly as the younger man backs away. He sighs, says 'See you in court', grabs his jacket, and walks towards the exit. The camera holds on the older man watching him leave, emphasizing the emotional distance between them. The scene ends as the younger man opens the door."
+    },
+    {
+      "timestamp": "0:39 - 0:46",
+      "scene": "Courtroom",
+      "description": "A sudden, hard cut transports the viewer to a courtroom setting. The younger man is now dressed in a formal dark suit. The lighting is more natural but still dramatic. He is speaking earnestly, seemingly addressing a judge. The video ends during his speech."
+    }
+  ]
+}

@@ -86,22 +86,15 @@ struct ClipRenderingService {
             let hasExtremePause = (1..<speechTuples.count).contains { i in
                 (speechTuples[i].start - speechTuples[i - 1].end) > 2.5
             }
-            if !hasExtremePause {
+            if !hasExtremePause || speechTuples.count <= 1 {
                 let start = max(0, singleRange.start)
                 let duration = max(0.01, singleRange.end - start)
                 rawRanges = [CMTimeRange(
                     start: CMTime(seconds: start, preferredTimescale: 600),
                     duration: CMTime(seconds: duration, preferredTimescale: 600)
                 )]
-            } else if speechTuples.count > 1 {
-                rawRanges = TimeCondensationService.condenseTime(segments: speechTuples, mood: mood)
             } else {
-                let start = max(0, singleRange.start)
-                let duration = max(0.01, singleRange.end - start)
-                rawRanges = [CMTimeRange(
-                    start: CMTime(seconds: start, preferredTimescale: 600),
-                    duration: CMTime(seconds: duration, preferredTimescale: 600)
-                )]
+                rawRanges = TimeCondensationService.condenseTime(segments: speechTuples, mood: mood)
             }
         } else if speechTuples.count > 1 {
             rawRanges = TimeCondensationService.condenseTime(segments: speechTuples, mood: mood)
@@ -135,12 +128,12 @@ struct ClipRenderingService {
                 let remaining = maxAllowedSeconds - runningSeconds
                 let cutLimit = range.start.seconds + remaining
                 if let safeEnd = boundaryDetector.findPreviousSentenceEnd(before: cutLimit, in: transcript.segments),
-                   safeEnd > (range.start.seconds + 5.0) {
+                   safeEnd > (range.start.seconds + 0.5) {
                     cappedRanges.append(CMTimeRange(
                         start: range.start,
                         duration: CMTime(seconds: safeEnd - range.start.seconds, preferredTimescale: 600)
                     ))
-                } else if remaining > 5.0 {
+                } else if cappedRanges.isEmpty && remaining > 5.0 {
                     cappedRanges.append(CMTimeRange(
                         start: range.start,
                         duration: CMTime(seconds: remaining, preferredTimescale: 600)

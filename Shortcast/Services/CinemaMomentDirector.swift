@@ -1,26 +1,51 @@
 import Foundation
 
 /// Represents a continuous cut within a multi-segment cinema edit.
-struct TimeSegment: Codable, Sendable, Equatable {
-    var start: Double
-    var end: Double
+public struct TimeSegment: Codable, Sendable, Equatable {
+    public var start: Double
+    public var end: Double
 
-    var duration: Double { max(end - start, 0) }
+    public init(start: Double, end: Double) {
+        self.start = start
+        self.end = end
+    }
+
+    public var duration: Double { max(end - start, 0) }
 }
 
 /// A structured cinema edit candidate focused on a coherent character arc or dramatic conflict.
-struct CinemaStoryArc: Codable, Sendable, Identifiable, Equatable {
-    var id: String { "\(character)_\(arcTitle)_\(Int(segments.first?.start ?? 0))" }
-    var character: String          // e.g. "Дон Вито Корлеоне", "Майкл", "Джокер"
-    var arcTitle: String           // e.g. "Кодекс чести", "Выстрел в ресторане", "Дилемма на паромах"
-    var hook: String               // e.g. "Ты просишь без уважения, но ты не предлагаешь дружбу"
-    var punchline: String          // e.g. "Я сделаю предложение, от которого нельзя отказаться"
-    var segments: [TimeSegment]    // Multi-cut sequence of the scene
-    var viralScore: Int            // 0 - 100
-    var mood: String               // "dramatic", "tense", "mobster", "comedy", "action"
-    var summary: String
+public struct CinemaStoryArc: Codable, Sendable, Identifiable, Equatable {
+    public var id: String { "\(character)_\(arcTitle)_\(Int(segments.first?.start ?? 0))" }
+    public var character: String          // e.g. "Дон Вито Корлеоне", "Майкл", "Джокер"
+    public var arcTitle: String           // e.g. "Кодекс чести", "Выстрел в ресторане", "Дилемма на паромах"
+    public var hook: String               // e.g. "Ты просишь без уважения, но ты не предлагаешь дружбу"
+    public var punchline: String          // e.g. "Я сделаю предложение, от которого нельзя отказаться"
+    public var segments: [TimeSegment]    // Multi-cut sequence of the scene
+    public var viralScore: Int            // 0 - 100
+    public var mood: String               // "dramatic", "tense", "mobster", "comedy", "action"
+    public var summary: String
 
-    var totalDuration: Double {
+    public init(
+        character: String,
+        arcTitle: String,
+        hook: String,
+        punchline: String,
+        segments: [TimeSegment],
+        viralScore: Int,
+        mood: String,
+        summary: String
+    ) {
+        self.character = character
+        self.arcTitle = arcTitle
+        self.hook = hook
+        self.punchline = punchline
+        self.segments = segments
+        self.viralScore = viralScore
+        self.mood = mood
+        self.summary = summary
+    }
+
+    public var totalDuration: Double {
         segments.reduce(0) { $0 + $1.duration }
     }
 
@@ -47,10 +72,10 @@ struct CinemaStoryArc: Codable, Sendable, Identifiable, Equatable {
 /// Specialized director that instructs the local LLM (Qwen 3.5 9B / Gemma)
 /// to analyze a feature film's screenplay and cluster it into coherent character arcs
 /// following the benchmark cinema editing grammar.
-enum CinemaMomentDirector {
+public enum CinemaMomentDirector {
 
     /// System instructions for the movie editor LLM.
-    static func cinemaSystemPrompt(movieTitle: String, language: String? = nil, sceneMap: String? = nil) -> String {
+    public static func cinemaSystemPrompt(movieTitle: String, language: String? = nil, sceneMap: String? = nil) -> String {
         let sceneMapInstruction = sceneMap != nil ? """
         
         AVAILABLE SUPER-BLOCKS & SCENE MAP:
@@ -81,9 +106,10 @@ enum CinemaMomentDirector {
         DO NOT simply find random isolated quotes or short 5-15 second fragments. All total durations under 10.0 seconds are strictly forbidden and will be rejected!
 
         DIRECTORIAL PHILOSOPHY (DIALOGUE-FIRST NARRATIVE):
+        PRIORITIZE 1 CONTINUOUS DIALOGUE SCENE (1 segment) with complete narrative arc. Do NOT splice distant unrelated scenes from different acts of the movie.
         A short can be either:
-        1. An iconic, intense single continuous scene (e.g. courtroom battle, intense interrogation, confession).
-        2. OR a powerful THEMATIC MONTAGE / CROSS-CUT ARC (2 to 4 segments from ANY part of the movie) united by ONE central idea, moral conflict, or recurring dialogue/monologue that builds tension.
+        1. An iconic, intense single continuous scene (e.g. courtroom battle, intense interrogation, confession) - THIS IS STRONGLY PREFERRED.
+        2. OR a closely adjacent 2 to 4 segment scene sequence united by ONE central dramatic conflict. Never jump between unrelated distant acts of the movie.
         
         Every story arc MUST follow a complete 4-act dramatic structure:
         1. Hook (0-5s): Intrigue, provocative statement, question, or moral dilemma that stops the scroll.
@@ -93,7 +119,7 @@ enum CinemaMomentDirector {
 
         IMPORTANT EDITING GRAMMAR:
         - TOTAL DURATION: Sum of all segments MUST be STRICTLY between 42.0 and 58.0 seconds total. Any edit under 10.0 seconds is strictly rejected! Any edit over 58.0 seconds is clamped.
-        - SEGMENTS: 1 to 4 segments. If combining moments across the movie, ensure each segment is substantive (minimum 5.0 seconds per segment) and they flow seamlessly around the central idea.
+        - SEGMENTS: 1 to 4 segments. PRIORITIZE 1 CONTINUOUS DIALOGUE SCENE (1 segment). If combining moments, they MUST be closely adjacent in time. Do NOT splice distant unrelated scenes from different acts of the movie. Ensure each segment is substantive (minimum 5.0 seconds per segment) and they flow seamlessly around the central idea.
         - DIALOGUE DENSITY: Focus on scenes with intense dialogue exchanges, moral clashes, fierce confessions, or high-stakes confrontations.
         - The `mood` field MUST be exactly one of: "suspenseThriller", "tarantinoDialogue", "eccentricComedy", "actionBlockbuster", "emotionalDrama", "defaultCinema".
         - For `hook` and `punchline` strings, insert XML tags for kinetic typography:
@@ -123,7 +149,7 @@ enum CinemaMomentDirector {
     }
 
     /// User prompt submitting the transcript.
-    static func cinemaUserPrompt(transcript: String, movieTitle: String, sceneMap: String? = nil) -> String {
+    public static func cinemaUserPrompt(transcript: String, movieTitle: String, sceneMap: String? = nil) -> String {
         """
         Movie: "\(movieTitle)"
         Analyze the following transcript with timestamps [SECONDS] and return STRICTLY 1 to 3 elite viral cinema story arcs (duration STRICTLY between 42.0 and 58.0 seconds total, Viral Score >= 80) in the requested JSON format.
@@ -135,7 +161,7 @@ enum CinemaMomentDirector {
     }
 
     /// Robust parser for LLM JSON output.
-    static func parseArcs(from rawText: String) -> [CinemaStoryArc] {
+    public static func parseArcs(from rawText: String, transcriptSegments: [TranscriptSegment]? = nil) -> [CinemaStoryArc] {
         let jsonString = extractJSON(from: rawText) ?? rawText
         let fixed = fixTimeFormats(in: jsonString)
         
@@ -222,7 +248,7 @@ enum CinemaMomentDirector {
         }
         
         // Filter and cap to strictly 1–3 elite candidates with Viral Score >= 80
-        return filterEliteCandidates(arcs: arcs)
+        return filterEliteCandidates(arcs: arcs, transcriptSegments: transcriptSegments)
     }
 
     private static func extractString(key: String, from text: String) -> String {
@@ -310,7 +336,7 @@ enum CinemaMomentDirector {
 
     // MARK: - Algorithmic Story Arc Scoring (Phase 5.5)
 
-    static func calculateAlgorithmicScore(
+    public static func calculateAlgorithmicScore(
         hook: String,
         punchline: String,
         duration: Double,
@@ -367,11 +393,25 @@ enum CinemaMomentDirector {
         
         // 5. Narrative pacing & segment structure (Dialogue Mode)
         if segments.count == 1 {
-            // Monolithic static scene: bonus for uninterrupted intense dialogue
-            score += 20
+            // Monolithic static scene: bonus for uninterrupted dialogue continuity
+            score += 30
         } else if segments.count >= 2 && segments.count <= 4 {
-            // Moderate pacing: good for multi-angle dialogue
-            score += 25
+            let sortedSegments = segments.sorted { $0.start < $1.start }
+            var hasDistantGap = false
+            for i in 0..<(sortedSegments.count - 1) {
+                let gap = sortedSegments[i + 1].start - sortedSegments[i].end
+                if gap > 120.0 {
+                    hasDistantGap = true
+                    break
+                }
+            }
+            if hasDistantGap {
+                // Penalize Frankenstein splicing across distant movie acts
+                score -= 15
+            } else {
+                // Contiguous or closely adjacent cuts
+                score += 10
+            }
         } else if segments.count > 4 {
             // Highly dynamic montage: penalty because it breaks dialogue flow
             score -= 15
@@ -386,7 +426,7 @@ enum CinemaMomentDirector {
     }
 
     /// Overload for backward compatibility
-    static func calculateAlgorithmicScore(transcript: String, duration: Double, segments: [TimeSegment]) -> Int {
+    public static func calculateAlgorithmicScore(transcript: String, duration: Double, segments: [TimeSegment]) -> Int {
         calculateAlgorithmicScore(hook: transcript, punchline: "", duration: duration, segments: segments)
     }
 
@@ -394,22 +434,44 @@ enum CinemaMomentDirector {
 
     /// Filters and caps candidates to strictly 1 to 3 best cinematic story arcs with Viral Score >= 80
     /// and duration strictly within 40.0–58.0 seconds.
-    static func filterEliteCandidates(arcs: [CinemaStoryArc]) -> [CinemaStoryArc] {
+    public static func filterEliteCandidates(
+        arcs: [CinemaStoryArc],
+        transcriptSegments: [TranscriptSegment]? = nil,
+        boundaryDetector: SentenceBoundaryDetecting = SentenceBoundaryDetector()
+    ) -> [CinemaStoryArc] {
         // Step 1: Reject any scraps under 10.0s and clamp long scenes to 58.0s
         var validArcs: [CinemaStoryArc] = []
         for arc in arcs {
             var segs = arc.segments
-            let total = segs.reduce(0) { $0 + $1.duration }
+            let total = segs.reduce(0.0) { $0 + $1.duration }
             guard total >= 10.0 else {
                 Self.log("filterEliteCandidates: Discarding '\(arc.arcTitle)' (duration \(total)s < 10.0s)")
                 continue
             }
             
-            // If scene duration exceeds 58.0s, clamp the final segment
+            // If scene duration exceeds 58.0s, safely clamp the final segment
             if total > 58.0, let last = segs.last {
-                let excess = total - 58.0
-                let newLastEnd = max(last.start + 1.0, last.end - excess)
-                segs[segs.count - 1] = TimeSegment(start: last.start, end: newLastEnd)
+                let precedingDuration = segs.dropLast().reduce(0.0) { $0 + $1.duration }
+                let maxLastDuration = max(1.0, 58.0 - precedingDuration)
+                
+                if let tSegs = transcriptSegments, !tSegs.isEmpty {
+                    let refinedLast = boundaryDetector.refineSceneBoundary(
+                        range: last,
+                        maxAllowedDuration: maxLastDuration,
+                        in: tSegs
+                    )
+                    segs[segs.count - 1] = refinedLast
+                } else {
+                    let excess = total - 58.0
+                    let newLastEnd = max(last.start + 1.0, last.end - excess)
+                    segs[segs.count - 1] = TimeSegment(start: last.start, end: newLastEnd)
+                }
+            }
+            
+            let updatedTotal = segs.reduce(0.0) { $0 + $1.duration }
+            guard updatedTotal >= 10.0 else {
+                Self.log("filterEliteCandidates: Discarding '\(arc.arcTitle)' after clamping (duration \(updatedTotal)s < 10.0s)")
+                continue
             }
             
             var updated = arc

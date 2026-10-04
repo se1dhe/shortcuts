@@ -209,12 +209,27 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             return [TimeSegment(start: window.lowerBound, end: window.lowerBound + targetDuration)]
         }
 
-        let actualDur = last.end - first.start
-        if actualDur > targetDuration * 1.35 {
-            return [TimeSegment(start: first.start, end: first.start + targetDuration)]
+        let rawRange = TimeSegment(start: first.start, end: max(last.end, first.start + 15.0))
+        let detector = SentenceBoundaryDetector(
+            headPadding: 0.20,
+            tailPadding: 0.45,
+            minSegmentDuration: 15.0,
+            maxShortsDuration: targetDuration * 1.35
+        )
+
+        var refined = detector.refineSceneBoundary(
+            range: rawRange,
+            maxAllowedDuration: targetDuration * 1.35,
+            in: segments
+        )
+
+        // Для финального катарсиса (Акт 4) добавляем 2.8с атмосферного видеоряда
+        // после завершения речи для кинематографического затухания в темноту
+        if actType == .catharsis {
+            refined = TimeSegment(start: refined.start, end: refined.end + 2.8)
         }
 
-        return [TimeSegment(start: first.start, end: max(last.end, first.start + 15.0))]
+        return [refined]
     }
 
     private func extractThematicKeywords(for concept: ThematicConcept) -> [String] {

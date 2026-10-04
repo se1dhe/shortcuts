@@ -14,28 +14,48 @@ final class BrowserAutomationService: BrowserPublishingProtocol, Sendable {
     // MARK: - Node & Script Resolution
 
     static func resolveNodeBinary() -> URL? {
-        let candidates = [
-            "/Users/se1dhe/.nvm/versions/node/v24.12.0/bin/node",
+        let home = FileManager.default.homeDirectoryForCurrentUser
+
+        // 1. Поиск в PATH окружения
+        if let envPath = ProcessInfo.processInfo.environment["PATH"] {
+            for dir in envPath.components(separatedBy: ":") where !dir.isEmpty {
+                let candidate = URL(fileURLWithPath: dir).appendingPathComponent("node")
+                if FileManager.default.isExecutableFile(atPath: candidate.path) {
+                    return candidate
+                }
+            }
+        }
+
+        // 2. Стандартные системные пути macOS
+        let standardCandidates = [
             "/opt/homebrew/bin/node",
             "/usr/local/bin/node",
             "/usr/bin/node"
         ]
-
-        for path in candidates {
+        for path in standardCandidates {
             if FileManager.default.isExecutableFile(atPath: path) {
                 return URL(fileURLWithPath: path)
             }
         }
 
-        // Search in ~/.nvm/versions/node/ if present
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let nvmDir = home.appendingPathComponent(".nvm/versions/node")
-        if let subdirs = try? FileManager.default.contentsOfDirectory(at: nvmDir, includingPropertiesForKeys: nil) {
-            for dir in subdirs {
-                let candidate = dir.appendingPathComponent("bin/node")
-                if FileManager.default.isExecutableFile(atPath: candidate.path) {
-                    return candidate
+        // 3. Динамический поиск в nvm / fnm / volta
+        let managers = [
+            home.appendingPathComponent(".nvm/versions/node"),
+            home.appendingPathComponent(".volta/bin"),
+            home.appendingPathComponent(".fnm/current/bin")
+        ]
+        for baseDir in managers {
+            if let subdirs = try? FileManager.default.contentsOfDirectory(at: baseDir, includingPropertiesForKeys: nil) {
+                for dir in subdirs {
+                    let candidate = dir.appendingPathComponent("bin/node")
+                    if FileManager.default.isExecutableFile(atPath: candidate.path) {
+                        return candidate
+                    }
                 }
+            }
+            let direct = baseDir.appendingPathComponent("node")
+            if FileManager.default.isExecutableFile(atPath: direct.path) {
+                return direct
             }
         }
 
@@ -43,16 +63,17 @@ final class BrowserAutomationService: BrowserPublishingProtocol, Sendable {
     }
 
     static func resolveCliScript(workingDirectory: URL? = nil) -> URL? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
         let potentialLocations: [URL] = [
-            // Bundled in app resources
+            // В ресурсах приложения (App Bundle)
             Bundle.main.resourceURL?.appendingPathComponent("scripts/browser-publisher/src/cli.js"),
-            // In project workspace
-            URL(fileURLWithPath: "/Users/se1dhe/projects/shortcast/scripts/browser-publisher/src/cli.js"),
-            // Application Support directory
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Application Support/Shortcast/browser-publisher/src/cli.js"),
-            // Relative to custom working directory
-            workingDirectory?.appendingPathComponent("scripts/browser-publisher/src/cli.js")
+            Bundle.main.resourceURL?.appendingPathComponent("browser-publisher/src/cli.js"),
+            // В Application Support пользователя
+            home.appendingPathComponent("Library/Application Support/Shortcast/browser-publisher/src/cli.js"),
+            // Относительно рабочего каталога
+            workingDirectory?.appendingPathComponent("scripts/browser-publisher/src/cli.js"),
+            // Относительно исходников проекта (при разработке)
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("scripts/browser-publisher/src/cli.js")
         ].compactMap { $0 }
 
         for location in potentialLocations {
@@ -157,6 +178,12 @@ final class BrowserAutomationService: BrowserPublishingProtocol, Sendable {
                     process.standardError = stdoutPipe
 
                     let handle = stdoutPipe.fileHandleForReading
+
+                    continuation.onTermination = { @Sendable _ in
+                        if process.isRunning {
+                            process.terminate()
+                        }
+                    }
 
                     continuation.yield(.progress(platform: nil, message: "Запуск автоматизации браузера..."))
 

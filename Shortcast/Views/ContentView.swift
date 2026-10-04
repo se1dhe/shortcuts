@@ -40,23 +40,13 @@ struct ContentView: View {
     var body: some View {
         @Bindable var workspace = workspace
 
-        ZStack {
-            if modelManager.isReady {
-                mainLayout
-                    .transition(.opacity)
-            } else {
-                ModelDownloadView()
-                    .transition(.opacity)
-            }
-        }
-        .animation(.smooth(duration: 0.32), value: modelManager.isReady)
-        .animation(.smooth(duration: 0.32), value: workspace.phase)
-        .frame(minWidth: 1100, minHeight: 740)
-        .dropDestination(for: URL.self) { urls, _ in
-            guard modelManager.isReady,
-                  !workspace.isBusy,
-                  let url = urls.first(where: { $0.isFileURL })
-            else { return false }
+        mainLayout
+            .animation(.smooth(duration: 0.32), value: workspace.phase)
+            .frame(minWidth: 1100, minHeight: 740)
+            .dropDestination(for: URL.self) { urls, _ in
+                guard !workspace.isBusy,
+                      let url = urls.first(where: { $0.isFileURL })
+                else { return false }
             selectedTab = workspace.inputMode == .longform ? .longform : .create
             startProcessing(url)
             return true

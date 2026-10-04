@@ -545,17 +545,33 @@ enum HighBitrateExporter {
 
     private static func pump(_ input: AVAssetWriterInput, from output: AVAssetReaderOutput) async {
         let box = Unchecked((input, output))
+        let lock = OSAllocatedUnfairLock(initialState: false)
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             let queue = DispatchQueue(label: "shortcast.hqexport.pump")
             box.value.0.requestMediaDataWhenReady(on: queue) {
                 let input = box.value.0
                 let output = box.value.1
-                while input.isReadyForMoreMediaData {
-                    if let sample = output.copyNextSampleBuffer() {
-                        input.append(sample)
-                    } else {
+
+                let finish = {
+                    let shouldResume = lock.withLock { isDone -> Bool in
+                        if isDone { return false }
+                        isDone = true
+                        return true
+                    }
+                    if shouldResume {
                         input.markAsFinished()
                         cont.resume()
+                    }
+                }
+
+                while input.isReadyForMoreMediaData {
+                    if let sample = output.copyNextSampleBuffer() {
+                        if !input.append(sample) {
+                            finish()
+                            return
+                        }
+                    } else {
+                        finish()
                         return
                     }
                 }

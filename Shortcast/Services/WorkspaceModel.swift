@@ -97,6 +97,10 @@ final class WorkspaceModel {
     /// Прогресс рендеринга длинного видео
     var longformBuildProgress: (fraction: Double, step: String) = (0.0, "")
 
+    /// Активный проект фильма (сохранение прогресса транскрипции, тем и шортсов)
+    var currentProject: FilmProject?
+    let filmProjectService: any FilmProjectServicing = FilmProjectService.shared
+
     /// Temporary input copies and normalized containers, deleted when the user
     /// starts over or an import fails. Originals already in the working folder
     /// are intentionally never registered here.
@@ -328,6 +332,26 @@ final class WorkspaceModel {
             return
         }
 
+        // Загружаем или создаем постоянный проект фильма (SOLID: Single Responsibility)
+        if let existingProject = try? await filmProjectService.loadProject(for: sandboxFriendlyURL) {
+            self.currentProject = existingProject
+            if let t = existingProject.transcript { self.storedTranscript = t }
+            if let m = existingProject.tmdbMetadata { self.detectedMovie = m }
+            if !existingProject.discoveredConcepts.isEmpty { self.discoveredConcepts = existingProject.discoveredConcepts }
+            if let sc = existingProject.selectedConcept { self.selectedConcept = sc }
+            if let lr = existingProject.longformResult { self.longformResult = lr }
+            Self.log("Loaded cached FilmProject: \(existingProject.movieTitle) (\(existingProject.candidates.count) candidates, \(existingProject.discoveredConcepts.count) concepts)")
+        } else {
+            let project = FilmProject(
+                sourceMovieURL: sandboxFriendlyURL,
+                movieFileName: originalBaseName,
+                movieTitle: effectiveSourceMetadata?.title ?? originalBaseName,
+                durationSeconds: newJob.durationSeconds
+            )
+            self.currentProject = project
+            try? await filmProjectService.saveProject(project)
+        }
+
         switch inputMode {
         case .caption:
             await processPrecutShort(job: newJob, modelManager: modelManager, settings: settings)
@@ -369,11 +393,14 @@ final class WorkspaceModel {
         do {
             // 1. Первичная идентификация фильма по чистому имени файла / метаданным
             let initialCandidate = newJob.effectiveTitle
-            var movie = await movieMetadata.resolveMovie(
-                filename: initialCandidate,
-                sourceTitle: newJob.sourceMetadata?.title,
-                apiKey: settings.tmdbAPIKey)
-            self.detectedMovie = movie
+            var movie = self.detectedMovie
+            if movie == nil {
+                movie = await movieMetadata.resolveMovie(
+                    filename: initialCandidate,
+                    sourceTitle: newJob.sourceMetadata?.title,
+                    apiKey: settings.tmdbAPIKey)
+                self.detectedMovie = movie
+            }
             if let movie {
                 progressTracker.updateMovieDetection(
                     title: movie.title,
@@ -382,18 +409,29 @@ final class WorkspaceModel {
                     rottenTomatoes: movie.rottenTomatoesScore)
             }
 
-            // 2. Транскрипция фильма через WhisperKit (или sidecar)
-            self.progressTracker.startTranscription(totalSeconds: newJob.durationSeconds)
-            let transcript = try await transcription.transcript(
-                for: newJob.url,
-                languageHint: settings.languageOverride,
-                modelCacheDir: settings.workingDirectory?.appendingPathComponent("huggingface")
-            ) { @Sendable [weak self] sec in
-                Task { @MainActor in
-                    self?.progressTracker.updateTranscriptionProgress(processedSeconds: sec)
+            // 2. Транскрипция фильма через WhisperKit (или кэш проекта)
+            let transcript: Transcript
+            if let cached = self.storedTranscript ?? self.currentProject?.transcript {
+                transcript = cached
+                self.storedTranscript = cached
+                Self.log("Using cached transcript for longform: \(cached.segments.count) segments")
+            } else {
+                self.progressTracker.startTranscription(totalSeconds: newJob.durationSeconds)
+                transcript = try await transcription.transcript(
+                    for: newJob.url,
+                    languageHint: settings.languageOverride,
+                    modelCacheDir: settings.workingDirectory?.appendingPathComponent("huggingface")
+                ) { @Sendable [weak self] sec in
+                    Task { @MainActor in
+                        self?.progressTracker.updateTranscriptionProgress(processedSeconds: sec)
+                    }
+                }
+                self.storedTranscript = transcript
+                self.currentProject?.transcript = transcript
+                if let project = self.currentProject {
+                    try? await filmProjectService.saveProject(project)
                 }
             }
-            self.storedTranscript = transcript
 
             // 2.5. Если фильм не был точно определен на этапе 1, анализируем диалоги через эвристику / LLM + TMDB
             if movie == nil {
@@ -444,6 +482,11 @@ final class WorkspaceModel {
                 }
             }
 
+            self.currentProject?.tmdbMetadata = self.detectedMovie
+            if let project = self.currentProject {
+                try? await filmProjectService.saveProject(project)
+            }
+
             let effectiveMovieTitle: String
             if let title = movie?.title, !MovieMetadataService.isGarbageTitle(title) {
                 effectiveMovieTitle = title
@@ -454,15 +497,27 @@ final class WorkspaceModel {
             }
 
             // 3. Выявление философских тем (Shortcast Thematic Engine)
-            let thematicService = LongformThematicService()
-            let concepts = try await thematicService.discoverConcepts(
-                from: transcript,
-                movieTitle: effectiveMovieTitle,
-                movieOverview: movie?.overview,
-                forceAI: false,
-                modelManager: modelManager
-            )
-            self.discoveredConcepts = concepts
+            let concepts: [ThematicConcept]
+            if !self.discoveredConcepts.isEmpty {
+                concepts = self.discoveredConcepts
+            } else if let cached = self.currentProject?.discoveredConcepts, !cached.isEmpty {
+                concepts = cached
+                self.discoveredConcepts = cached
+            } else {
+                let thematicService = LongformThematicService()
+                concepts = try await thematicService.discoverConcepts(
+                    from: transcript,
+                    movieTitle: effectiveMovieTitle,
+                    movieOverview: movie?.overview,
+                    forceAI: false,
+                    modelManager: modelManager
+                )
+                self.discoveredConcepts = concepts
+                self.currentProject?.discoveredConcepts = concepts
+                if let project = self.currentProject {
+                    try? await filmProjectService.saveProject(project)
+                }
+            }
             self.phase = .selectingLongformConcept
         } catch {
             errorMessage = "Ошибка подготовки длинного видео: \(error.localizedDescription)"
@@ -535,6 +590,11 @@ final class WorkspaceModel {
                     }
                 }
                 self.longformResult = result
+                self.currentProject?.longformResult = result
+                self.currentProject?.selectedConcept = concept
+                if let project = self.currentProject {
+                    try? await self.filmProjectService.saveProject(project)
+                }
                 self.phase = .longformResults
             } catch {
                 self.errorMessage = "Ошибка монтажа длинного ролика: \(error.localizedDescription)"
@@ -598,19 +658,18 @@ final class WorkspaceModel {
     /// Запускает генерацию вирусных вертикальных Shorts из текущего загруженного фильма,
     /// повторно используя готовую транскрипцию Whisper без дублирования расшифровки.
     func generateShortsFromCurrentMovie(modelManager: ModelManager, settings: AppSettings) {
-        guard let currentJob = job, let transcript = storedTranscript else { return }
+        guard let currentJob = job, let transcript = storedTranscript ?? currentProject?.transcript else { return }
         cleanupClipTempFiles()
         self.clips = []
         self.variants = []
         self.pipelineError = nil
-        self.longformResult = nil
         self.phase = .findingMoments
 
         pipelineTask = Task {
             await continueShortsPipeline(
                 job: currentJob,
                 transcript: transcript,
-                movie: self.detectedMovie,
+                movie: self.detectedMovie ?? self.currentProject?.tmdbMetadata,
                 modelManager: modelManager,
                 settings: settings
             )
@@ -812,11 +871,14 @@ final class WorkspaceModel {
         do {
             // 0. Stage 1: Identify movie & ratings (0% -> 5%)
             let initialCandidate = job.effectiveTitle
-            var movie = await movieMetadata.resolveMovie(
-                filename: initialCandidate,
-                sourceTitle: job.sourceMetadata?.title,
-                apiKey: settings.tmdbAPIKey)
-            self.detectedMovie = movie
+            var movie = self.detectedMovie ?? self.currentProject?.tmdbMetadata
+            if movie == nil {
+                movie = await movieMetadata.resolveMovie(
+                    filename: initialCandidate,
+                    sourceTitle: job.sourceMetadata?.title,
+                    apiKey: settings.tmdbAPIKey)
+                self.detectedMovie = movie
+            }
             if let movie {
                 progressTracker.updateMovieDetection(
                     title: movie.title,
@@ -826,20 +888,32 @@ final class WorkspaceModel {
             }
 
             // 1. Stage 2: Transcript (5% -> 45%)
-            phase = .transcribing
-            progressTracker.startTranscription(totalSeconds: job.durationSeconds)
-            let t0 = Date()
-            let transcript = try await transcription.transcript(
-                for: job.url, languageHint: settings.languageOverride,
-                modelCacheDir: settings.workingDirectory?.appendingPathComponent("huggingface")) { @Sendable [weak self] sec in
-                    Task { @MainActor in
-                        self?.progressTracker.updateTranscriptionProgress(processedSeconds: sec)
+            let transcript: Transcript
+            if let cached = self.storedTranscript ?? self.currentProject?.transcript {
+                transcript = cached
+                self.storedTranscript = cached
+                Self.log("Using cached transcript for shorts: \(cached.segments.count) segments")
+            } else {
+                phase = .transcribing
+                progressTracker.startTranscription(totalSeconds: job.durationSeconds)
+                let t0 = Date()
+                transcript = try await transcription.transcript(
+                    for: job.url, languageHint: settings.languageOverride,
+                    modelCacheDir: settings.workingDirectory?.appendingPathComponent("huggingface")) { @Sendable [weak self] sec in
+                        Task { @MainActor in
+                            self?.progressTracker.updateTranscriptionProgress(processedSeconds: sec)
+                        }
                     }
+                self.storedTranscript = transcript
+                self.currentProject?.transcript = transcript
+                if let project = self.currentProject {
+                    try? await filmProjectService.saveProject(project)
                 }
+                Self.log("transcript ready in \(Self.elapsed(since: t0)) — whisper=\(transcript.language ?? "?")")
+            }
             // Trust the language of the actual text over Whisper's 30s auto-detect.
             let captionLanguage = transcript.contentLanguage ?? transcript.language
             progressTracker.updateTranscriptionProgress(processedSeconds: job.durationSeconds)
-            Self.log("transcript ready in \(Self.elapsed(since: t0)) — whisper=\(transcript.language ?? "?"), text=\(captionLanguage ?? "?")")
             try Task.checkCancellation()
 
             // 1.5. If movie was not detected from filename, use transcript sample with AI + TMDB
@@ -928,17 +1002,27 @@ final class WorkspaceModel {
         let movieTitle = movie?.title ?? job.fileName
         let useInlineCaptions = settings.copywriterModel.usesInlineCaptions
 
-        // Scene detection — analyze video for scene boundaries
+        // Scene detection — analyze video for scene boundaries or use cached scenes
         var sceneMap: String?
-        do {
-            let scenes = try await SceneDetectionService.detectScenes(in: job.url)
-            if scenes.count > 1 {
-                sceneMap = SceneDetectionService.formatForPrompt(
-                    scenes: scenes, transcriptDuration: job.durationSeconds)
+        var scenes: [DetectedScene] = currentProject?.scenes ?? []
+        if scenes.isEmpty {
+            do {
+                scenes = try await SceneDetectionService.detectScenes(in: job.url)
+                currentProject?.scenes = scenes
+                if let project = currentProject {
+                    try? await filmProjectService.saveProject(project)
+                }
                 Self.log("scene detection: found \(scenes.count) scenes")
+            } catch {
+                Self.log("scene detection skipped: \(error.localizedDescription)")
             }
-        } catch {
-            Self.log("scene detection skipped: \(error.localizedDescription)")
+        } else {
+            Self.log("scene detection: using \(scenes.count) cached scenes")
+        }
+
+        if scenes.count > 1 {
+            sceneMap = SceneDetectionService.formatForPrompt(
+                scenes: scenes, transcriptDuration: job.durationSeconds)
         }
 
         let isComedy: Bool = {
@@ -964,6 +1048,11 @@ final class WorkspaceModel {
                 sceneMap: sceneMap,
                 isComedy: isComedy)
             
+            self.currentProject?.candidates = candidates
+            if let project = self.currentProject {
+                try? await filmProjectService.saveProject(project)
+            }
+
             progressTracker.updateStoryAnalysis(fraction: 1.0, arcFound: candidates.first?.overlay)
             Self.log("found \(candidates.count) moment(s) in \(Self.elapsed(since: t2)), captions inline=\(useInlineCaptions), isComedy=\(isComedy)")
             try Task.checkCancellation()

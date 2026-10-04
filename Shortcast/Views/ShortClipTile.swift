@@ -12,6 +12,7 @@ struct ShortClipTile: View {
 
     @State private var showEditor = false
     @State private var showPlayer = false
+    @State private var isHovered = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -22,6 +23,7 @@ struct ShortClipTile: View {
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 18))
         .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.quaternary))
         .opacity(clip.isApproved ? 1 : 0.5)
+        .onHover { isHovered = $0 }
         .sheet(isPresented: $showEditor) { ClipEditorSheet(clip: clip) }
         .sheet(isPresented: $showPlayer) {
             ClipPlayerSheet(clip: clip)
@@ -37,6 +39,7 @@ struct ShortClipTile: View {
             case .ready:
                 if let url = clip.clipJob?.url {
                     MiniPhone(url: url,
+                              isPlaying: isHovered,
                               overlayHook: clip.overlayEnabled ? clip.overlayText : nil,
                               hookAppearance: clip.hookAppearance,
                               subtitleSegments: clip.subtitleSegments,
@@ -215,6 +218,7 @@ struct ShortClipTile: View {
 /// A small phone-framed, silent, looping preview of one clip.
 private struct MiniPhone: View {
     let url: URL
+    var isPlaying: Bool = false
     var overlayHook: String?
     var hookAppearance: HookAppearance = .default
     var subtitleSegments: [SubtitleSegment] = []
@@ -237,9 +241,16 @@ private struct MiniPhone: View {
                 Color.black
                     .clipShape(RoundedRectangle(cornerRadius: radius - 3, style: .continuous))
                     .padding(3)
-                PhoneVideoPlayer(url: url)
-                    .clipShape(RoundedRectangle(cornerRadius: radius - 3, style: .continuous))
-                    .padding(3)
+
+                if isPlaying {
+                    PhoneVideoPlayer(url: url)
+                        .clipShape(RoundedRectangle(cornerRadius: radius - 3, style: .continuous))
+                        .padding(3)
+                } else {
+                    VideoThumbnailView(url: url)
+                        .clipShape(RoundedRectangle(cornerRadius: radius - 3, style: .continuous))
+                        .padding(3)
+                }
 
                 if showPromoOverlay {
                     PromoOverlayPreview(promoCode: promoCode, w: w)
@@ -385,5 +396,35 @@ struct ClipEditorSheet: View {
             }
         }
         .frame(width: 920, height: 720)
+    }
+}
+
+// MARK: - Video Thumbnail View
+
+private struct VideoThumbnailView: View {
+    let url: URL
+    @State private var thumbnail: NSImage?
+
+    var body: some View {
+        ZStack {
+            Color.black
+            if let thumbnail {
+                Image(nsImage: thumbnail)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                Color.black
+            }
+        }
+        .task(id: url) {
+            let asset = AVURLAsset(url: url)
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 480, height: 480)
+            let time = CMTime(seconds: 0.5, preferredTimescale: 600)
+            if let cgImage = try? await generator.image(at: time).image {
+                thumbnail = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+            }
+        }
     }
 }

@@ -2,8 +2,8 @@ import Foundation
 
 /// One viral moment the Director (Qwen 3.5 9B) picked out of a long video's
 /// transcript: a time range plus why it works and a suggested on-screen hook.
-struct ClipCandidate: Sendable, Identifiable, Equatable {
-    let id = UUID()
+struct ClipCandidate: Codable, Sendable, Identifiable, Equatable {
+    var id = UUID()
     /// Start offset in seconds.
     var start: Double
     /// End offset in seconds.

@@ -102,11 +102,28 @@ targets:
       environmentVariables:
         OS_ACTIVITY_MODE: disable
 
+  ShortcastTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: ShortcastTests
+    dependencies:
+      - target: Shortcast
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.shortcast.ShortcastTests
+        MACOSX_DEPLOYMENT_TARGET: "15.0"
+        SWIFT_VERSION: "6.0"
+
 schemes:
   Shortcast:
     build:
       targets:
         Shortcast: all
+        ShortcastTests: [test]
+    test:
+      targets:
+        - ShortcastTests
       postActions:
         - name: Deregister DerivedData from LaunchServices
           script: |

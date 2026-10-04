@@ -208,33 +208,53 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
-        var body = Data()
+        let tempUploadURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tg-upload-\(UUID().uuidString).tmp")
+        defer { try? FileManager.default.removeItem(at: tempUploadURL) }
+
+        FileManager.default.createFile(atPath: tempUploadURL.path, contents: nil)
+        guard let fileHandle = try? FileHandle(forWritingTo: tempUploadURL) else {
+            throw TelegramPublishError.networkError(NSError(domain: "Telegram", code: -1, userInfo: [NSLocalizedDescriptionKey: "Не удалось создать временный файл для выгрузки"]))
+        }
+
+        func writeString(_ string: String) {
+            if let data = string.data(using: .utf8) {
+                fileHandle.write(data)
+            }
+        }
 
         // chat_id field
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"chat_id\"\r\n\r\n".data(using: .utf8)!)
-        body.append("\(channelId)\r\n".data(using: .utf8)!)
+        writeString("--\(boundary)\r\n")
+        writeString("Content-Disposition: form-data; name=\"chat_id\"\r\n\r\n")
+        writeString("\(channelId)\r\n")
 
         // caption field
         if !caption.isEmpty {
-            body.append("--\(boundary)\r\n".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"caption\"\r\n\r\n".data(using: .utf8)!)
-            body.append("\(caption)\r\n".data(using: .utf8)!)
+            writeString("--\(boundary)\r\n")
+            writeString("Content-Disposition: form-data; name=\"caption\"\r\n\r\n")
+            writeString("\(caption)\r\n")
         }
 
         // video file field
-        let videoData = try Data(contentsOf: videoURL)
-        let filename = videoURL.lastPathComponent
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"video\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: video/mp4\r\n\r\n".data(using: .utf8)!)
-        body.append(videoData)
-        body.append("\r\n".data(using: .utf8)!)
+        let safeFilename = videoURL.lastPathComponent.replacingOccurrences(of: "\"", with: "_")
+        writeString("--\(boundary)\r\n")
+        writeString("Content-Disposition: form-data; name=\"video\"; filename=\"\(safeFilename)\"\r\n")
+        writeString("Content-Type: video/mp4\r\n\r\n")
 
-        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
-        request.httpBody = body
+        // Потоково переносим видеофайл чанками по 1 МБ, не забивая RAM
+        if let videoReadHandle = try? FileHandle(forReadingFrom: videoURL) {
+            defer { try? videoReadHandle.close() }
+            while true {
+                let chunk = videoReadHandle.readData(ofLength: 1024 * 1024)
+                if chunk.isEmpty { break }
+                fileHandle.write(chunk)
+            }
+        }
+        writeString("\r\n")
+        writeString("--\(boundary)--\r\n")
+        try? fileHandle.close()
 
-        let (data, resp) = try await session.data(for: request)
+        let (data, resp) = try await session.upload(for: request, fromFile: tempUploadURL)
         return try parseMessageID(from: data, response: resp)
     }
 

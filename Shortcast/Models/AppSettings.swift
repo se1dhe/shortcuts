@@ -86,14 +86,30 @@ final class AppSettings {
         didSet { persistAPIKey() }
     }
 
-    /// TMDB API key for movie metadata lookup in Cinema preset.
+    /// TMDB API key for movie metadata lookup in Cinema preset (stored securely in Keychain).
     var tmdbAPIKey: String {
-        didSet { defaults.set(tmdbAPIKey, forKey: Keys.tmdbApiKey) }
+        didSet {
+            let trimmed = tmdbAPIKey.trimmed
+            if trimmed.isEmpty {
+                KeychainStore.delete(account: Keys.tmdbApiKey)
+            } else {
+                KeychainStore.save(trimmed, account: Keys.tmdbApiKey)
+            }
+            defaults.removeObject(forKey: Keys.tmdbApiKey)
+        }
     }
 
-    /// YouTube Data API v3 key for searching Shorts in the Movie Clips tab.
+    /// YouTube Data API v3 key for searching Shorts and uploading essays (stored securely in Keychain).
     var youtubeAPIKey: String {
-        didSet { defaults.set(youtubeAPIKey, forKey: Keys.youtubeApiKey) }
+        didSet {
+            let trimmed = youtubeAPIKey.trimmed
+            if trimmed.isEmpty {
+                KeychainStore.delete(account: Keys.youtubeApiKey)
+            } else {
+                KeychainStore.save(trimmed, account: Keys.youtubeApiKey)
+            }
+            defaults.removeObject(forKey: Keys.youtubeApiKey)
+        }
     }
 
     /// Path to a Netscape-format cookies.txt file exported from a browser
@@ -103,9 +119,17 @@ final class AppSettings {
         didSet { defaults.set(youtubeCookiesPath, forKey: Keys.youtubeCookies) }
     }
 
-    /// Telegram Bot Token for posting to Telegram channel.
+    /// Telegram Bot Token for posting to Telegram channel (stored securely in Keychain).
     var telegramBotToken: String {
-        didSet { defaults.set(telegramBotToken, forKey: Keys.telegramBotToken) }
+        didSet {
+            let trimmed = telegramBotToken.trimmed
+            if trimmed.isEmpty {
+                KeychainStore.delete(account: Keys.telegramBotToken)
+            } else {
+                KeychainStore.save(trimmed, account: Keys.telegramBotToken)
+            }
+            defaults.removeObject(forKey: Keys.telegramBotToken)
+        }
     }
 
     /// Telegram Channel ID/username (e.g. "@telonyx_club").
@@ -378,22 +402,53 @@ final class AppSettings {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        // API key now lives in UserDefaults. If a value is still in the Keychain
-        // from an older build, migrate it once and clear it from the Keychain.
-        if let stored = defaults.string(forKey: Keys.apiKey), !stored.isEmpty {
+        // Secrets stored securely in KeychainStore with automatic UserDefaults migration.
+        if let stored = KeychainStore.read(account: Keys.apiKey), !stored.isEmpty {
             self.apiKey = stored
-        } else if let legacy = KeychainStore.read(account: Keys.legacyApiKey),
-                  !legacy.isEmpty {
+        } else if let legacy = defaults.string(forKey: Keys.apiKey), !legacy.isEmpty {
             self.apiKey = legacy
-            defaults.set(legacy, forKey: Keys.apiKey)
+            KeychainStore.save(legacy, account: Keys.apiKey)
+            defaults.removeObject(forKey: Keys.apiKey)
+        } else if let legacyKey = KeychainStore.read(account: Keys.legacyApiKey), !legacyKey.isEmpty {
+            self.apiKey = legacyKey
+            KeychainStore.save(legacyKey, account: Keys.apiKey)
             KeychainStore.delete(account: Keys.legacyApiKey)
         } else {
             self.apiKey = ""
         }
-        self.tmdbAPIKey = defaults.string(forKey: Keys.tmdbApiKey) ?? ""
-        self.youtubeAPIKey = defaults.string(forKey: Keys.youtubeApiKey) ?? ""
+
+        if let stored = KeychainStore.read(account: Keys.tmdbApiKey), !stored.isEmpty {
+            self.tmdbAPIKey = stored
+        } else if let legacy = defaults.string(forKey: Keys.tmdbApiKey), !legacy.isEmpty {
+            self.tmdbAPIKey = legacy
+            KeychainStore.save(legacy, account: Keys.tmdbApiKey)
+            defaults.removeObject(forKey: Keys.tmdbApiKey)
+        } else {
+            self.tmdbAPIKey = ""
+        }
+
+        if let stored = KeychainStore.read(account: Keys.youtubeApiKey), !stored.isEmpty {
+            self.youtubeAPIKey = stored
+        } else if let legacy = defaults.string(forKey: Keys.youtubeApiKey), !legacy.isEmpty {
+            self.youtubeAPIKey = legacy
+            KeychainStore.save(legacy, account: Keys.youtubeApiKey)
+            defaults.removeObject(forKey: Keys.youtubeApiKey)
+        } else {
+            self.youtubeAPIKey = ""
+        }
+
         self.youtubeCookiesPath = defaults.string(forKey: Keys.youtubeCookies) ?? ""
-        self.telegramBotToken = defaults.string(forKey: Keys.telegramBotToken) ?? ""
+
+        if let stored = KeychainStore.read(account: Keys.telegramBotToken), !stored.isEmpty {
+            self.telegramBotToken = stored
+        } else if let legacy = defaults.string(forKey: Keys.telegramBotToken), !legacy.isEmpty {
+            self.telegramBotToken = legacy
+            KeychainStore.save(legacy, account: Keys.telegramBotToken)
+            defaults.removeObject(forKey: Keys.telegramBotToken)
+        } else {
+            self.telegramBotToken = ""
+        }
+
         self.telegramChannelId = defaults.string(forKey: Keys.telegramChannelId) ?? "@telonyx_club"
         self.autoPostToTelegram = defaults.object(forKey: Keys.autoPostToTelegram) as? Bool ?? true
         self.profileName = defaults.string(forKey: Keys.profile) ?? ""
@@ -472,10 +527,11 @@ final class AppSettings {
     private func persistAPIKey() {
         let trimmed = apiKey.trimmed
         if trimmed.isEmpty {
-            defaults.removeObject(forKey: Keys.apiKey)
+            KeychainStore.delete(account: Keys.apiKey)
         } else {
-            defaults.set(trimmed, forKey: Keys.apiKey)
+            KeychainStore.save(trimmed, account: Keys.apiKey)
         }
+        defaults.removeObject(forKey: Keys.apiKey)
     }
 
     private enum Keys {

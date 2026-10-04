@@ -46,7 +46,9 @@ final class ModelManager {
     /// captioning) to avoid swapping/OOM.
     var canKeepBothResident: Bool { systemRAMGB >= 24 }
 
-    var isReady: Bool { engine != nil }
+    var isReady: Bool {
+        momentFinder.isReady || engine != nil || hasEnoughRAM
+    }
     var isBusy: Bool {
         switch phase {
         case .downloading, .loading: true

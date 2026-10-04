@@ -2,7 +2,7 @@ import { chromium } from 'playwright-core';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEFAULT_PROFILE_DIR = path.join(
@@ -29,9 +29,7 @@ export function getProfileDirectory() {
  */
 export function cleanStaleLocks(profileDir = getProfileDirectory()) {
   try {
-    const stdout = execSync(`ps aux | grep -i "${profileDir}" | grep -v grep | awk '{print $2}' || true`, {
-      encoding: 'utf8',
-    }).trim();
+    const stdout = execFileSync('pgrep', ['-f', profileDir], { encoding: 'utf8' }).trim();
     if (stdout) {
       const pids = stdout.split(/\s+/).map((p) => parseInt(p, 10)).filter(Boolean);
       for (const pid of pids) {

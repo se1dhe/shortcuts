@@ -267,9 +267,27 @@ final class ShortClip: Identifiable {
             return (cached, false)
         }
 
+        let tmp = workingDirectory ?? FileManager.default.temporaryDirectory
+
+        // Ultra-fast Single-Pass Path: тримминг + рефрейминг + субтитры + водяной знак + оверлеи + аудио в 1 проход
+        if !wantAntiCopyright && !wantsEnhancement {
+            Self.log("render: executing ultra-fast Single-Pass Compositor")
+            let singlePassOut = tmp.appendingPathComponent("shortcast-singlepass-\(id.uuidString).mp4")
+            do {
+                let renderedURL = try await SinglePassClipCompositor.shared.renderClip(
+                    clip: self,
+                    workingDirectory: workingDirectory,
+                    outputURL: singlePassOut
+                )
+                RenderedVideoCache.store(renderedURL, for: cacheKey, workingDirectory: workingDirectory)
+                return (renderedURL, true)
+            } catch {
+                Self.log("SinglePassClipCompositor fallback to legacy multi-pass: \(error.localizedDescription)")
+            }
+        }
+
         var currentURL = clipJob.url
         var isTemp = false
-        let tmp = workingDirectory ?? FileManager.default.temporaryDirectory
 
         // Step 0: manual trim (in/out from the timeline editor).
         if hasCustomTrim {

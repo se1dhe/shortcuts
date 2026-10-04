@@ -175,11 +175,7 @@ struct ContentView: View {
         }
     }
 
-    private var appVersionString: String {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
-        return "v\(version) (build \(build))"
-    }
+    private let versionService: any AppVersionProviding = AppVersionService.shared
 
     private var sidebarBottomInfo: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -194,10 +190,18 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             }
             
-            Text(appVersionString)
+            Text(versionService.displayVersion)
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundStyle(.secondary)
-                .help("Текущая версия приложения")
+                .help(versionService.detailedVersionInfo)
+                .contextMenu {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(versionService.detailedVersionInfo, forType: .string)
+                    } label: {
+                        Label("Скопировать версию", systemImage: "doc.on.doc")
+                    }
+                }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)

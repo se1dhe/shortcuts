@@ -13,14 +13,40 @@ struct VideoJob: Identifiable, Sendable, Equatable {
     let url: URL
     let durationSeconds: Double
     let sourceMetadata: VideoSourceMetadata?
+    let originalFileName: String?
 
-    init(url: URL, durationSeconds: Double, sourceMetadata: VideoSourceMetadata? = nil) {
+    init(
+        url: URL,
+        durationSeconds: Double,
+        sourceMetadata: VideoSourceMetadata? = nil,
+        originalFileName: String? = nil
+    ) {
         self.url = url
         self.durationSeconds = durationSeconds
         self.sourceMetadata = sourceMetadata
+        self.originalFileName = originalFileName
     }
 
     var fileName: String { url.lastPathComponent }
+
+    /// Returns a human-friendly title candidate, prioritizing metadata and original file name over internal temp names.
+    var effectiveTitle: String {
+        if let metaTitle = sourceMetadata?.title,
+           !metaTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !MovieMetadataService.isGarbageTitle(metaTitle) {
+            return metaTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let orig = originalFileName,
+           !orig.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !MovieMetadataService.isGarbageTitle(orig) {
+            return orig.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let fileBase = (fileName as NSString).deletingPathExtension
+        if !MovieMetadataService.isGarbageTitle(fileBase) {
+            return fileBase.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return ""
+    }
 
     /// `m:ss`, e.g. `0:42`.
     var durationLabel: String {

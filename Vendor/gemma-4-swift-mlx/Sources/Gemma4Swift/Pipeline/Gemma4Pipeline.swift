@@ -195,7 +195,7 @@ public final class Gemma4Pipeline: @unchecked Sendable {
     }
 
     private var container: ModelContainer?
-    nonisolated(unsafe) private var currentSession: ChatSession?
+    private var currentSession: ChatSession?
 
     // MARK: - Chargement
 
@@ -262,7 +262,7 @@ public final class Gemma4Pipeline: @unchecked Sendable {
         container = nil
         currentSession = nil
         state = .unloaded
-        MLX.GPU.clearCache()
+        MLX.Memory.clearCache()
     }
 
     // MARK: - Generation texte
@@ -289,7 +289,8 @@ public final class Gemma4Pipeline: @unchecked Sendable {
         state = .processing
         defer { state = .ready }
 
-        return try await session.respond(to: prompt)
+        nonisolated(unsafe) let s = session
+        return try await s.respond(to: prompt)
     }
 
     /// Genere en streaming (token par token)
@@ -340,7 +341,8 @@ public final class Gemma4Pipeline: @unchecked Sendable {
         }
         state = .processing
         defer { state = .ready }
-        return try await session.respond(to: prompt)
+        nonisolated(unsafe) let s = session
+        return try await s.respond(to: prompt)
     }
 
     /// Continue la conversation en streaming (multi-turn)

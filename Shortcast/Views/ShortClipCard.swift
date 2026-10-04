@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import AVFoundation
 
 /// One generated short: its hook + rationale, an Approve toggle, the three
 /// editable platform previews of the cut clip, and a per-clip Publish action.
@@ -16,6 +17,10 @@ struct ShortClipCard: View {
     @State private var detectedMovie: TMDBMovie?
     @State private var movieCandidates: [TMDBMovie] = []
     @State private var isRegeneratingCinemaContent = false
+
+    @State private var publishPlatforms: Set<SocialPlatform> = Set(SocialPlatform.allCases)
+    @State private var showBrowserPublish = false
+    @State private var previewPlatform: SocialPlatform = .tiktok
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -39,6 +44,9 @@ struct ShortClipCard: View {
         .opacity(clip.isApproved ? 1 : 0.55)
         .sheet(isPresented: publishResultPresented) {
             PublishResultView(report: clip.publishReport, error: clip.publishError)
+        }
+        .sheet(isPresented: $showBrowserPublish) {
+            BrowserPublishSheet(clip: clip)
         }
         .onChange(of: clip.detectedMovieTitle) { _, newValue in
             if !newValue.trimmed.isEmpty { manualMovieTitle = newValue }
@@ -252,6 +260,10 @@ struct ShortClipCard: View {
         .background(.quinary, in: RoundedRectangle(cornerRadius: 10))
     }
 
+    private var musicEditor: some View {
+        ShortClipAudioEditor(clip: clip)
+    }
+
     private var enhancementEditor: some View {
         VStack(alignment: .leading, spacing: 6) {
             Picker("Enhancement", selection: $clip.videoEnhancementPreset) {
@@ -383,15 +395,24 @@ struct ShortClipCard: View {
     private var combinedDescriptionAndHashtagsBinding: Binding<String> {
         Binding(
             get: {
-                let summary = clip.variants.first(where: { $0.platform == .tiktok })?.summary.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let tags = clip.variants.first(where: { $0.platform == .tiktok })?.hashtagLine.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let target = clip.variants.first(where: { $0.platform == previewPlatform }) ?? clip.variants.first
+                let summary = target?.summary.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let tags = target?.hashtagLine.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 return [summary, tags].filter { !$0.isEmpty }.joined(separator: "\n\n")
             },
             set: { newValue in
                 let (summary, tags) = SocialCopyBox.splitCombined(newValue)
-                for idx in clip.variants.indices {
+                if let idx = clip.variants.firstIndex(where: { $0.platform == previewPlatform }) {
                     clip.variants[idx].summary = summary
                     clip.variants[idx].hashtags = tags
+                } else {
+                    clip.variants.append(PostVariant(
+                        platform: previewPlatform,
+                        hook: clip.displayTitle,
+                        summary: summary,
+                        hashtags: tags,
+                        pinnedComment: ""
+                    ))
                 }
             })
     }
@@ -467,15 +488,15 @@ struct ShortClipCard: View {
             }
 
             // ── Description & Hashtags (Combined in one window) ────────
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("Описание и хештеги поста")
+                    Text("Описание и хештеги:")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
                     Picker("", selection: $clip.descriptionMode) {
-                        Text("Сцена").tag(CinemaContentGenerator.DescriptionMode.scene)
                         Text("Фильм").tag(CinemaContentGenerator.DescriptionMode.movie)
+                        Text("Сцена").tag(CinemaContentGenerator.DescriptionMode.scene)
                     }
                     .pickerStyle(.segmented)
                     .frame(width: 140)
@@ -484,6 +505,14 @@ struct ShortClipCard: View {
                         regenerateCinemaContent()
                     }
                 }
+
+                Picker("Платформа", selection: $previewPlatform) {
+                    ForEach(SocialPlatform.allCases) { platform in
+                        Label(platform.rawValue.capitalized, systemImage: platform.symbolName)
+                            .tag(platform)
+                    }
+                }
+                .pickerStyle(.segmented)
 
                 Toggle(isOn: Binding(
                     get: { settings.textAdEnabled },
@@ -532,6 +561,8 @@ struct ShortClipCard: View {
                 .font(.headline)
             subtitleEditor
             watermarkEditor
+            musicEditor
+            AntiCopyrightEditor(clip: clip)
             tiktokPreflight
         }
     }
@@ -606,25 +637,113 @@ struct ShortClipCard: View {
 
     @ViewBuilder
     private var footer: some View {
-        if settings.isConfigured {
-            HStack {
-                Spacer()
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
                 Button {
-                    Task { await clip.publish(settings: settings) }
+                    showBrowserPublish = true
                 } label: {
-                    if clip.isPublishing {
-                        HStack(spacing: 8) {
+                    Label("Автопубликация (Google Chrome)", systemImage: "globe.badge.chevron.backward")
+                        .font(.callout.weight(.medium))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.purple)
+                .disabled(clip.clipJob == nil || clip.variants.isEmpty)
+
+                Button {
+                    Task { await clip.publishToTelegram(settings: settings) }
+                } label: {
+                    if clip.isPublishingToTelegram {
+                        HStack(spacing: 6) {
                             ProgressView().controlSize(.small)
-                            Text("Publishing…")
+                            Text("Отправка в TG…")
                         }
-                        .frame(minWidth: 150)
                     } else {
-                        Label("Publish this short", systemImage: "paperplane.fill")
-                            .frame(minWidth: 150)
+                        Label("Пост в Telegram", systemImage: "paperplane.fill")
                     }
                 }
-                .buttonStyle(.bordered)
-                .disabled(clip.isPublishing || clip.variants.isEmpty)
+                .buttonStyle(.borderedProminent)
+                .tint(Color(hex: "2AABEE"))
+                .disabled(clip.isPublishingToTelegram || settings.telegramBotToken.trimmed.isEmpty)
+                .help(settings.telegramBotToken.trimmed.isEmpty ? "Укажите токен бота в Настройках (⌘,)" : "Опубликовать карточку фильма в @telonyx_club")
+
+                Spacer()
+
+                if settings.isConfigured {
+                    HStack(spacing: 8) {
+                        ForEach([SocialPlatform.tiktok, .instagram, .youtube]) { platform in
+                            let active = publishPlatforms.contains(platform)
+                            Button {
+                                if active {
+                                    if publishPlatforms.count > 1 { publishPlatforms.remove(platform) }
+                                } else {
+                                    publishPlatforms.insert(platform)
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: platform.symbolName)
+                                        .font(.caption2.weight(.bold))
+                                        .foregroundStyle(active ? Color(hex: platform.tintHex) : .secondary)
+                                    Text(platform.rawValue.capitalized)
+                                        .font(.caption2.weight(.medium))
+                                        .foregroundStyle(active ? .primary : .secondary)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(active ? Color.secondary.opacity(0.14) : Color.secondary.opacity(0.04), in: Capsule())
+                                .overlay(Capsule().strokeBorder(active ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    Button {
+                        Task { await clip.publish(settings: settings, selectedPlatforms: publishPlatforms) }
+                    } label: {
+                        if clip.isPublishing {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text("Выгрузка…")
+                            }
+                            .frame(minWidth: 140)
+                        } else {
+                            Label("Через API (\(publishPlatforms.filter { $0 != .telegram }.count))", systemImage: "paperplane.fill")
+                                .frame(minWidth: 140)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(clip.isPublishing || clip.variants.isEmpty)
+                } else {
+                    Text("API Upload-Post не настроен")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            if let tgURL = clip.telegramPostURL {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text("Опубликовано в Telegram:")
+                        .font(.caption)
+                    Link(tgURL, destination: URL(string: tgURL)!)
+                        .font(.caption.weight(.semibold))
+                    Spacer()
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            } else if let tgErr = clip.telegramPublishError {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("Ошибка отправки в Telegram: \(tgErr)")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Spacer()
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             }
         }
     }

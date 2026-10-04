@@ -25,6 +25,7 @@ Vendor/gemma-4-swift-mlx/.build/
 
 # Gemini / Antigravity scratch
 .gemini/
+scratch/
 
 # macOS
 .DS_Store
@@ -57,3 +58,7 @@ test_*.py
 # Distribution artifacts
 *.dmg
 dist/
+
+# Dependencies & local video assets
+node_modules/
+vid/

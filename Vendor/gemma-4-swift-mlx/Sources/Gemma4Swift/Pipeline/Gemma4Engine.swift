@@ -145,7 +145,7 @@ public final class Gemma4Engine: @unchecked Sendable {
         let temp = temperature
         let tokenCallback = onToken
 
-        return try await container.perform { context in
+        return await container.perform { context in
             if let mm = context.model as? Gemma4MultimodalLLMModel {
                 mm.pendingPixelValues = inPixels
                 if let inVideo {

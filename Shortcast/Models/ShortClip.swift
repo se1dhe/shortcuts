@@ -9,7 +9,7 @@ import Observation
 final class ShortClip: Identifiable {
 
     let id = UUID()
-    let candidate: ClipCandidate
+    var candidate: ClipCandidate
     /// What's actually said in this clip's range — grounds the captioning.
     let transcriptSlice: String
     /// Transcript segments with timestamps for this clip's time range, used
@@ -29,9 +29,10 @@ final class ShortClip: Identifiable {
     var detectedMovieYear: String = ""
     var imdbRating: String?
     var rottenTomatoesScore: String?
+    var posterURL: URL?
     /// Whether the generated description describes the scene (from the transcript)
     /// or the movie (its synopsis). Chosen in the editor, persisted across reopens.
-    var descriptionMode: CinemaContentGenerator.DescriptionMode = .scene
+    var descriptionMode: CinemaContentGenerator.DescriptionMode = .movie
 
     enum Stage: Equatable {
         case pending, cutting, captioning, ready
@@ -115,6 +116,38 @@ final class ShortClip: Identifiable {
     /// Output bitrate for HEVC pass (Mbps).
     var videoEnhancementBitrate: Int
 
+    // MARK: - Background music & sound mastering
+    /// Volume multiplier for the original video/speech track (0.0 = Muted, 1.0 = 100%, 2.0 = 200%).
+    var originalAudioVolume: Double = 1.0
+    /// Whether the original video audio track is muted completely.
+    var isOriginalAudioMuted: Bool = false
+    /// Whether background music is mixed into the short. Default true for cinema mode.
+    var backgroundMusicEnabled: Bool = true
+    /// User selected music track URL (if manually picked or imported).
+    var selectedMusicURL: URL? = nil
+    /// Master volume of overlaid background music across the entire short (0.0 to 1.5, default 0.70 = 70%).
+    var musicVolume: Double = 0.70
+    /// Trim/start offset for the background music (in seconds).
+    var musicStartOffsetSeconds: Double = 0.0
+    /// Total duration of the selected background music track (in seconds).
+    var musicTrackDurationSeconds: Double = 0.0
+    /// Whether voice ducking is enabled. When false, background music volume stays constant across the entire short.
+    var musicDuckingEnabled: Bool = true
+    /// Background music volume during speech (default -14.0 dB for optimal ducking).
+    var musicDuckingDB: Float = -14.0
+    /// Smooth fade-in duration for music (seconds).
+    var musicFadeInDuration: Double = 0.30
+    /// Smooth fade-out duration for music at the tail of the short (seconds).
+    var musicFadeOutDuration: Double = 0.80
+
+    // MARK: - Anti-Copyright Protection & TikTok Shield
+    /// Whether anti-copyright protection transforms are enabled for this clip.
+    var antiCopyrightEnabled: Bool = true
+    /// User-selected anti-copyright protection preset.
+    var antiCopyrightPreset: AntiCopyrightPreset = .tikTokShield
+    /// Custom or active anti-copyright configuration.
+    var antiCopyrightConfig: AntiCopyrightConfig = .tikTokShield
+
     private(set) var isPublishing = false
     private(set) var publishReport: UploadPostClient.PublishReport?
     var publishError: String?
@@ -170,6 +203,10 @@ final class ShortClip: Identifiable {
     }
 
     var displayTitle: String {
+        if !detectedMovieTitle.trimmed.isEmpty {
+            let yearPart = detectedMovieYear.trimmed.isEmpty ? "" : " (\(detectedMovieYear.trimmed))"
+            return "🎬 \(detectedMovieTitle.trimmed)\(yearPart)"
+        }
         let candidateHook = candidate.hook.trimmed
         if !candidateHook.isEmpty { return candidateHook }
         if let tikTokHook = variants.first(where: { $0.platform == .tiktok })?.hook.trimmed,
@@ -190,13 +227,14 @@ final class ShortClip: Identifiable {
         let wantSubtitles = burnSubtitles && !subtitleSegments.isEmpty
         let wantWatermark = watermarkEnabled && !watermarkText.isEmpty
         let wantPromo = promoOverlayEnabled && PromoOverlayConfig(promoCode: promoCode, holdSeconds: promoDurationSeconds).isValid
-        return wantReframe || wantOverlay || wantSubtitles || wantWatermark || wantPromo
+        let wantAudio = backgroundMusicEnabled || originalAudioVolume != 1.0 || isOriginalAudioMuted || musicStartOffsetSeconds > 0
+        return wantReframe || wantOverlay || wantSubtitles || wantWatermark || wantPromo || wantAudio
     }
 
     /// Builds the file to upload or download: applies the vertical reframe and/or
     /// the burned-in text hook when enabled, otherwise returns the raw cut clip.
     /// `isTemporary` says whether the caller must delete the returned file.
-    private func makeRenderedFile(
+    func makeRenderedFile(
         workingDirectory: URL? = nil,
         customMusicDirectory: URL? = nil,
         enhancementOptions: VideoEnhancementOptions? = nil
@@ -210,14 +248,17 @@ final class ShortClip: Identifiable {
         let wantPromo = isCinemaMode ? false : (promoOverlayEnabled && PromoOverlayConfig(promoCode: promoCode, holdSeconds: promoDurationSeconds).isValid)
         let wantWatermark = watermarkEnabled && !watermarkText.isEmpty
         let wantsEnhancement = enhancementOptions?.preset != .off
+        let wantAudio = backgroundMusicEnabled || originalAudioVolume != 1.0 || isOriginalAudioMuted || musicStartOffsetSeconds > 0
+        let wantAntiCopyright = (isCinemaMode || antiCopyrightEnabled) && antiCopyrightConfig.isActive
         let needsRenderBase = isCinemaMode || hasCustomTrim || wantReframe || wantOverlay
-        let needsRenderExtras = wantSubtitles || wantWatermark || wantPromo || wantsEnhancement
+        let needsRenderExtras = wantSubtitles || wantWatermark || wantPromo || wantsEnhancement || wantAudio || wantAntiCopyright
         let needsRender = needsRenderBase || needsRenderExtras
         let cacheKey = renderCacheKey(enhancementOptions: enhancementOptions)
 
         Self.log("render: burnSubtitles=\(burnSubtitles) segments=\(subtitleSegments.count) wantSubtitles=\(wantSubtitles)")
         Self.log("render: watermarkEnabled=\(watermarkEnabled) watermarkText='\(watermarkText)' wantWatermark=\(wantWatermark)")
         Self.log("render: overlayEnabled=\(overlayEnabled) hook='\(hook)' wantOverlay=\(wantOverlay)")
+        Self.log("render: antiCopyrightEnabled=\(antiCopyrightEnabled) preset=\(antiCopyrightPreset.rawValue) wantAntiCopyright=\(wantAntiCopyright)")
         Self.log("render: needsRender=\(needsRender)")
 
         if needsRender,
@@ -242,12 +283,13 @@ final class ShortClip: Identifiable {
             }
         }
 
-        // Step 7: Anti-Copyright Protection (Mirror + micro-zoom + color/pitch shift)
-        if isCinemaMode {
-            Self.log("render: step 0.5 — anti-copyright protection")
+        // Step 0.5: Anti-Copyright Protection & TikTok Shield
+        if wantAntiCopyright {
+            Self.log("render: step 0.5 — anti-copyright protection (\(antiCopyrightPreset.rawValue))")
             let antiOut = tmp.appendingPathComponent("shortcast-anticopyright-\(id.uuidString).mp4")
             do {
-                let protectedURL = try await AntiCopyrightService.subtle.process(
+                let service = AntiCopyrightService(config: antiCopyrightConfig)
+                let protectedURL = try await service.process(
                     videoURL: currentURL,
                     outputURL: antiOut,
                     workingDirectory: workingDirectory)
@@ -256,6 +298,14 @@ final class ShortClip: Identifiable {
                 }
                 currentURL = protectedURL
                 isTemp = true
+
+                // Scale subtitle timestamps if audioSpeedMultiplier changed video duration
+                if abs(antiCopyrightConfig.audioSpeedMultiplier - 1.0) > 0.0001 {
+                    let speedFactor = 1.0 / antiCopyrightConfig.audioSpeedMultiplier
+                    subtitleSegments = subtitleSegments.map { $0.scaled(by: speedFactor) }
+                    Self.log("render: adjusted subtitle timestamps by speed factor \(speedFactor)")
+                }
+
                 Self.log("render: step 0.5 — anti-copyright protection OK")
             } catch {
                 Self.log("anti-copyright protection fallback: \(error.localizedDescription)")
@@ -348,27 +398,52 @@ final class ShortClip: Identifiable {
             isTemp = true
         }
 
-        // Step 6: Cinema Audio Mastering (-14 LUFS + dialogue clarity)
-        if isCinemaMode {
-            Self.log("render: step 6 — cinema audio mastering (-14 LUFS)")
+        // Step 6: Audio Mastering (-14 LUFS + original volume control + background music trimming & ducking)
+        if isCinemaMode || wantAudio {
+            Self.log("render: step 6 — audio mastering (-14 LUFS, music=\(backgroundMusicEnabled), origVol=\(originalAudioVolume), muted=\(isOriginalAudioMuted))")
             let masteredOut = tmp.appendingPathComponent("shortcast-mastered-\(id.uuidString).mp4")
             let speechTimes = subtitleSegments.map { (start: $0.start, end: $0.end) }
             do {
-                // User disabled background music matching for now
-                let bgMusic: URL? = nil
+                let bgMusic: URL?
+                if backgroundMusicEnabled {
+                    if let customSelected = selectedMusicURL {
+                        bgMusic = customSelected
+                    } else {
+                        let mood = candidate.mood?.mood.rawValue ?? detectedMovieTitle
+                        bgMusic = await BackgroundMusicSelector.selectBestTrack(from: customMusicDirectory, mood: mood)
+                    }
+                } else {
+                    bgMusic = nil
+                }
+
+                let effectiveOriginalVol = isOriginalAudioMuted ? 0.0 : Float(originalAudioVolume)
+                let mixConfig = CinemaAudioMasteringService.AudioMixConfig(
+                    musicURL: bgMusic,
+                    originalAudioVolume: effectiveOriginalVol,
+                    dialogueBoostDB: isOriginalAudioMuted ? -100.0 : 2.0,
+                    musicVolume: Float(musicVolume),
+                    musicStartOffsetSeconds: musicStartOffsetSeconds,
+                    musicDuckingEnabled: musicDuckingEnabled,
+                    musicDuckingDB: musicDuckingDB,
+                    musicRestingDB: -6.0,
+                    musicFadeInDuration: musicFadeInDuration,
+                    musicFadeOutDuration: musicFadeOutDuration
+                )
+
                 try await CinemaAudioMasteringService.applyMastering(
                     videoURL: currentURL,
                     speechSegments: speechTimes,
                     backgroundMusicURL: bgMusic,
-                    outputURL: masteredOut)
+                    outputURL: masteredOut,
+                    config: mixConfig)
                 if isTemp && currentURL != clipJob.url {
                     try? FileManager.default.removeItem(at: currentURL)
                 }
                 currentURL = masteredOut
                 isTemp = true
-                Self.log("render: step 6 — cinema audio mastering OK (-14 LUFS)")
+                Self.log("render: step 6 — audio mastering OK (-14 LUFS with music: \(bgMusic?.lastPathComponent ?? "none"))")
             } catch {
-                Self.log("cinema audio mastering fallback: \(error.localizedDescription)")
+                Self.log("audio mastering fallback: \(error.localizedDescription)")
             }
         }
 
@@ -431,7 +506,11 @@ final class ShortClip: Identifiable {
 
     // MARK: - Publishing
 
-    func publish(settings: AppSettings, scheduledDate: Date? = nil) async {
+    func publish(
+        settings: AppSettings,
+        selectedPlatforms: Set<SocialPlatform>? = nil,
+        scheduledDate: Date? = nil
+    ) async {
         guard clipJob != nil, !isPublishing else { return }
         publishError = nil
         publishReport = nil
@@ -465,7 +544,9 @@ final class ShortClip: Identifiable {
             videoURL: uploadURL,
             sourceMetadata: sourceMetadata,
             tiktokVariant: tiktok,
-            promoEnabled: promoOverlayEnabled)
+            promoEnabled: promoOverlayEnabled,
+            antiCopyrightEnabled: antiCopyrightEnabled,
+            antiCopyrightConfig: antiCopyrightConfig)
         tiktokPreflightReport = preflight
         if preflight.blocksUpload {
             publishError = "TikTok preflight found a technical blocker: \(preflight.findings.first(where: { $0.severity == .error })?.detail ?? "inspect the final video and try again.")"
@@ -480,10 +561,39 @@ final class ShortClip: Identifiable {
                 videoURL: uploadURL,
                 variants: variants,
                 tiktokAsDraft: settings.tiktokAsDraft,
+                selectedPlatforms: selectedPlatforms,
                 scheduledDate: scheduledDate)
             self.scheduledDate = scheduledDate
         } catch {
             publishError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Telegram Publishing
+
+    var isPublishingToTelegram = false
+    var telegramPostURL: String?
+    var telegramPublishError: String?
+
+    func publishToTelegram(
+        settings: AppSettings,
+        service: TelegramPublishingProtocol = TelegramPublishingService.shared
+    ) async {
+        guard !isPublishingToTelegram else { return }
+        isPublishingToTelegram = true
+        telegramPublishError = nil
+        defer { isPublishingToTelegram = false }
+
+        do {
+            let msgId = try await service.publishMoviePost(
+                clip: self,
+                botToken: settings.telegramBotToken,
+                channelId: settings.telegramChannelId
+            )
+            let channelClean = settings.telegramChannelId.trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+            self.telegramPostURL = "https://t.me/\(channelClean)/\(msgId)"
+        } catch {
+            self.telegramPublishError = error.localizedDescription
         }
     }
 
@@ -560,7 +670,9 @@ final class ShortClip: Identifiable {
             videoURL: clipJob.url,
             sourceMetadata: sourceMetadata,
             tiktokVariant: tiktok,
-            promoEnabled: promoOverlayEnabled)
+            promoEnabled: promoOverlayEnabled,
+            antiCopyrightEnabled: antiCopyrightEnabled,
+            antiCopyrightConfig: antiCopyrightConfig)
     }
 
     func applySubtitleDefaults(_ appearance: SubtitleAppearance, burnSubtitles: Bool) {
@@ -601,6 +713,12 @@ final class ShortClip: Identifiable {
             String(enhancementOptions?.contrast ?? 0),
             String(enhancementOptions?.saturation ?? 0),
             String(enhancementOptions?.bitrateMbps ?? 0),
+            String(originalAudioVolume), String(isOriginalAudioMuted),
+            String(backgroundMusicEnabled), selectedMusicURL?.absoluteString ?? "",
+            String(musicVolume), String(musicStartOffsetSeconds),
+            String(musicDuckingEnabled), String(musicDuckingDB),
+            String(musicFadeInDuration), String(musicFadeOutDuration),
+            String(antiCopyrightEnabled), antiCopyrightPreset.rawValue, String(antiCopyrightConfig.hashValue),
         ].joined(separator: "\u{1F}")
         return RenderedVideoCache.key(for: payload)
     }

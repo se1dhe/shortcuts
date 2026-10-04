@@ -91,6 +91,14 @@ struct ShortClipTile: View {
                         .background(.black.opacity(0.55), in: Circle())
                         .foregroundStyle(.white)
                 }
+                if clip.backgroundMusicEnabled {
+                    Image(systemName: "music.note")
+                        .font(.caption2.weight(.bold))
+                        .padding(5)
+                        .background(.black.opacity(0.55), in: Circle())
+                        .foregroundStyle(.white)
+                        .help("Фоновая музыка включена")
+                }
                 Spacer()
                 // Approve toggle.
                 Button {
@@ -107,13 +115,13 @@ struct ShortClipTile: View {
             }
             Spacer()
             // Action bar.
-            HStack(spacing: 10) {
-                tileButton("play.fill", "Play with sound") { showPlayer = true }
-                tileButton("square.and.pencil", "Edit captions") { showEditor = true }
+            HStack(spacing: 8) {
+                tileButton("play.fill", "Смотреть со звуком") { showPlayer = true }
+                tileButton("square.and.pencil", "Редактировать") { showEditor = true }
                 if clip.isExporting {
                     ProgressView().controlSize(.small).frame(width: 30, height: 30)
                 } else {
-                    tileButton("arrow.down.circle", "Download") { downloadClip() }
+                    tileButton("arrow.down.circle", "Скачать MP4") { downloadClip() }
                 }
             }
             .padding(6)

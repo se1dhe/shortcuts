@@ -23,22 +23,46 @@ struct DropZoneView: View {
 
             Picker("Mode", selection: $workspace.inputMode) {
                 ForEach(WorkspaceModel.InputMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
+                    Label(mode.title, systemImage: mode.symbol).tag(mode)
                 }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(maxWidth: 460)
+            .frame(maxWidth: 620)
 
             if workspace.inputMode == .youtube {
                 YouTubeContainerView(onVideoReady: onChooseFile)
             } else {
-                Toggle(isOn: $settings.transcriptionEnabled) {
-                    Label("Транскрибация видео (WhisperKit)", systemImage: "captions.bubble")
-                        .font(.callout.weight(.medium))
+                HStack(spacing: 20) {
+                    Toggle(isOn: $settings.transcriptionEnabled) {
+                        Label("Транскрибация (WhisperKit)", systemImage: "captions.bubble")
+                            .font(.callout.weight(.medium))
+                    }
+                    .toggleStyle(.switch)
+                    .help("Выключите транскрибацию, чтобы редактор открывался мгновенно без ожидания Whisper.")
+
+                    if workspace.inputMode == .shorts {
+                        Picker("Жанр моментов", selection: $settings.cinemaGenreMode) {
+                            ForEach(CinemaGenreMode.allCases) { mode in
+                                Label(mode.title, systemImage: mode.symbol).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .help(settings.cinemaGenreMode.subtitle)
+                    } else if workspace.inputMode == .longform {
+                        HStack(spacing: 6) {
+                            Image(systemName: "film.fill")
+                                .foregroundStyle(.yellow)
+                            Text("16:9 YouTube (5–8 мин)")
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(.yellow)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.yellow.opacity(0.12)))
+                    }
                 }
-                .toggleStyle(.switch)
-                .help("Выключите транскрибацию, чтобы редактор открывался мгновенно без ожидания Whisper.")
+                .frame(maxWidth: 580)
 
                 dropArea
             }
@@ -100,16 +124,25 @@ struct DropZoneView: View {
             Text(workspace.inputMode.dropTitle)
                 .font(.title2.weight(.semibold))
 
-            Text(workspace.inputMode == .shorts
-                 ? "MP4, MKV, WebM or AVI — unsupported containers are converted to MP4 on your Mac before processing."
-                 : workspace.inputMode.dropSubtitle)
+            Text(workspace.inputMode.dropSubtitle)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+                .frame(maxWidth: 480)
 
-            Button(workspace.inputMode == .shorts ? "Выбрать фильм…" : "Choose video…") {
+            Button {
                 showingImporter = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: workspace.inputMode.symbol)
+                    Text(buttonTitle)
+                }
+                .font(.headline)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
             }
+            .buttonStyle(.borderedProminent)
+            .tint(workspace.inputMode == .longform ? .yellow : .accentColor)
             .controlSize(.large)
             .padding(.top, 4)
         }
@@ -127,6 +160,15 @@ struct DropZoneView: View {
                     style: StrokeStyle(lineWidth: 2, dash: [9, 7]))
         )
         .animation(.easeInOut(duration: 0.15), value: isDropTargeted)
+    }
+
+    private var buttonTitle: String {
+        switch workspace.inputMode {
+        case .longform: return "Выбрать фильм для эссе…"
+        case .shorts:   return "Выбрать фильм для шортсов…"
+        case .caption:  return "Выбрать видеоклип…"
+        case .youtube:  return "Найти на YouTube…"
+        }
     }
 
     private func restartApp() {

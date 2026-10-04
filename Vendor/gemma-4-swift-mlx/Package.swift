@@ -50,5 +50,6 @@ let package = Package(
                 .product(name: "MLXNN", package: "mlx-swift"),
             ]
         ),
-    ]
+    ],
+    cxxLanguageStandard: .cxx17
 )

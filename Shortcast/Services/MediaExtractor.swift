@@ -43,8 +43,15 @@ enum MediaExtractor {
     /// Converts non-Apple video containers into a broadly compatible H.264/AAC
     /// MP4. The first pass uses VideoToolbox; a software H.264 fallback keeps
     /// imports working on Macs where the hardware encoder rejects the source.
-    static func normalizeInputIfNeeded(from sourceURL: URL, workingDirectory: URL) async throws -> URL {
-        guard needsNormalization(sourceURL) else { return sourceURL }
+    static func normalizeInputIfNeeded(
+        from sourceURL: URL,
+        workingDirectory: URL,
+        selectedAudioStreamIndex: Int? = nil
+    ) async throws -> URL {
+        // If normalization is not required and no specific audio track was chosen, pass-through.
+        // However, if a specific audio stream was chosen from a multi-track container,
+        // we MUST normalize to ensure AVFoundation/Whisper isolate that single track.
+        guard needsNormalization(sourceURL) || selectedAudioStreamIndex != nil else { return sourceURL }
 
         let inputDirectory = workingDirectory.appendingPathComponent("input", isDirectory: true)
         do {
@@ -63,19 +70,24 @@ enum MediaExtractor {
                 "FFmpeg is required for \(sourceURL.pathExtension.uppercased()) import: \(shortError(error))")
         }
 
-        let ffprobe: URL
-        do {
-            ffprobe = try await BinaryDownloadService.ensureAvailable(.ffprobe, workingDirectory: workingDirectory)
-        } catch {
-            throw MediaExtractorError.inputConversionFailed("FFprobe is required: \(shortError(error))")
+        let targetAudioMap: String
+        if let chosen = selectedAudioStreamIndex {
+            targetAudioMap = "0:\(chosen)"
+        } else {
+            let ffprobe: URL
+            do {
+                ffprobe = try await BinaryDownloadService.ensureAvailable(.ffprobe, workingDirectory: workingDirectory)
+            } catch {
+                throw MediaExtractorError.inputConversionFailed("FFprobe is required: \(shortError(error))")
+            }
+            targetAudioMap = await determineBestAudioTrack(sourceURL: sourceURL, ffprobe: ffprobe)
         }
-        let bestAudioTrack = await determineBestAudioTrack(sourceURL: sourceURL, ffprobe: ffprobe)
 
         let commonArguments = [
             "-hide_banner", "-y",
             "-i", sourceURL.path,
             "-map", "0:v:0",
-            "-map", bestAudioTrack,
+            "-map", targetAudioMap,
             "-map_metadata", "-1",
             "-map_chapters", "-1",
             "-pix_fmt", "yuv420p",
@@ -131,7 +143,11 @@ enum MediaExtractor {
     }
 
     /// Builds a `VideoJob` from a dropped file URL, verifying it really is a video.
-    static func makeJob(from url: URL, sourceMetadata: VideoSourceMetadata? = nil) async throws -> VideoJob {
+    static func makeJob(
+        from url: URL,
+        originalFileName: String? = nil,
+        sourceMetadata: VideoSourceMetadata? = nil
+    ) async throws -> VideoJob {
         let asset = AVURLAsset(url: url)
         let videoTracks: [AVAssetTrack]
         do {
@@ -149,7 +165,8 @@ enum MediaExtractor {
         return VideoJob(
             url: url,
             durationSeconds: CMTimeGetSeconds(duration),
-            sourceMetadata: sourceMetadata)
+            sourceMetadata: sourceMetadata,
+            originalFileName: originalFileName)
     }
 
     /// Extracts the audio track to a temporary `.m4a`. `maxSeconds` caps the
@@ -264,13 +281,25 @@ enum MediaExtractor {
         }
     }
 
-    private static func determineBestAudioTrack(
+    /// Public method to inspect all audio tracks in a media file using ffprobe.
+    static func inspectAudioTracks(
+        sourceURL: URL,
+        workingDirectory: URL
+    ) async -> [AudioTrackInfo] {
+        guard let ffprobe = try? await BinaryDownloadService.ensureAvailable(.ffprobe, workingDirectory: workingDirectory) else {
+            return []
+        }
+        return await inspectAudioTracks(sourceURL: sourceURL, ffprobe: ffprobe)
+    }
+
+    /// Inspects audio streams within a container using an already located ffprobe binary.
+    static func inspectAudioTracks(
         sourceURL: URL,
         ffprobe: URL
-    ) async -> String {
+    ) async -> [AudioTrackInfo] {
         let args = [
             "-v", "error",
-            "-show_entries", "stream=index,codec_type:stream_tags=title,language",
+            "-show_entries", "stream=index,codec_type,codec_name,channels,disposition:stream_tags=title,language",
             "-of", "json",
             sourceURL.path
         ]
@@ -280,39 +309,80 @@ enum MediaExtractor {
               let data = result.standardOutput.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let streams = json["streams"] as? [[String: Any]] else {
-            return "0:a:0?"
+            return []
         }
         
         let audioStreams = streams.filter { ($0["codec_type"] as? String) == "audio" }
-        guard !audioStreams.isEmpty else { return "0:a?" }
+        var resultTracks: [AudioTrackInfo] = []
         
-        // 1. Priority to explicitly marked Russian Dubs
-        for stream in audioStreams {
+        for (audioIdx, stream) in audioStreams.enumerated() {
+            guard let streamIndex = stream["index"] as? Int else { continue }
             let tags = stream["tags"] as? [String: Any]
-            let title = (tags?["title"] as? String)?.lowercased() ?? ""
-            if title.contains("дубляж") || title.contains("dub") || title.contains("dvd") || title.contains("проф") {
-                if let index = stream["index"] as? Int {
-                    return "0:\(index)"
-                }
-            }
+            let title = tags?["title"] as? String
+            let language = tags?["language"] as? String
+            let codec = (stream["codec_name"] as? String) ?? "unknown"
+            let channels = (stream["channels"] as? Int) ?? 2
+            let disposition = stream["disposition"] as? [String: Any]
+            let isDefault = (disposition?["default"] as? Int) == 1
+            let isForced = (disposition?["forced"] as? Int) == 1
+            
+            resultTracks.append(AudioTrackInfo(
+                id: streamIndex,
+                audioIndex: audioIdx,
+                title: title,
+                language: language,
+                codec: codec,
+                channels: channels,
+                isDefault: isDefault,
+                isForced: isForced
+            ))
         }
         
+        return resultTracks
+    }
+
+    /// Selects the most suitable audio track by default (prioritizing Russian dubs).
+    static func pickRecommendedAudioTrack(from tracks: [AudioTrackInfo]) -> AudioTrackInfo? {
+        guard !tracks.isEmpty else { return nil }
+
+        // 1. Priority to Russian Dubs (contains "дубляж", "dub", "проф")
+        for track in tracks {
+            let t = (track.title ?? "").lowercased()
+            if t.contains("дубляж") || t.contains("dub") || t.contains("dvd") || t.contains("проф") {
+                return track
+            }
+        }
+
         // 2. Priority to 'rus' or 'ru' language track
-        for stream in audioStreams {
-            let tags = stream["tags"] as? [String: Any]
-            let language = (tags?["language"] as? String)?.lowercased() ?? ""
-            if language == "rus" || language == "ru" {
-                if let index = stream["index"] as? Int {
-                    return "0:\(index)"
-                }
+        for track in tracks {
+            let l = (track.language ?? "").lowercased()
+            if l == "rus" || l == "ru" {
+                return track
             }
         }
-        
-        // 3. Fallback to first audio track (by index in file)
-        if let firstAudio = audioStreams.first, let index = firstAudio["index"] as? Int {
-            return "0:\(index)"
+
+        // 3. Fallback to track flagged as Russian voiceover
+        if let rus = tracks.first(where: { $0.isRussianVoiceover }) {
+            return rus
         }
-        
+
+        // 4. Fallback to container default track
+        if let def = tracks.first(where: { $0.isDefault }) {
+            return def
+        }
+
+        // 5. First track
+        return tracks.first
+    }
+
+    private static func determineBestAudioTrack(
+        sourceURL: URL,
+        ffprobe: URL
+    ) async -> String {
+        let tracks = await inspectAudioTracks(sourceURL: sourceURL, ffprobe: ffprobe)
+        if let best = pickRecommendedAudioTrack(from: tracks) {
+            return "0:\(best.id)"
+        }
         return "0:a:0?"
     }
 }
@@ -465,12 +535,12 @@ enum HighBitrateExporter {
         }
     }
 
-    /// ~24 Mbps for 1080×1920, scaled by pixel count and clamped to a sane range
-    /// (high-detail target; the delivery encode is generous so overlays/text stay crisp).
+    /// Cinema delivery bitrate: ~38 Mbps for 1080×1920 vertical, minimum 28 Mbps for square 1080×1080
+    /// (high-detail cinema target; preserves faces, dark movie shadows, and sharp subtitles).
     private static func targetBitrate(for size: CGSize) -> Int {
         let pixels = max(1, abs(size.width) * abs(size.height))
-        let bitrate = 24_000_000.0 * (pixels / (1080.0 * 1920.0))
-        return Int(min(40_000_000, max(8_000_000, bitrate)))
+        let bitrate = 38_000_000.0 * (pixels / (1080.0 * 1920.0))
+        return Int(min(50_000_000, max(28_000_000, bitrate)))
     }
 
     private static func pump(_ input: AVAssetWriterInput, from output: AVAssetReaderOutput) async {

@@ -1,7 +1,8 @@
 // Processeur audio pour Gemma 4 — Extraction de features mel spectrogram
 // Parametres alignes sur Gemma4AudioFeatureExtractor Python
 
-import AVFoundation
+@preconcurrency import AVFoundation
+@preconcurrency import AVFAudio
 import Accelerate
 import Foundation
 import MLX
@@ -123,15 +124,24 @@ public enum Gemma4AudioProcessor {
             throw AudioProcessingError.bufferError
         }
 
-        var isDone = false
-        try converter.convert(to: targetBuffer, error: nil) { _, outStatus in
-            if isDone {
+        final class AudioBufferFeeder: @unchecked Sendable {
+            var isDone = false
+        }
+        let feeder = AudioBufferFeeder()
+
+        var convError: NSError?
+        _ = converter.convert(to: targetBuffer, error: &convError) { _, outStatus in
+            if feeder.isDone {
                 outStatus.pointee = .noDataNow
                 return nil
             }
             outStatus.pointee = .haveData
-            isDone = true
+            feeder.isDone = true
             return origBuffer
+        }
+
+        if let convError {
+            throw convError
         }
 
         let data = targetBuffer.floatChannelData![0]
@@ -207,11 +217,17 @@ public enum Gemma4AudioProcessor {
         var realPart = [Float](repeating: 0, count: halfN)
         var imagPart = [Float](repeating: 0, count: halfN)
 
-        signal.withUnsafeBufferPointer { ptr in
-            ptr.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: halfN) { complexPtr in
-                var splitComplex = DSPSplitComplex(realp: &realPart, imagp: &imagPart)
-                vDSP_ctoz(complexPtr, 2, &splitComplex, 1, vDSP_Length(halfN))
-                vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2n, FFTDirection(FFT_FORWARD))
+        realPart.withUnsafeMutableBufferPointer { realBuf in
+            imagPart.withUnsafeMutableBufferPointer { imagBuf in
+                guard let realBase = realBuf.baseAddress, let imagBase = imagBuf.baseAddress else { return }
+                var splitComplex = DSPSplitComplex(realp: realBase, imagp: imagBase)
+                signal.withUnsafeBufferPointer { ptr in
+                    guard let base = ptr.baseAddress else { return }
+                    base.withMemoryRebound(to: DSPComplex.self, capacity: halfN) { complexPtr in
+                        vDSP_ctoz(complexPtr, 2, &splitComplex, 1, vDSP_Length(halfN))
+                        vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2n, FFTDirection(FFT_FORWARD))
+                    }
+                }
             }
         }
 

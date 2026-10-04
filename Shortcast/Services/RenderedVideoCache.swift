@@ -30,6 +30,13 @@ enum RenderedVideoCache {
         return destination
     }
 
+    /// Completely removes the render-cache directory.
+    static func clearAll(workingDirectory: URL?) {
+        guard let workingDirectory else { return }
+        let directory = workingDirectory.appendingPathComponent("render-cache", isDirectory: true)
+        try? FileManager.default.removeItem(at: directory)
+    }
+
     /// Keep the cache bounded: a recent set of renders is useful for immediate
     /// export/publish retries, while unbounded video files quietly consume disk.
     private static func prune(in directory: URL, maximumFiles: Int = 24) {

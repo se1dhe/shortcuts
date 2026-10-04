@@ -24,10 +24,6 @@
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.video</string>
-	<key>INIntentsSupported</key>
-	<array/>
-	<key>NSUserActivityTypes</key>
-	<array/>
 	<key>NSHumanReadableCopyright</key>
 	<string>Open source under the Apache License 2.0.</string>
 	<key>NSHighResolutionCapable</key>
@@ -38,5 +34,23 @@
 	<true/>
 	<key>NSSupportsSuddenTermination</key>
 	<true/>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Video Media</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.movie</string>
+				<string>public.video</string>
+				<string>public.mpeg-4</string>
+				<string>com.apple.quicktime-movie</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

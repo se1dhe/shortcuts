@@ -51,6 +51,7 @@ enum VideoTrimmer {
         try? FileManager.default.removeItem(at: output)
 
         guard let session = AVAssetExportSession(
+            asset: asset, presetName: AVAssetExportPresetHEVCHighestQuality) ?? AVAssetExportSession(
             asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
             throw TrimError.exportUnavailable
         }

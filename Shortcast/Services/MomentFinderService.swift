@@ -131,7 +131,8 @@ final class MomentFinderService {
         styleExamples: String = "",
         videoTitle: String = "",
         videoDescription: String = "",
-        sceneMap: String? = nil
+        sceneMap: String? = nil,
+        isComedy: Bool = false
     ) async throws -> [ClipCandidate] {
         guard let container else { throw MomentFinderError.notReady }
 
@@ -150,7 +151,11 @@ final class MomentFinderService {
         params.maxKVSize = s.maxKVSize
         params.kvBits = s.kvBits
 
-        let instructions = CinemaMomentDirector.cinemaSystemPrompt(movieTitle: videoTitle, language: language, sceneMap: sceneMap)
+        let instructions = CinemaMomentDirector.cinemaSystemPrompt(
+            movieTitle: videoTitle,
+            language: language,
+            sceneMap: sceneMap,
+            isComedy: isComedy)
         
         let maxChunkSize = 35000
         let chunks: [String]
@@ -186,16 +191,20 @@ final class MomentFinderService {
                 generateParameters: params,
                 additionalContext: ["enable_thinking": false])
 
-            let userPrompt = CinemaMomentDirector.cinemaUserPrompt(transcript: chunk, movieTitle: videoTitle, sceneMap: sceneMap)
+            let userPrompt = CinemaMomentDirector.cinemaUserPrompt(
+                transcript: chunk,
+                movieTitle: videoTitle,
+                sceneMap: sceneMap,
+                isComedy: isComedy)
 
-            Self.log("findMoments: chunk \(chunk.count) chars, using CinemaMomentDirector, sceneMap=\(sceneMap != nil)")
+            Self.log("findMoments: chunk \(chunk.count) chars, using CinemaMomentDirector, isComedy=\(isComedy), sceneMap=\(sceneMap != nil)")
             var raw = ""
             for try await token in session.streamResponse(to: userPrompt) {
                 raw += token
             }
             Self.log("findMoments raw output (\(raw.count) chars):\n\(raw)")
 
-            let arcs = CinemaMomentDirector.parseArcs(from: raw)
+            let arcs = CinemaMomentDirector.parseArcs(from: raw, isComedy: isComedy)
             let clips = arcs.map { $0.toClipCandidate() }
             Self.log("findMoments: parsed \(clips.count) clip(s) from chunk")
             allClips.append(contentsOf: clips)
@@ -434,6 +443,109 @@ final class MomentFinderService {
         } catch {
             Self.log("detectMovieFromMetadata failed: \(error.localizedDescription)")
             return nil
+        }
+    }
+
+    /// Identifies the movie/series (title + year) from dialogue lines and quotes in the transcript.
+    func detectMovieFromTranscript(sample: String) async -> (title: String, year: String)? {
+        guard let container else {
+            Self.log("detectMovieFromTranscript skipped: no model loaded")
+            return nil
+        }
+        let cleanedSample = sample.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanedSample.isEmpty else { return nil }
+
+        let s = profile.sampling
+        var params = GenerateParameters(
+            maxTokens: 200,
+            temperature: 0.1,
+            topP: s.topP,
+            topK: s.topK,
+            minP: s.minP,
+            repetitionPenalty: s.repetitionPenalty)
+        params.maxKVSize = s.maxKVSize
+        params.kvBits = s.kvBits
+
+        let instructions = """
+        You are an expert film scholar. Given spoken dialogue lines, character names, and quotes from a movie's transcript, \
+        identify the exact movie or TV series and its release year. \
+        Return ONLY a JSON object: {"title":"Movie Title","year":"YYYY"}. \
+        Prefer the Russian title if the dialogue is in Russian, or the original title. \
+        If you cannot identify the movie with certainty, return {"title":"","year":""}. No other text.
+        """
+
+        let session = ChatSession(
+            container,
+            instructions: instructions,
+            generateParameters: params,
+            additionalContext: ["enable_thinking": false])
+
+        let userPrompt = "Movie dialogue sample:\n\"\"\"\n\(cleanedSample.prefix(2500))\n\"\"\"\n\nReturn JSON:"
+
+        do {
+            var raw = ""
+            for try await chunk in session.streamResponse(to: userPrompt) {
+                raw += chunk
+            }
+            Self.log("detectMovieFromTranscript output: \(raw.prefix(200))")
+            guard let jsonString = JSONVariantParser.extractJSONObject(from: raw),
+                  let root = JSONVariantParser.deserializeTolerant(jsonString) as? [String: Any] else {
+                return nil
+            }
+            let detectedTitle = (root["title"] as? String)?.trimmed ?? ""
+            let detectedYear = (root["year"] as? String)?.trimmed
+                ?? (root["year"] as? Int).map(String.init)
+                ?? ""
+            guard !detectedTitle.isEmpty, !MovieMetadataService.isGarbageTitle(detectedTitle) else {
+                return nil
+            }
+            return (detectedTitle, detectedYear)
+        } catch {
+            Self.log("detectMovieFromTranscript failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// Generates 4 to 7 deep philosophical themes/concepts for a film using the Director model.
+    func generateThematicConcepts(transcriptSample: String, movieTitle: String) async -> [ThematicConcept] {
+        guard let container else {
+            Self.log("generateThematicConcepts skipped: no model loaded")
+            return []
+        }
+        let sample = transcriptSample.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sample.isEmpty else { return [] }
+
+        let s = profile.sampling
+        var params = GenerateParameters(
+            maxTokens: 1200,
+            temperature: 0.4,
+            topP: s.topP,
+            topK: s.topK,
+            minP: s.minP,
+            repetitionPenalty: s.repetitionPenalty)
+        params.maxKVSize = s.maxKVSize
+        params.kvBits = s.kvBits
+
+        let instructions = LongformThematicService.thematicSystemPrompt(movieTitle: movieTitle)
+
+        let session = ChatSession(
+            container,
+            instructions: instructions,
+            generateParameters: params,
+            additionalContext: ["enable_thinking": false])
+
+        let userPrompt = "Фильм: «\(movieTitle)»\n\nСрез ключевых диалогов и реплик:\n\"\"\"\n\(sample.prefix(3500))\n\"\"\"\n\nВыдели от 4 до 7 фундаментальных тем. Верни строго валидный JSON-массив:"
+
+        do {
+            var raw = ""
+            for try await chunk in session.streamResponse(to: userPrompt) {
+                raw += chunk
+            }
+            Self.log("generateThematicConcepts output (\(raw.count) chars)")
+            return LongformThematicService.parseConcepts(from: raw)
+        } catch {
+            Self.log("generateThematicConcepts failed: \(error.localizedDescription)")
+            return []
         }
     }
 

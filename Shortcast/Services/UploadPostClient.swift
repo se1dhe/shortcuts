@@ -62,6 +62,7 @@ struct UploadPostClient: Sendable {
         videoURL: URL,
         variants: [PostVariant],
         tiktokAsDraft: Bool,
+        selectedPlatforms: Set<SocialPlatform>? = nil,
         scheduledDate: Date? = nil
     ) async throws -> PublishReport {
 
@@ -83,7 +84,8 @@ struct UploadPostClient: Sendable {
 
         body.addField("user", profileName)
         body.addField("async_upload", "false")
-        for platform in SocialPlatform.allCases where byPlatform[platform] != nil {
+        let allowed = selectedPlatforms ?? Set(SocialPlatform.allCases)
+        for platform in SocialPlatform.allCases where byPlatform[platform] != nil && allowed.contains(platform) && platform != .telegram {
             body.addField("platform[]", platform.uploadPostID)
         }
 
@@ -151,7 +153,7 @@ struct UploadPostClient: Sendable {
         }
         try Self.ensureOK(response, data: data)
 
-        return Self.parseReport(data: data, platforms: Array(byPlatform.keys))
+        return Self.parseReport(data: data, platforms: Array(byPlatform.keys).filter { $0 != .telegram })
     }
 
     // MARK: - Caption assembly

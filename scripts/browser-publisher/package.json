@@ -1,0 +1,13 @@
+{
+  "name": "shortcast-browser-publisher",
+  "version": "1.0.0",
+  "description": "Zero-API browser automation publisher for TikTok, Instagram Reels, and YouTube Shorts",
+  "main": "src/cli.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/cli.js"
+  },
+  "dependencies": {
+    "playwright-core": "^1.50.0"
+  }
+}

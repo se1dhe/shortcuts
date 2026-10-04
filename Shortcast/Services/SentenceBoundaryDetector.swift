@@ -3,7 +3,7 @@ import Foundation
 // MARK: - SentenceBoundaryDetecting Protocol
 
 /// Protocol for snapping cinema and clip cuts to natural speech and sentence boundaries (SOLID: SRP/DIP).
-public protocol SentenceBoundaryDetecting: Sendable {
+protocol SentenceBoundaryDetecting: Sendable {
     /// Snaps a timestamp to the start of the enclosing or closest sentence, applying head padding.
     func snapToSentenceStart(timestamp: Double, in segments: [TranscriptSegment]) -> Double
 
@@ -23,21 +23,21 @@ public protocol SentenceBoundaryDetecting: Sendable {
 /// Concrete implementation of `SentenceBoundaryDetecting`.
 /// Detects punctuation (`.`, `!`, `?`, `…`), significant speech pauses (>= 1.0s),
 /// and respects audio room tone and consonant attack buffers.
-public struct SentenceBoundaryDetector: SentenceBoundaryDetecting {
+struct SentenceBoundaryDetector: SentenceBoundaryDetecting {
 
-    public static let defaultHeadPadding: Double = 0.20
-    public static let defaultTailPadding: Double = 0.45
-    public static let defaultMinSegmentDuration: Double = 10.0
-    public static let defaultMaxShortsDuration: Double = 58.0
-    public static let defaultPauseThreshold: Double = 1.0
+    static let defaultHeadPadding: Double = 0.20
+    static let defaultTailPadding: Double = 0.45
+    static let defaultMinSegmentDuration: Double = 10.0
+    static let defaultMaxShortsDuration: Double = 58.0
+    static let defaultPauseThreshold: Double = 1.0
 
-    public let headPadding: Double
-    public let tailPadding: Double
-    public let minSegmentDuration: Double
-    public let maxShortsDuration: Double
-    public let pauseThreshold: Double
+    let headPadding: Double
+    let tailPadding: Double
+    let minSegmentDuration: Double
+    let maxShortsDuration: Double
+    let pauseThreshold: Double
 
-    public init(
+    init(
         headPadding: Double = defaultHeadPadding,
         tailPadding: Double = defaultTailPadding,
         minSegmentDuration: Double = defaultMinSegmentDuration,
@@ -53,13 +53,13 @@ public struct SentenceBoundaryDetector: SentenceBoundaryDetecting {
 
     // MARK: - Detected Sentence Model
 
-    public struct DetectedSentence: Sendable, Equatable {
-        public let start: Double
-        public let end: Double
-        public let text: String
-        public let isTerminal: Bool
+    struct DetectedSentence: Sendable, Equatable {
+        let start: Double
+        let end: Double
+        let text: String
+        let isTerminal: Bool
 
-        public init(start: Double, end: Double, text: String, isTerminal: Bool) {
+        init(start: Double, end: Double, text: String, isTerminal: Bool) {
             self.start = start
             self.end = end
             self.text = text
@@ -76,7 +76,7 @@ public struct SentenceBoundaryDetector: SentenceBoundaryDetecting {
     // MARK: - Punctuation & Boundary Detection
 
     /// Returns true if the text ends with terminal sentence punctuation (. ! ? … ...).
-    public static func hasTerminalPunctuation(_ text: String) -> Bool {
+    static func hasTerminalPunctuation(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
 
@@ -95,7 +95,7 @@ public struct SentenceBoundaryDetector: SentenceBoundaryDetecting {
     }
 
     /// Aggregates transcript segments or word-level timings into coherent sentences.
-    public func detectSentences(in segments: [TranscriptSegment]) -> [DetectedSentence] {
+    func detectSentences(in segments: [TranscriptSegment]) -> [DetectedSentence] {
         guard !segments.isEmpty else { return [] }
 
         var items: [SpeechItem] = []
@@ -150,22 +150,22 @@ public struct SentenceBoundaryDetector: SentenceBoundaryDetecting {
 
     // MARK: - SentenceBoundaryDetecting
 
-    public func snapToSentenceStart(timestamp: Double, in segments: [TranscriptSegment]) -> Double {
+    func snapToSentenceStart(timestamp: Double, in segments: [TranscriptSegment]) -> Double {
         let sentences = detectSentences(in: segments)
         return snapToSentenceStart(timestamp: timestamp, sentences: sentences)
     }
 
-    public func snapToSentenceEnd(timestamp: Double, maxAllowedDuration: Double, in segments: [TranscriptSegment]) -> Double {
+    func snapToSentenceEnd(timestamp: Double, maxAllowedDuration: Double, in segments: [TranscriptSegment]) -> Double {
         let sentences = detectSentences(in: segments)
         return snapToSentenceEnd(timestamp: timestamp, maxAllowedDuration: maxAllowedDuration, sentences: sentences)
     }
 
-    public func findPreviousSentenceEnd(before: Double, in segments: [TranscriptSegment]) -> Double? {
+    func findPreviousSentenceEnd(before: Double, in segments: [TranscriptSegment]) -> Double? {
         let sentences = detectSentences(in: segments)
         return findPreviousSentenceEnd(before: before, sentences: sentences)
     }
 
-    public func refineSceneBoundary(
+    func refineSceneBoundary(
         range: TimeSegment,
         maxAllowedDuration: Double,
         in segments: [TranscriptSegment]

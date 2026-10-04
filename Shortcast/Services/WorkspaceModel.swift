@@ -14,6 +14,7 @@ final class WorkspaceModel {
     /// drop screen rather than guessed from the video's length.
     enum InputMode: String, CaseIterable, Identifiable, Sendable {
         case shorts    // long video → cut into clips → caption each → publish
+        case longform  // фильм → 4-актное кино-эссе (16:9 YouTube, 5-8 мин, Shortcast Cinema)
         case caption   // short video → captions → publish (the original flow)
         case youtube   // search YouTube → download → use the long-video flow
 
@@ -21,33 +22,37 @@ final class WorkspaceModel {
 
         var title: LocalizedStringKey {
             switch self {
-            case .caption: "Caption a short"
-            case .shorts:  "Сделать шортсы из фильма"
-            case .youtube: "Find on YouTube"
+            case .shorts:   "Шортсы из фильма"
+            case .longform: "Кино-эссе (16:9)"
+            case .caption:  "Быстрый клип"
+            case .youtube:  "Найти на YouTube"
             }
         }
 
         var dropTitle: LocalizedStringKey {
             switch self {
-            case .caption: "Drop a short video here"
-            case .shorts:  "Перетащите фильм сюда"
-            case .youtube: "Find a YouTube video"
+            case .shorts:   "Перетащите фильм для нарезки шортсов"
+            case .longform: "Перетащите фильм для кино-эссе (16:9)"
+            case .caption:  "Перетащите короткое видео"
+            case .youtube:  "Найти видео на YouTube"
             }
         }
 
         var dropSubtitle: LocalizedStringKey {
             switch self {
-            case .caption: "Up to 60 seconds — a TikTok, Reel or Short"
-            case .shorts:  "Полный фильм — нейросеть найдет сюжетные арки, нарежет 1:1, наложит сабы и сведет звук"
-            case .youtube: "Search by topic, download a result, then edit it like any long video"
+            case .shorts:   "Полный фильм — нейросеть найдет сюжетные арки, нарежет 1:1, наложит сабы и сведет звук"
+            case .longform: "16:9 YouTube (5–8 мин). Нейросеть выявит лейтмотив (терпение, гнев, гений), соберет 4 акта и наложит саундтрек"
+            case .caption:  "До 60 секунд — ролик для TikTok, Reels или YouTube Shorts"
+            case .youtube:  "Поиск видео по теме, загрузка и последующий монтаж на Mac"
             }
         }
 
         var symbol: String {
             switch self {
-            case .caption: "film.stack"
-            case .shorts:  "scissors"
-            case .youtube: "magnifyingglass"
+            case .shorts:   "scissors"
+            case .longform: "film.fill"
+            case .caption:  "film.stack"
+            case .youtube:  "magnifyingglass"
             }
         }
     }
@@ -65,6 +70,10 @@ final class WorkspaceModel {
         case transcribing
         case findingMoments
         case shortsResults
+        // Longform flow:
+        case selectingLongformConcept
+        case buildingLongform(fraction: Double, step: String)
+        case longformResults
     }
 
     private(set) var phase: Phase = .empty
@@ -76,6 +85,17 @@ final class WorkspaceModel {
 
     /// The generated shorts (long-video flow).
     var clips: [ShortClip] = []
+
+    /// Хранит полный транскрипт фильма
+    var storedTranscript: Transcript?
+    /// Выявленные темы для длинного ролика Shortcast Cinema
+    var discoveredConcepts: [ThematicConcept] = []
+    /// Выбранная тема для ролика
+    var selectedConcept: ThematicConcept?
+    /// Результат генерации длинного ролика
+    var longformResult: LongformBuildResult?
+    /// Прогресс рендеринга длинного видео
+    var longformBuildProgress: (fraction: Double, step: String) = (0.0, "")
 
     /// Temporary input copies and normalized containers, deleted when the user
     /// starts over or an import fails. Originals already in the working folder
@@ -113,7 +133,7 @@ final class WorkspaceModel {
 
     var isBusy: Bool {
         switch phase {
-        case .processing, .transcribing, .findingMoments: return true
+        case .processing, .transcribing, .findingMoments, .buildingLongform: return true
         default: return false
         }
     }
@@ -153,12 +173,106 @@ final class WorkspaceModel {
         }
     }
 
+    /// Holds state while the user is choosing an audio track (when a video has > 1 audio streams).
+    var pendingAudioSelection: PendingAudioSelection?
+
     // MARK: - Entry
 
-    /// Validates a dropped file and routes to the right flow based on length.
+    /// Entry point when a file is imported or dropped.
+    /// Immediately copies the file into the working directory (while security-scoped access is active),
+    /// then inspects audio tracks: if there are multiple tracks, prompts the user via sheet.
+    /// Otherwise starts pipeline directly.
+    func prepareAndProcess(
+        url: URL,
+        sourceMetadata: VideoSourceMetadata? = nil,
+        modelManager: ModelManager,
+        settings: AppSettings
+    ) async {
+        errorMessage = nil
+        pipelineError = nil
+        publishReport = nil
+        publishError = nil
+
+        // Clean up previous run leftovers
+        cleanUpTempInput()
+        cleanUpOrphanedInputFiles(settings: settings)
+
+        // Copy input file immediately while security-scoped access is guaranteed active
+        let sandboxFriendlyURL: URL
+        do {
+            sandboxFriendlyURL = try copyInputIntoWorkingDirectory(url, settings: settings)
+        } catch {
+            errorMessage = error.localizedDescription
+            phase = .empty
+            return
+        }
+
+        let workingDir = settings.workingDirectory ?? sandboxFriendlyURL.deletingLastPathComponent()
+        let tracks = await MediaExtractor.inspectAudioTracks(sourceURL: sandboxFriendlyURL, workingDirectory: workingDir)
+
+        if tracks.count > 1 {
+            let recommended = MediaExtractor.pickRecommendedAudioTrack(from: tracks) ?? tracks[0]
+            self.pendingAudioSelection = PendingAudioSelection(
+                videoURL: sandboxFriendlyURL,
+                sourceMetadata: sourceMetadata,
+                tracks: tracks,
+                selectedTrackId: recommended.id
+            )
+            // UI shows AudioTrackSelectionSheet, wait for user confirmation
+        } else {
+            await continuePipeline(
+                sandboxFriendlyURL: sandboxFriendlyURL,
+                sourceMetadata: sourceMetadata,
+                selectedAudioStreamIndex: tracks.first?.id,
+                modelManager: modelManager,
+                settings: settings
+            )
+        }
+    }
+
+    func confirmAudioTrackSelection(
+        pending: PendingAudioSelection,
+        trackId: Int,
+        modelManager: ModelManager,
+        settings: AppSettings
+    ) async {
+        self.pendingAudioSelection = nil
+        await continuePipeline(
+            sandboxFriendlyURL: pending.videoURL,
+            sourceMetadata: pending.sourceMetadata,
+            selectedAudioStreamIndex: trackId,
+            modelManager: modelManager,
+            settings: settings
+        )
+    }
+
+    func cancelAudioTrackSelection() {
+        self.pendingAudioSelection = nil
+        cleanUpTempInput()
+        phase = .empty
+    }
+
+    /// Direct entry point.
     func process(
         url: URL,
         sourceMetadata: VideoSourceMetadata? = nil,
+        selectedAudioStreamIndex: Int? = nil,
+        modelManager: ModelManager,
+        settings: AppSettings
+    ) async {
+        await prepareAndProcess(
+            url: url,
+            sourceMetadata: sourceMetadata,
+            modelManager: modelManager,
+            settings: settings
+        )
+    }
+
+    /// Continues pipeline once the audio track is known and file is securely in working directory.
+    private func continuePipeline(
+        sandboxFriendlyURL: URL,
+        sourceMetadata: VideoSourceMetadata? = nil,
+        selectedAudioStreamIndex: Int? = nil,
         modelManager: ModelManager,
         settings: AppSettings
     ) async {
@@ -177,31 +291,15 @@ final class WorkspaceModel {
             setenv("HUGGINGFACE_HUB_CACHE", cacheDir, 1)
         }
 
-        // Delete any leftover from the previous run.
-        cleanUpTempInput()
-        cleanUpOrphanedInputFiles(settings: settings)
-
-        // Copy the input file into the working directory so every downstream
-        // consumer (AVAsset, Gemma4VideoProcessor, etc.) has unrestricted file-
-        // system access regardless of sandbox-scope or external-volume quirks.
-        let sandboxFriendlyURL: URL
-        do {
-            sandboxFriendlyURL = try copyInputIntoWorkingDirectory(url, settings: settings)
-        } catch {
-            errorMessage = error.localizedDescription
-            inputPreparationMessage = nil
-            phase = .empty
-            return
-        }
-
         let normalizedInputURL: URL
         do {
-            if MediaExtractor.needsNormalization(sandboxFriendlyURL) {
+            if MediaExtractor.needsNormalization(sandboxFriendlyURL) || selectedAudioStreamIndex != nil {
                 inputPreparationMessage = "Converting \(sandboxFriendlyURL.pathExtension.uppercased()) to MP4…"
             }
             normalizedInputURL = try await MediaExtractor.normalizeInputIfNeeded(
                 from: sandboxFriendlyURL,
-                workingDirectory: settings.workingDirectory ?? sandboxFriendlyURL.deletingLastPathComponent())
+                workingDirectory: settings.workingDirectory ?? sandboxFriendlyURL.deletingLastPathComponent(),
+                selectedAudioStreamIndex: selectedAudioStreamIndex)
             if normalizedInputURL != sandboxFriendlyURL {
                 tempInputURLs.insert(normalizedInputURL)
             }
@@ -214,11 +312,15 @@ final class WorkspaceModel {
         }
         inputPreparationMessage = nil
 
+        let originalBaseName = sandboxFriendlyURL.deletingPathExtension().lastPathComponent
+        let effectiveSourceMetadata = sourceMetadata ?? (MovieMetadataService.isGarbageTitle(originalBaseName) ? nil : VideoSourceMetadata(title: originalBaseName))
+
         let newJob: VideoJob
         do {
             newJob = try await MediaExtractor.makeJob(
                 from: normalizedInputURL,
-                sourceMetadata: sourceMetadata)
+                originalFileName: originalBaseName,
+                sourceMetadata: effectiveSourceMetadata)
         } catch {
             errorMessage = error.localizedDescription
             cleanUpTempInput()
@@ -229,6 +331,8 @@ final class WorkspaceModel {
         switch inputMode {
         case .caption:
             await processPrecutShort(job: newJob, modelManager: modelManager, settings: settings)
+        case .longform:
+            await startLongformPipeline(job: newJob, modelManager: modelManager, settings: settings)
         case .youtube:
             // YouTube Shorts (< 3 min, vertical) go through the pre-cut short
             // pipeline (transcription + subtitles + watermark + captions, no
@@ -246,6 +350,230 @@ final class WorkspaceModel {
             } else {
                 startShortsPipeline(job: newJob, modelManager: modelManager, settings: settings)
             }
+        }
+    }
+
+    // MARK: - Long-form Flow (YouTube 16:9 Thematic Essays in Shortcast Cinema style)
+
+    private func startLongformPipeline(job newJob: VideoJob, modelManager: ModelManager, settings: AppSettings) async {
+        cleanupClipTempFiles()
+        self.job = newJob
+        self.clips = []
+        self.variants = []
+        self.pipelineError = nil
+        self.longformResult = nil
+        self.selectedConcept = nil
+        self.phase = .transcribing
+        self.progressTracker.reset(totalVideoDuration: newJob.durationSeconds)
+
+        do {
+            // 1. Первичная идентификация фильма по чистому имени файла / метаданным
+            let initialCandidate = newJob.effectiveTitle
+            var movie = await movieMetadata.resolveMovie(
+                filename: initialCandidate,
+                sourceTitle: newJob.sourceMetadata?.title,
+                apiKey: settings.tmdbAPIKey)
+            self.detectedMovie = movie
+            if let movie {
+                progressTracker.updateMovieDetection(
+                    title: movie.title,
+                    year: movie.year,
+                    imdb: movie.imdbRating,
+                    rottenTomatoes: movie.rottenTomatoesScore)
+            }
+
+            // 2. Транскрипция фильма через WhisperKit (или sidecar)
+            self.progressTracker.startTranscription(totalSeconds: newJob.durationSeconds)
+            let transcript = try await transcription.transcript(
+                for: newJob.url,
+                languageHint: settings.languageOverride,
+                modelCacheDir: settings.workingDirectory?.appendingPathComponent("huggingface")
+            ) { @Sendable [weak self] sec in
+                Task { @MainActor in
+                    self?.progressTracker.updateTranscriptionProgress(processedSeconds: sec)
+                }
+            }
+            self.storedTranscript = transcript
+
+            // 2.5. Если фильм не был точно определен на этапе 1, анализируем диалоги через эвристику / LLM + TMDB
+            if movie == nil {
+                let sampleDialogue = transcript.segments.prefix(80).map(\.text).joined(separator: "\n")
+                
+                // Проверяем диалоговую эвристику
+                if let heuristic = await movieMetadata.resolveMovie(
+                    filename: initialCandidate,
+                    sourceTitle: newJob.sourceMetadata?.title,
+                    apiKey: settings.tmdbAPIKey,
+                    transcriptSample: sampleDialogue
+                ) {
+                    movie = heuristic
+                } else {
+                    // Задействуем Director LLM (Qwen/Gemma) для идентификации по репликам
+                    await modelManager.prepareDirectorIfNeeded()
+                    if let inferred = await modelManager.momentFinder.detectMovieFromTranscript(sample: sampleDialogue) {
+                        movie = await movieMetadata.resolveMovie(
+                            filename: inferred.title,
+                            sourceTitle: inferred.title,
+                            apiKey: settings.tmdbAPIKey
+                        )
+                        if movie == nil {
+                            movie = MovieIdentity(
+                                id: inferred.title,
+                                title: inferred.title,
+                                originalTitle: nil,
+                                year: inferred.year,
+                                imdbRating: "8.5",
+                                rottenTomatoesScore: "90%",
+                                posterURL: nil,
+                                backdropURL: nil,
+                                overview: "",
+                                characters: [],
+                                director: nil,
+                                genres: []
+                            )
+                        }
+                    }
+                }
+                self.detectedMovie = movie
+                if let movie {
+                    progressTracker.updateMovieDetection(
+                        title: movie.title,
+                        year: movie.year,
+                        imdb: movie.imdbRating,
+                        rottenTomatoes: movie.rottenTomatoesScore)
+                }
+            }
+
+            let effectiveMovieTitle: String
+            if let title = movie?.title, !MovieMetadataService.isGarbageTitle(title) {
+                effectiveMovieTitle = title
+            } else if !initialCandidate.isEmpty && !MovieMetadataService.isGarbageTitle(initialCandidate) {
+                effectiveMovieTitle = initialCandidate
+            } else {
+                effectiveMovieTitle = "Фильм"
+            }
+
+            // 3. Выявление философских тем (Shortcast Thematic Engine)
+            let thematicService = LongformThematicService()
+            let concepts = try await thematicService.discoverConcepts(
+                from: transcript,
+                movieTitle: effectiveMovieTitle,
+                modelManager: modelManager
+            )
+            self.discoveredConcepts = concepts
+            self.phase = .selectingLongformConcept
+        } catch {
+            errorMessage = "Ошибка подготовки длинного видео: \(error.localizedDescription)"
+            phase = .empty
+        }
+    }
+
+    func confirmLongformConcept(
+        _ concept: ThematicConcept,
+        confirmedMovieTitle: String? = nil,
+        backgroundMusicURL: URL? = nil,
+        musicVolume: Float = 0.28,
+        duckingEnabled: Bool = true,
+        settings: AppSettings
+    ) {
+        guard let currentJob = job, let transcript = storedTranscript else { return }
+        self.selectedConcept = concept
+
+        let candidate = (confirmedMovieTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalMovieTitle: String
+        if !candidate.isEmpty && !MovieMetadataService.isGarbageTitle(candidate) {
+            finalMovieTitle = candidate
+        } else if let detected = detectedMovie?.title, !MovieMetadataService.isGarbageTitle(detected) {
+            finalMovieTitle = detected
+        } else if !currentJob.effectiveTitle.isEmpty && !MovieMetadataService.isGarbageTitle(currentJob.effectiveTitle) {
+            finalMovieTitle = currentJob.effectiveTitle
+        } else {
+            finalMovieTitle = "Фильм"
+        }
+
+        if self.detectedMovie != nil {
+            self.detectedMovie?.title = finalMovieTitle
+        } else {
+            self.detectedMovie = MovieIdentity(
+                id: finalMovieTitle,
+                title: finalMovieTitle,
+                originalTitle: nil,
+                year: "",
+                imdbRating: "8.5",
+                rottenTomatoesScore: "90%",
+                posterURL: nil,
+                backdropURL: nil,
+                overview: "",
+                characters: [],
+                director: nil,
+                genres: []
+            )
+        }
+
+        // Запоминаем тему в историю созданных эссе фильма
+        LongformHistoryService.shared.markConceptGenerated(movieTitle: finalMovieTitle, conceptWord: concept.word)
+
+        phase = .buildingLongform(fraction: 0.05, step: "Подготовка видеомонтажа...")
+
+        pipelineTask = Task {
+            do {
+                let coordinator = LongformPipelineCoordinator()
+                let result = try await coordinator.buildLongformVideo(
+                    sourceURL: currentJob.url,
+                    movieTitle: finalMovieTitle,
+                    transcript: transcript,
+                    concept: concept,
+                    backgroundMusicURL: backgroundMusicURL,
+                    musicVolume: musicVolume,
+                    duckingEnabled: duckingEnabled
+                ) { [weak self] frac, step in
+                    Task { @MainActor in
+                        self?.longformBuildProgress = (frac, step)
+                        self?.phase = .buildingLongform(fraction: frac, step: step)
+                    }
+                }
+                self.longformResult = result
+                self.phase = .longformResults
+            } catch {
+                self.errorMessage = "Ошибка монтажа длинного ролика: \(error.localizedDescription)"
+                self.phase = .empty
+            }
+        }
+    }
+
+    func cancelLongformSelection() {
+        self.discoveredConcepts = []
+        self.selectedConcept = nil
+        cleanUpTempInput()
+        self.phase = .empty
+    }
+
+    func resetLongform() {
+        self.longformResult = nil
+        self.selectedConcept = nil
+        cleanUpTempInput()
+        self.phase = .empty
+    }
+
+    /// Запускает генерацию вирусных вертикальных Shorts из текущего загруженного фильма,
+    /// повторно используя готовую транскрипцию Whisper без дублирования расшифровки.
+    func generateShortsFromCurrentMovie(modelManager: ModelManager, settings: AppSettings) {
+        guard let currentJob = job, let transcript = storedTranscript else { return }
+        cleanupClipTempFiles()
+        self.clips = []
+        self.variants = []
+        self.pipelineError = nil
+        self.longformResult = nil
+        self.phase = .findingMoments
+
+        pipelineTask = Task {
+            await continueShortsPipeline(
+                job: currentJob,
+                transcript: transcript,
+                movie: self.detectedMovie,
+                modelManager: modelManager,
+                settings: settings
+            )
         }
     }
 
@@ -343,6 +671,9 @@ final class WorkspaceModel {
 
                 clip.clipJob = job
                 clip.isLandscape = await VerticalReframer.isLandscape(url: job.url)
+                clip.antiCopyrightEnabled = settings.antiCopyrightEnabled
+                clip.antiCopyrightPreset = settings.antiCopyrightPreset
+                clip.antiCopyrightConfig = settings.antiCopyrightPreset.config
 
                 // Instant title & year extraction from source metadata
                 if let meta = job.sourceMetadata {
@@ -384,8 +715,9 @@ final class WorkspaceModel {
 
                 // 4. Auto-apply cinema metadata in the background so editor is not blocked.
                 Task {
-                    await self.detectAndApplyMovieCinema(for: clip, modelManager: modelManager,
-                                                         language: captionLanguage, settings: settings)
+                    await self.applyCinemaContentForGeneratedClip(
+                        clip: clip, movie: nil, modelManager: modelManager,
+                        language: captionLanguage, settings: settings)
                 }
 
                 Self.log("precut short ready — \(job.durationLabel), language=\(captionLanguage ?? "?")")
@@ -439,9 +771,11 @@ final class WorkspaceModel {
         Self.log("pipeline start — copywriter=\(settings.copywriterModel.rawValue)")
         do {
             // 0. Stage 1: Identify movie & ratings (0% -> 5%)
-            let movie = await movieMetadata.resolveMovie(
-                filename: job.fileName,
-                sourceTitle: job.sourceMetadata?.title)
+            let initialCandidate = job.effectiveTitle
+            var movie = await movieMetadata.resolveMovie(
+                filename: initialCandidate,
+                sourceTitle: job.sourceMetadata?.title,
+                apiKey: settings.tmdbAPIKey)
             self.detectedMovie = movie
             if let movie {
                 progressTracker.updateMovieDetection(
@@ -468,31 +802,117 @@ final class WorkspaceModel {
             Self.log("transcript ready in \(Self.elapsed(since: t0)) — whisper=\(transcript.language ?? "?"), text=\(captionLanguage ?? "?")")
             try Task.checkCancellation()
 
-            // 2. Stage 3: Find narrative & character arcs (45% -> 65%)
-            phase = .findingMoments
-            progressTracker.startStoryAnalysis()
-            let t1 = Date()
-            await modelManager.prepareDirector(profile: settings.copywriterModel.directorProfile)
-            Self.log("director ready in \(Self.elapsed(since: t1)) — \(settings.copywriterModel.directorProfile.displayName)")
-
-            let movieTitle = movie?.title ?? job.fileName
-            let useInlineCaptions = settings.copywriterModel.usesInlineCaptions
-
-            // 2.5. Scene detection — analyze video for scene boundaries so the
-            // LLM picks COMPLETE scenes instead of cross-cutting from different
-            // parts of the movie.
-            var sceneMap: String?
-            do {
-                let scenes = try await SceneDetectionService.detectScenes(in: job.url)
-                if scenes.count > 1 {
-                    sceneMap = SceneDetectionService.formatForPrompt(
-                        scenes: scenes, transcriptDuration: job.durationSeconds)
-                    Self.log("scene detection: found \(scenes.count) scenes")
+            // 1.5. If movie was not detected from filename, use transcript sample with AI + TMDB
+            if movie == nil {
+                await modelManager.prepareDirectorIfNeeded()
+                let sampleText = transcript.segments.prefix(60).map(\.text).joined(separator: " ")
+                if let detected = await modelManager.momentFinder.detectMovieFromMetadata(
+                    title: job.sourceMetadata?.title ?? initialCandidate,
+                    description: sampleText,
+                    language: captionLanguage) {
+                    if !detected.title.isEmpty {
+                        let q = CinemaContentGenerator.MovieSearchQuery(
+                            title: detected.title,
+                            year: detected.year.isEmpty ? nil : detected.year)
+                        if let candidates = try? await TMDBService(apiKey: settings.tmdbAPIKey).searchMovies(by: q.title, year: q.year),
+                           let best = candidates.first {
+                            movie = await movieMetadata.enrichMovieIdentity(movie: best)
+                        } else {
+                            movie = MovieIdentity(
+                                id: detected.title,
+                                title: detected.title,
+                                originalTitle: nil,
+                                year: detected.year,
+                                imdbRating: "8.5",
+                                rottenTomatoesScore: "90%",
+                                posterURL: nil,
+                                backdropURL: nil,
+                                overview: "",
+                                characters: [],
+                                director: nil,
+                                genres: [])
+                        }
+                        self.detectedMovie = movie
+                        if let m = movie {
+                            progressTracker.updateMovieDetection(
+                                title: m.title,
+                                year: m.year,
+                                imdb: m.imdbRating,
+                                rottenTomatoes: m.rottenTomatoesScore)
+                        }
+                    }
                 }
-            } catch {
-                Self.log("scene detection skipped: \(error.localizedDescription)")
             }
 
+            // 2. Stage 3 & 4: Поиск кульминационных моментов и нарезка Shorts
+            await continueShortsPipeline(
+                job: job,
+                transcript: transcript,
+                movie: movie,
+                modelManager: modelManager,
+                settings: settings
+            )
+        } catch is CancellationError {
+            cleanupClipTempFiles()
+            clips = []
+            self.job = nil
+            cleanUpTempInput()
+            phase = .empty
+        } catch {
+            pipelineError = error.localizedDescription
+            errorMessage = "Couldn't make shorts from that video. \(error.localizedDescription)"
+            self.job = nil
+            clips = []
+            cleanUpTempInput()
+            phase = .empty
+        }
+    }
+
+    private func continueShortsPipeline(
+        job: VideoJob,
+        transcript: Transcript,
+        movie: MovieIdentity?,
+        modelManager: ModelManager,
+        settings: AppSettings
+    ) async {
+        let pipelineStart = Date()
+        let captionLanguage = transcript.contentLanguage ?? transcript.language ?? settings.languageOverride ?? "en"
+
+        // Stage 3: Find narrative & character arcs (45% -> 65%)
+        phase = .findingMoments
+        progressTracker.startStoryAnalysis()
+        let t1 = Date()
+        await modelManager.prepareDirector(profile: settings.copywriterModel.directorProfile)
+        Self.log("director ready in \(Self.elapsed(since: t1)) — \(settings.copywriterModel.directorProfile.displayName)")
+
+        let movieTitle = movie?.title ?? job.fileName
+        let useInlineCaptions = settings.copywriterModel.usesInlineCaptions
+
+        // Scene detection — analyze video for scene boundaries
+        var sceneMap: String?
+        do {
+            let scenes = try await SceneDetectionService.detectScenes(in: job.url)
+            if scenes.count > 1 {
+                sceneMap = SceneDetectionService.formatForPrompt(
+                    scenes: scenes, transcriptDuration: job.durationSeconds)
+                Self.log("scene detection: found \(scenes.count) scenes")
+            }
+        } catch {
+            Self.log("scene detection skipped: \(error.localizedDescription)")
+        }
+
+        let isComedy: Bool = {
+            switch settings.cinemaGenreMode {
+            case .comedy:
+                return true
+            case .drama:
+                return false
+            case .auto:
+                return movie?.isComedy ?? false
+            }
+        }()
+
+        do {
             let t2 = Date()
             let candidates = try await modelManager.momentFinder.findMoments(
                 transcript: transcript.srtLike(),
@@ -501,10 +921,11 @@ final class WorkspaceModel {
                 styleExamples: settings.styleExamples,
                 videoTitle: movieTitle,
                 videoDescription: movie?.overview ?? (job.sourceMetadata?.description ?? ""),
-                sceneMap: sceneMap)
+                sceneMap: sceneMap,
+                isComedy: isComedy)
             
             progressTracker.updateStoryAnalysis(fraction: 1.0, arcFound: candidates.first?.overlay)
-            Self.log("found \(candidates.count) moment(s) in \(Self.elapsed(since: t2)), captions inline=\(useInlineCaptions)")
+            Self.log("found \(candidates.count) moment(s) in \(Self.elapsed(since: t2)), captions inline=\(useInlineCaptions), isComedy=\(isComedy)")
             try Task.checkCancellation()
 
             // Seed cards; they fill in as each clip is cut + captioned.
@@ -548,7 +969,11 @@ final class WorkspaceModel {
                 }
                 
                 var appearance = SubtitleAppearance.cinemaPremium
-                appearance.moodProfile = candidate.mood
+                if let candidateMood = candidate.mood {
+                    appearance.moodProfile = candidateMood
+                } else if isComedy {
+                    appearance.moodProfile = CinematicMoodProfile(mood: .eccentricComedy)
+                }
                 let newClip = ShortClip(
                     candidate: candidate,
                     transcriptSlice: transcript.slice(start: clipStart, end: clipEnd),
@@ -564,11 +989,18 @@ final class WorkspaceModel {
                     promoOverlayEnabled: false,
                     promoCode: "",
                     promoDurationSeconds: 0)
-                if let m = movie {
+                newClip.antiCopyrightEnabled = settings.antiCopyrightEnabled
+                newClip.antiCopyrightPreset = settings.antiCopyrightPreset
+                newClip.antiCopyrightConfig = settings.antiCopyrightPreset.config
+                newClip.descriptionMode = .movie
+                let m = self.detectedMovie ?? movie
+                if let m {
                     newClip.detectedMovieTitle = m.title
                     newClip.detectedMovieYear = m.year
                     newClip.imdbRating = m.imdbRating
                     newClip.rottenTomatoesScore = m.rottenTomatoesScore
+                    newClip.candidate.hook = "Такой развязки никто не ожидал... 😳"
+                    newClip.overlayText = "🍿 Название в Telegram: @telonyx_club"
                 }
                 return newClip
             }
@@ -582,7 +1014,6 @@ final class WorkspaceModel {
             // Stage 4: Cut, then caption, each clip in turn (65% -> 100%)
             progressTracker.startRendering(totalClips: clips.count)
 
-            // 3+4. Cut, then caption, each clip in turn (one MLX engine → serial).
             for (index, clip) in clips.enumerated() {
                 try Task.checkCancellation()
                 progressTracker.updateRenderingProgress(
@@ -599,6 +1030,13 @@ final class WorkspaceModel {
                         modelManager: modelManager,
                         settings: settings,
                         transcription: transcription
+                    )
+                    await self.applyCinemaContentForGeneratedClip(
+                        clip: clip,
+                        movie: self.detectedMovie ?? movie,
+                        modelManager: modelManager,
+                        language: captionLanguage,
+                        settings: settings
                     )
                     saveProcessedRecord(for: clip, settings: settings)
                     Self.log("clip \(index + 1)/\(clips.count) ready in \(Self.elapsed(since: tCut))")
@@ -621,15 +1059,11 @@ final class WorkspaceModel {
         } catch is CancellationError {
             cleanupClipTempFiles()
             clips = []
-            self.job = nil
-            cleanUpTempInput()
             phase = .empty
         } catch {
             pipelineError = error.localizedDescription
             errorMessage = "Couldn't make shorts from that video. \(error.localizedDescription)"
-            self.job = nil
             clips = []
-            cleanUpTempInput()
             phase = .empty
         }
     }
@@ -651,15 +1085,13 @@ final class WorkspaceModel {
         Self.log("detected movie: \(titleYear)")
     }
 
-    /// Full cinema pipeline for a pre-cut YouTube Short: detects the film from
-    /// source metadata (TMDB + on-device model fallback), then applies the
-    /// cinema hook, description, and hashtags automatically — so the user sees
-    /// the correct «🎬 Title (Year)» hook immediately without clicking Regenerate.
-    ///
-    /// Only runs when `sourceMetadata` is present and has a webpage URL (i.e.
-    /// the clip came from a YouTube download, not a local file drop).
-    private func detectAndApplyMovieCinema(
-        for clip: ShortClip,
+    /// Full cinema pipeline for generated shorts and precut YouTube Shorts:
+    /// detects/applies the film metadata (TMDB + on-device AI model fallback),
+    /// then applies the viral cinema hook, description, and hashtags automatically
+    /// for TikTok, Instagram Reels, and YouTube Shorts.
+    private func applyCinemaContentForGeneratedClip(
+        clip: ShortClip,
+        movie: MovieIdentity?,
         modelManager: ModelManager,
         language: String?,
         settings: AppSettings
@@ -674,13 +1106,23 @@ final class WorkspaceModel {
             sourceText = clip.transcriptSlice.trimmed
         }
 
-        guard !sourceText.isEmpty else { return }
+        var query: CinemaContentGenerator.MovieSearchQuery?
 
-        // 1. Try fast title guessing via regex first.
-        var query = CinemaContentGenerator.movieTitleGuess(from: sourceText)
+        // 1. If movie was resolved, use its title and year directly
+        let effectiveTitle = (movie?.title ?? clip.detectedMovieTitle).trimmed
+        let effectiveYear = (movie?.year ?? clip.detectedMovieYear).trimmed
+        if !effectiveTitle.isEmpty {
+            query = CinemaContentGenerator.MovieSearchQuery(
+                title: effectiveTitle,
+                year: effectiveYear.isEmpty ? nil : effectiveYear)
+        }
 
-        // 2. If regex guessing was incomplete or missed the release year, use the on-device AI model
-        //    to parse the text for the film name and year.
+        // 2. Try regex title guessing
+        if query == nil, !sourceText.isEmpty {
+            query = CinemaContentGenerator.movieTitleGuess(from: sourceText)
+        }
+
+        // 3. Fallback to AI model
         if query == nil || (query?.year ?? "").isEmpty {
             await modelManager.prepareDirectorIfNeeded()
             if let detected = await modelManager.momentFinder.detectMovieFromMetadata(
@@ -696,11 +1138,11 @@ final class WorkspaceModel {
         }
 
         guard let searchQuery = query, !searchQuery.title.trimmed.isEmpty else {
-            Self.log("detectAndApplyMovieCinema: could not guess or detect a movie title")
+            Self.log("applyCinemaContentForGeneratedClip: could not resolve movie title")
             return
         }
 
-        Self.log("detectAndApplyMovieCinema: querying TMDB for \"\(searchQuery.title)\" \(searchQuery.year ?? "")")
+        Self.log("applyCinemaContentForGeneratedClip: querying TMDB & generating viral content for \"\(searchQuery.title)\" \(searchQuery.year ?? "")")
 
         let result = await CinemaContentGenerator.generate(
             query: searchQuery,
@@ -719,15 +1161,16 @@ final class WorkspaceModel {
         // Store the detected title/year so the manual editor field is pre-filled.
         clip.detectedMovieTitle = result.query.title
         clip.detectedMovieYear = result.query.year ?? ""
+        clip.descriptionMode = .movie
 
         CinemaContentGenerator.apply(
             content: result.content,
             to: clip,
-            replaceHook: true,       // ← write the cinema hook into variant.hook + overlayText
-            saveToHistory: false,    // history is already saved by captionClip
+            replaceHook: true,       // write the cinema hook into variant.hook + overlayText
+            saveToHistory: false,
             settings: nil)
 
-        Self.log("detectAndApplyMovieCinema: applied cinema content for \"\(result.query.title)\" (\(result.query.year ?? ""))")
+        Self.log("applyCinemaContentForGeneratedClip: successfully applied viral cinema content for \"\(result.query.title)\" (\(result.query.year ?? ""))")
     }
 
 

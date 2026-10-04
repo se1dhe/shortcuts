@@ -788,6 +788,20 @@ private struct PlatformSkin {
                 actionLabel: "Subscribe", actionFilled: true,
                 actionTint: Color(hex: "FF0000"),
                 audioLabel: "original sound")
+        case .telegram:
+            PlatformSkin(
+                username: "@telonyx_club",
+                cornerBadge: "Channel",
+                topTrailingIcon: "paperplane.fill",
+                railItems: [
+                    RailItem(symbol: "eye.fill", caption: "3.4K"),
+                    RailItem(symbol: "heart.fill", caption: "420"),
+                    RailItem(symbol: "bubble.right.fill", caption: "58"),
+                    RailItem(symbol: "arrowshape.turn.up.right.fill", caption: "112"),
+                ],
+                actionLabel: "Join", actionFilled: true,
+                actionTint: Color(hex: "2AABEE"),
+                audioLabel: "telonyx cinema")
         }
     }
 }

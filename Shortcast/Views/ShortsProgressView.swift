@@ -14,7 +14,7 @@ struct ShortsProgressView: View {
             Spacer()
 
             // 1. Detected Movie Header (if resolved)
-            if let movie = workspace.detectedMovie {
+            if let movie = workspace.detectedMovie, !MovieMetadataService.isGarbageTitle(movie.title) {
                 HStack(spacing: 14) {
                     Image(systemName: "film.fill")
                         .font(.title2)

@@ -38,8 +38,20 @@ public enum CinemaAudioMasteringService {
         /// Optional background music track URL.
         public var musicURL: URL?
 
+        /// Original video dialogue / audio track volume multiplier (0.0 = muted, 1.0 = normal 100%, 2.0 = boosted 200%).
+        public var originalAudioVolume: Float = 1.0
+
         /// Dialogue volume boost in dB (default: +2.0 dB for clean, natural dialogue elevation without 0 dBFS digital clipping).
         public var dialogueBoostDB: Float = 2.0
+
+        /// Master volume multiplier for overlaid background music (0.0 = muted, 0.7 = 70%, 1.0 = 100%, 1.5 = 150%).
+        public var musicVolume: Float = 0.7
+
+        /// Cut/trim start offset (in seconds) for the background music track.
+        public var musicStartOffsetSeconds: Double = 0.0
+
+        /// Whether voice-ducking is enabled. When false, music volume remains constant across the entire video.
+        public var musicDuckingEnabled: Bool = true
 
         /// Music volume during dialogue (-14.0 dB for clear vocal intelligibility).
         public var musicDuckingDB: Float = -14.0
@@ -52,6 +64,12 @@ public enum CinemaAudioMasteringService {
 
         /// Smooth release duration (seconds) to restore music during speech pauses (default: 0.45s / 450ms).
         public var duckingReleaseDuration: Double = 0.45
+
+        /// Fade-in duration (seconds) for background music.
+        public var musicFadeInDuration: Double = 0.30
+
+        /// Fade-out duration (seconds) at the tail of the clip for smooth looping and ending.
+        public var musicFadeOutDuration: Double = 0.80
 
         /// Gap threshold (seconds) under which adjacent speech segments are merged to avoid pumping (default: 0.35s).
         public var speechMergeThreshold: Double = 0.35
@@ -70,11 +88,17 @@ public enum CinemaAudioMasteringService {
 
         public init(
             musicURL: URL? = nil,
+            originalAudioVolume: Float = 1.0,
             dialogueBoostDB: Float = 2.0,
+            musicVolume: Float = 0.7,
+            musicStartOffsetSeconds: Double = 0.0,
+            musicDuckingEnabled: Bool = true,
             musicDuckingDB: Float = -14.0,
             musicRestingDB: Float = -6.0,
             duckingAttackDuration: Double = 0.10,
             duckingReleaseDuration: Double = 0.45,
+            musicFadeInDuration: Double = 0.30,
+            musicFadeOutDuration: Double = 0.80,
             speechMergeThreshold: Double = 0.35,
             normalizeLUFS: Bool = true,
             targetLUFS: Double = CinemaAudioMasteringService.targetLUFS,
@@ -82,11 +106,17 @@ public enum CinemaAudioMasteringService {
             targetLRA: Double = CinemaAudioMasteringService.targetLRA
         ) {
             self.musicURL = musicURL
+            self.originalAudioVolume = originalAudioVolume
             self.dialogueBoostDB = dialogueBoostDB
+            self.musicVolume = musicVolume
+            self.musicStartOffsetSeconds = musicStartOffsetSeconds
+            self.musicDuckingEnabled = musicDuckingEnabled
             self.musicDuckingDB = musicDuckingDB
             self.musicRestingDB = musicRestingDB
             self.duckingAttackDuration = duckingAttackDuration
             self.duckingReleaseDuration = duckingReleaseDuration
+            self.musicFadeInDuration = musicFadeInDuration
+            self.musicFadeOutDuration = musicFadeOutDuration
             self.speechMergeThreshold = speechMergeThreshold
             self.normalizeLUFS = normalizeLUFS
             self.targetLUFS = targetLUFS
@@ -167,20 +197,24 @@ public enum CinemaAudioMasteringService {
         let audioMix = AVMutableAudioMix()
         var inputParameters = [AVMutableAudioMixInputParameters]()
 
-        // 1. Dialogue track with boost for clarity on smartphone speakers (-14 LUFS mobile standard)
+        // 1. Dialogue / original video track with user volume control and boost
         let dialogueParams = AVMutableAudioMixInputParameters(track: compAudioTrack)
-        let dialogueBoostLinear = Float(pow(10.0, Double(config.dialogueBoostDB) / 20.0))
-
-        applyDialogueVolumeRamps(
-            to: dialogueParams,
-            duration: duration,
-            boostLinear: dialogueBoostLinear,
-            fadeInDuration: 0.05,
-            fadeOutDuration: 0.18
-        )
+        if config.originalAudioVolume <= 0.001 {
+            dialogueParams.setVolume(0.0, at: .zero)
+        } else {
+            let dialogueBoostLinear = Float(pow(10.0, Double(config.dialogueBoostDB) / 20.0))
+            let effectiveLinear = max(0.0, config.originalAudioVolume) * dialogueBoostLinear
+            applyDialogueVolumeRamps(
+                to: dialogueParams,
+                duration: duration,
+                boostLinear: effectiveLinear,
+                fadeInDuration: 0.05,
+                fadeOutDuration: 0.18
+            )
+        }
         inputParameters.append(dialogueParams)
 
-        // 2. Background music track with sidechain ducking (-14dB during speech, smooth rise in pauses)
+        // 2. Background music track with custom trimming, volume, and optional ducking
         let effectiveMusicURL = backgroundMusicURL ?? config.musicURL
         if let musicURL = effectiveMusicURL {
             let musicAsset = AVURLAsset(url: musicURL)
@@ -194,9 +228,14 @@ public enum CinemaAudioMasteringService {
                 var currentMusicTime = CMTime.zero
                 let musicDuration = try await musicAsset.load(.duration)
                 
-                // Smart Audio Drop Detection integration
+                // Smart trim / start offset calculation
                 var musicStartOffset = CMTime.zero
-                if let urlComponents = URLComponents(url: musicURL, resolvingAgainstBaseURL: false),
+                if config.musicStartOffsetSeconds > 0 {
+                    // Explicit user trim
+                    let maxOffset = max(0.0, musicDuration.seconds - 2.0)
+                    let clamped = min(config.musicStartOffsetSeconds, maxOffset)
+                    musicStartOffset = CMTime(seconds: clamped, preferredTimescale: 600)
+                } else if let urlComponents = URLComponents(url: musicURL, resolvingAgainstBaseURL: false),
                    let dropOffsetString = urlComponents.queryItems?.first(where: { $0.name == "dropOffset" })?.value,
                    let dropOffset = Double(dropOffsetString), dropOffset > 0 {
                     // Start the track exactly at the detected drop/climax
@@ -216,46 +255,50 @@ public enum CinemaAudioMasteringService {
                         let insertRange = CMTimeRange(start: musicStartOffset, duration: insertDuration)
                         try compMusicTrack?.insertTimeRange(insertRange, of: musicTrack, at: currentMusicTime)
                         currentMusicTime = currentMusicTime + insertDuration
-                        // After the first loop, we can start from 0 again if we want, or keep looping from the offset.
-                        // For shorts, the song is usually longer than the video anyway.
-                        musicStartOffset = .zero // Reset offset so next loop starts from beginning if it loops
+                        // Reset offset so subsequent loops wrap smoothly from start
+                        musicStartOffset = .zero
                     }
                 }
 
                 let musicParams = AVMutableAudioMixInputParameters(track: compMusicTrack)
-                let restingVol = Float(pow(10.0, Double(config.musicRestingDB) / 20.0))
-                let duckingVol = Float(pow(10.0, Double(config.musicDuckingDB) / 20.0))
+                let baseMusicVol = max(0.0, config.musicVolume)
 
-                let mergedSegments = mergeSpeechSegments(
-                    speechSegments,
-                    threshold: config.speechMergeThreshold
-                )
+                if !config.musicDuckingEnabled {
+                    // Constant volume across entire short duration
+                    applyConstantMusicRamps(
+                        to: musicParams,
+                        duration: duration,
+                        volume: baseMusicVol,
+                        fadeInDuration: config.musicFadeInDuration,
+                        fadeOutDuration: config.musicFadeOutDuration
+                    )
+                } else {
+                    // Smart sidechain ducking under dialogue
+                    let restingVol = baseMusicVol * Float(pow(10.0, Double(config.musicRestingDB) / 20.0))
+                    let duckingVol = baseMusicVol * Float(pow(10.0, Double(config.musicDuckingDB) / 20.0))
 
-                applyDuckingRamps(
-                    to: musicParams,
-                    duration: duration,
-                    speechSegments: mergedSegments,
-                    restingVol: restingVol,
-                    duckingVol: duckingVol,
-                    attackDuration: config.duckingAttackDuration,
-                    releaseDuration: config.duckingReleaseDuration
-                )
+                    let mergedSegments = mergeSpeechSegments(
+                        speechSegments,
+                        threshold: config.speechMergeThreshold
+                    )
+
+                    applyDuckingRamps(
+                        to: musicParams,
+                        duration: duration,
+                        speechSegments: mergedSegments,
+                        restingVol: restingVol,
+                        duckingVol: duckingVol,
+                        attackDuration: config.duckingAttackDuration,
+                        releaseDuration: config.duckingReleaseDuration,
+                        fadeOutDuration: config.musicFadeOutDuration
+                    )
+                }
 
                 inputParameters.append(musicParams)
             }
         }
 
         audioMix.inputParameters = inputParameters
-
-        // Remove destination file if already present to prevent export failure
-        try? FileManager.default.removeItem(at: outputURL)
-
-        guard let exportSession = AVAssetExportSession(
-            asset: composition,
-            presetName: AVAssetExportPresetHighestQuality
-        ) else {
-            throw CinemaAudioMasteringError.cannotCreateExportSession
-        }
 
         // Clamp export timeRange to minimum of audio and video tracks to prevent dead-frame truncation
         let compVideoTracks = try await composition.loadTracks(withMediaType: .video)
@@ -265,8 +308,88 @@ public enum CinemaAudioMasteringService {
             let aDuration = try await compAudioTrack.load(.timeRange).duration
             effectiveDuration = CMTimeMinimum(vDuration, aDuration)
         }
-        exportSession.timeRange = CMTimeRange(start: .zero, duration: effectiveDuration)
 
+        // Remove destination file if already present to prevent export failure
+        try? FileManager.default.removeItem(at: outputURL)
+
+        // ZERO-LOSS VIDEO PASSTHROUGH PIPELINE:
+        // 1. Export mastered audio mix alone (AAC 256k M4A) without re-encoding video frames
+        let tempAudioURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shortcast-masteredaudio-\(UUID().uuidString).m4a")
+        defer { try? FileManager.default.removeItem(at: tempAudioURL) }
+
+        guard let audioExport = AVAssetExportSession(
+            asset: composition,
+            presetName: AVAssetExportPresetAppleM4A
+        ) else {
+            throw CinemaAudioMasteringError.cannotCreateExportSession
+        }
+        audioExport.audioMix = audioMix
+        audioExport.timeRange = CMTimeRange(start: .zero, duration: effectiveDuration)
+
+        if #available(macOS 15.0, *) {
+            try await audioExport.export(to: tempAudioURL, as: .m4a)
+        } else {
+            audioExport.outputURL = tempAudioURL
+            audioExport.outputFileType = .m4a
+            await audioExport.export()
+            if let error = audioExport.error {
+                throw error
+            }
+        }
+
+        // 2. Stream-mux original video track (copy: 0% quality loss) with mastered audio
+        try await muxVideoAndAudio(
+            videoURL: videoURL,
+            audioURL: tempAudioURL,
+            outputURL: outputURL,
+            composition: composition,
+            audioMix: audioMix,
+            effectiveDuration: effectiveDuration
+        )
+    }
+
+    /// Combines video with new audio using stream copy (-c:v copy) to guarantee 0% quality loss.
+    private static func muxVideoAndAudio(
+        videoURL: URL,
+        audioURL: URL,
+        outputURL: URL,
+        composition: AVComposition,
+        audioMix: AVAudioMix,
+        effectiveDuration: CMTime
+    ) async throws {
+        // Fast path: FFmpeg bitstream copy (takes ~0.05s, bit-for-bit picture preservation)
+        if let ffmpegBin = BinaryDownloadService.resolveBinary("ffmpeg", workingDirectory: nil) {
+            let args = [
+                "-hide_banner",
+                "-y",
+                "-i", videoURL.path,
+                "-i", audioURL.path,
+                "-map", "0:v:0",
+                "-map", "1:a:0",
+                "-c:v", "copy",
+                "-c:a", "copy",
+                "-movflags", "+faststart",
+                outputURL.path
+            ]
+            if let result = try? await ProcessRunner.shared.run(executableURL: ffmpegBin, arguments: args),
+               result.isSuccess,
+               FileManager.default.fileExists(atPath: outputURL.path) {
+                return
+            }
+        }
+
+        // Safe fallback: AVFoundation export using HEVC Highest Quality instead of default H.264
+        guard let exportSession = AVAssetExportSession(
+            asset: composition,
+            presetName: AVAssetExportPresetHEVCHighestQuality
+        ) ?? AVAssetExportSession(
+            asset: composition,
+            presetName: AVAssetExportPresetHighestQuality
+        ) else {
+            throw CinemaAudioMasteringError.cannotCreateExportSession
+        }
+        exportSession.timeRange = CMTimeRange(start: .zero, duration: effectiveDuration)
         exportSession.audioMix = audioMix
 
         if #available(macOS 15.0, *) {
@@ -368,6 +491,51 @@ public enum CinemaAudioMasteringService {
         }
     }
 
+    /// Schedules smooth constant volume ramps with optional fade-in and tail fade-out.
+    static func applyConstantMusicRamps(
+        to musicParams: AVMutableAudioMixInputParameters,
+        duration: CMTime,
+        volume: Float,
+        fadeInDuration: Double = 0.30,
+        fadeOutDuration: Double = 0.80
+    ) {
+        let totalSec = duration.seconds
+        guard totalSec > 0 else {
+            musicParams.setVolume(volume, at: .zero)
+            return
+        }
+
+        if totalSec > (fadeInDuration + fadeOutDuration) {
+            let fadeInTime = CMTime(seconds: fadeInDuration, preferredTimescale: 600)
+            let fadeOutStartTime = CMTime(seconds: totalSec - fadeOutDuration, preferredTimescale: 600)
+            let fadeOutDurationTime = CMTime(seconds: fadeOutDuration, preferredTimescale: 600)
+            let bodyDurationTime = CMTime(seconds: totalSec - fadeInDuration - fadeOutDuration, preferredTimescale: 600)
+
+            // 1. Fade-in
+            musicParams.setVolumeRamp(
+                fromStartVolume: 0.0,
+                toEndVolume: volume,
+                timeRange: CMTimeRange(start: .zero, duration: fadeInTime)
+            )
+
+            // 2. Body
+            musicParams.setVolumeRamp(
+                fromStartVolume: volume,
+                toEndVolume: volume,
+                timeRange: CMTimeRange(start: fadeInTime, duration: bodyDurationTime)
+            )
+
+            // 3. Fade-out
+            musicParams.setVolumeRamp(
+                fromStartVolume: volume,
+                toEndVolume: 0.0,
+                timeRange: CMTimeRange(start: fadeOutStartTime, duration: fadeOutDurationTime)
+            )
+        } else {
+            musicParams.setVolume(volume, at: .zero)
+        }
+    }
+
     /// Schedules precise, non-overlapping volume ramps for background music sidechain ducking.
     static func applyDuckingRamps(
         to musicParams: AVMutableAudioMixInputParameters,
@@ -376,14 +544,15 @@ public enum CinemaAudioMasteringService {
         restingVol: Float,
         duckingVol: Float,
         attackDuration: Double,
-        releaseDuration: Double
+        releaseDuration: Double,
+        fadeOutDuration: Double = 0.80
     ) {
+        let totalDurationSec = duration.seconds
         guard !speechSegments.isEmpty else {
-            musicParams.setVolume(restingVol, at: .zero)
+            applyConstantMusicRamps(to: musicParams, duration: duration, volume: restingVol, fadeOutDuration: fadeOutDuration)
             return
         }
 
-        let totalDurationSec = duration.seconds
         var isDucked = false
 
         // Determine starting state at t=0
@@ -440,6 +609,18 @@ public enum CinemaAudioMasteringService {
                 // Keep ducked during brief inter-word pauses to avoid audio pumping
                 isDucked = true
             }
+        }
+
+        // 3. Smooth tail fade-out if clip is long enough
+        if fadeOutDuration > 0 && totalDurationSec > (fadeOutDuration + 1.0) {
+            let fadeOutStartTime = CMTime(seconds: totalDurationSec - fadeOutDuration, preferredTimescale: 600)
+            let fadeOutDurationTime = CMTime(seconds: fadeOutDuration, preferredTimescale: 600)
+            let currentTailVol = isDucked ? duckingVol : restingVol
+            musicParams.setVolumeRamp(
+                fromStartVolume: currentTailVol,
+                toEndVolume: 0.0,
+                timeRange: CMTimeRange(start: fadeOutStartTime, duration: fadeOutDurationTime)
+            )
         }
     }
 }

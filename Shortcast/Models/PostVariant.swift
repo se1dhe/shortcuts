@@ -6,6 +6,7 @@ enum SocialPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
     case tiktok
     case instagram
     case youtube
+    case telegram
 
     var id: String { rawValue }
 
@@ -14,6 +15,7 @@ enum SocialPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
         case .tiktok:    "TikTok"
         case .instagram: "Instagram Reels"
         case .youtube:   "YouTube Shorts"
+        case .telegram:  "Telegram"
         }
     }
 
@@ -26,6 +28,7 @@ enum SocialPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
         case .tiktok:    "music.note"
         case .instagram: "camera"
         case .youtube:   "play.rectangle.fill"
+        case .telegram:  "paperplane.fill"
         }
     }
 
@@ -35,6 +38,7 @@ enum SocialPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
         case .tiktok:    "FF2D55"
         case .instagram: "C13584"
         case .youtube:   "FF0000"
+        case .telegram:  "2AABEE"
         }
     }
 }

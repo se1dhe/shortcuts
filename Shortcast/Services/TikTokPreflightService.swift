@@ -37,7 +37,9 @@ enum TikTokPreflightService {
         videoURL: URL,
         sourceMetadata: VideoSourceMetadata?,
         tiktokVariant: PostVariant?,
-        promoEnabled: Bool
+        promoEnabled: Bool,
+        antiCopyrightEnabled: Bool = true,
+        antiCopyrightConfig: AntiCopyrightConfig? = nil
     ) async -> Report {
         var findings: [Finding] = []
         let asset = AVURLAsset(url: videoURL)
@@ -99,6 +101,20 @@ enum TikTokPreflightService {
         if promoEnabled {
             findings.append(warning("regulated-promo", "Promotional overlay enabled", "This post contains a promo banner. Confirm TikTok disclosure requirements and any age, gambling, or regional restrictions before publishing."))
         }
+
+        if antiCopyrightEnabled, let cfg = antiCopyrightConfig, cfg.isActive {
+            var measures: [String] = []
+            if cfg.enableMirror { measures.append("зеркалирование") }
+            if abs(cfg.audioPitchShiftCents) > 0.0001 { measures.append(String(format: "питч-шифт (+%.0f cents)", cfg.audioPitchShiftCents)) }
+            if cfg.filmGrainIntensity > 0.01 { measures.append("35мм зерно (pHash)") }
+            if cfg.enableAudioWarmthEQ { measures.append("спектральный EQ") }
+            if cfg.stripMetadata { measures.append("очистка метаданных") }
+            let desc = measures.joined(separator: ", ")
+            findings.append(Finding(id: "anticopyright-active", severity: .info, title: "TikTok Shield активен", detail: "Контрмеры против Content ID: \(desc). Риск блокировки минимизирован."))
+        } else if sourceMetadata?.webpageURL != nil {
+            findings.append(warning("anticopyright-missing", "Антикопирайт выключен", "Для внешних видео и фрагментов фильмов рекомендуется включить TikTok Shield во избежание списания просмотров или страйка."))
+        }
+
         if findings.isEmpty {
             findings.append(Finding(id: "ready", severity: .info, title: "Basic preflight passed", detail: "No technical upload blockers were found. This is not a guarantee of moderation, copyright clearance, or recommendation reach."))
         }

@@ -103,6 +103,21 @@ final class AppSettings {
         didSet { defaults.set(youtubeCookiesPath, forKey: Keys.youtubeCookies) }
     }
 
+    /// Telegram Bot Token for posting to Telegram channel.
+    var telegramBotToken: String {
+        didSet { defaults.set(telegramBotToken, forKey: Keys.telegramBotToken) }
+    }
+
+    /// Telegram Channel ID/username (e.g. "@telonyx_club").
+    var telegramChannelId: String {
+        didSet { defaults.set(telegramChannelId, forKey: Keys.telegramChannelId) }
+    }
+
+    /// Whether to automatically post movie cards to Telegram on publish.
+    var autoPostToTelegram: Bool {
+        didSet { defaults.set(autoPostToTelegram, forKey: Keys.autoPostToTelegram) }
+    }
+
     /// Upload-Post profile name (from "Manage Users" — NOT a social handle).
     var profileName: String {
         didSet { defaults.set(profileName, forKey: Keys.profile) }
@@ -153,6 +168,16 @@ final class AppSettings {
     /// Default for burning transcript subtitles into every generated short.
     var burnSubtitles: Bool {
         didSet { defaults.set(burnSubtitles, forKey: Keys.burnSubtitles) }
+    }
+
+    /// Default for applying Anti-Copyright & TikTok Shield protection to generated shorts.
+    var antiCopyrightEnabled: Bool {
+        didSet { defaults.set(antiCopyrightEnabled, forKey: Keys.antiCopyrightEnabled) }
+    }
+
+    /// Default Anti-Copyright protection preset.
+    var antiCopyrightPreset: AntiCopyrightPreset {
+        didSet { defaults.set(antiCopyrightPreset.rawValue, forKey: Keys.antiCopyrightPreset) }
     }
 
     /// Default for showing a watermark on shorts. Per-clip toggle can override.
@@ -216,6 +241,16 @@ final class AppSettings {
                 defaults.set(data, forKey: Keys.hookAppearance)
             }
         }
+    }
+
+    /// Preferred genre focus for cinema moment finding: auto (TMDB), drama, or comedy.
+    var cinemaGenreMode: CinemaGenreMode {
+        didSet { defaults.set(cinemaGenreMode.rawValue, forKey: Keys.cinemaGenreMode) }
+    }
+
+    /// Выбранный формат видео: шортсы (1:1 / 9:16) или длинный метр (16:9 YouTube).
+    var selectedOutputFormat: CinemaOutputFormat {
+        didSet { defaults.set(selectedOutputFormat.rawValue, forKey: Keys.selectedOutputFormat) }
     }
 
     /// Minimum YouTube video length in minutes (default 30).
@@ -358,6 +393,9 @@ final class AppSettings {
         self.tmdbAPIKey = defaults.string(forKey: Keys.tmdbApiKey) ?? ""
         self.youtubeAPIKey = defaults.string(forKey: Keys.youtubeApiKey) ?? ""
         self.youtubeCookiesPath = defaults.string(forKey: Keys.youtubeCookies) ?? ""
+        self.telegramBotToken = defaults.string(forKey: Keys.telegramBotToken) ?? ""
+        self.telegramChannelId = defaults.string(forKey: Keys.telegramChannelId) ?? "@telonyx_club"
+        self.autoPostToTelegram = defaults.object(forKey: Keys.autoPostToTelegram) as? Bool ?? true
         self.profileName = defaults.string(forKey: Keys.profile) ?? ""
         self.languageOverride = defaults.string(forKey: Keys.language) ?? ""
         self.styleExamples = defaults.string(forKey: Keys.style) ?? ""
@@ -382,6 +420,10 @@ final class AppSettings {
         self.transcriptionEnabled = defaults.object(forKey: Keys.transcriptionEnabled) as? Bool ?? true
         // Default on — burn subtitles from the transcript.
         self.burnSubtitles = defaults.object(forKey: Keys.burnSubtitles) as? Bool ?? true
+        // Default on — TikTok Shield & Anti-Copyright protection.
+        self.antiCopyrightEnabled = defaults.object(forKey: Keys.antiCopyrightEnabled) as? Bool ?? true
+        let rawPreset = defaults.string(forKey: Keys.antiCopyrightPreset) ?? AntiCopyrightPreset.tikTokShield.rawValue
+        self.antiCopyrightPreset = AntiCopyrightPreset(rawValue: rawPreset) ?? .tikTokShield
         // Default on — the user opted into the watermark feature.
         self.watermarkEnabled = defaults.object(forKey: Keys.watermark) as? Bool ?? true
         // Default on for full video too.
@@ -401,6 +443,10 @@ final class AppSettings {
         self.hookAppearance = (defaults.data(forKey: Keys.hookAppearance)
             .flatMap { try? JSONDecoder().decode(HookAppearance.self, from: $0) })
             ?? .default
+        let rawGenre = defaults.string(forKey: Keys.cinemaGenreMode) ?? CinemaGenreMode.auto.rawValue
+        self.cinemaGenreMode = CinemaGenreMode(rawValue: rawGenre) ?? .auto
+        let rawFormat = defaults.string(forKey: Keys.selectedOutputFormat) ?? CinemaOutputFormat.shortSquare.rawValue
+        self.selectedOutputFormat = CinemaOutputFormat(rawValue: rawFormat) ?? .shortSquare
         self.youtubeMinDurationMinutes = defaults.object(forKey: Keys.youtubeMin) as? Int ?? 30
         self.youtubeMaxDurationMinutes = defaults.object(forKey: Keys.youtubeMax) as? Int ?? 120
         self.movieShortsSearchQueries = defaults.string(forKey: Keys.movieShortsSearchQueries)
@@ -437,6 +483,9 @@ final class AppSettings {
         static let tmdbApiKey  = "shortcast.tmdbApiKey"
         static let youtubeApiKey = "shortcast.youtubeApiKey"
         static let youtubeCookies = "shortcast.youtubeCookiesPath"
+        static let telegramBotToken = "shortcast.telegramBotToken"
+        static let telegramChannelId = "shortcast.telegramChannelId"
+        static let autoPostToTelegram = "shortcast.autoPostToTelegram"
         static let profile     = "shortcast.profileName"
         static let language    = "shortcast.languageOverride"
         static let style       = "shortcast.styleExamples"
@@ -444,9 +493,13 @@ final class AppSettings {
         static let copywriter  = "shortcast.copywriterModel"
         static let burnHook    = "shortcast.burnHookOverlay"
         static let reframe     = "shortcast.reframeToVertical"
+        static let cinemaGenreMode = "shortcast.cinemaGenreMode"
+        static let selectedOutputFormat = "shortcast.selectedOutputFormat"
         static let outputDirectoryBookmark = "shortcast.outputDirectoryBookmark"
         static let transcriptionEnabled = "shortcast.transcriptionEnabled"
         static let burnSubtitles = "shortcast.burnSubtitles"
+        static let antiCopyrightEnabled = "shortcast.antiCopyrightEnabled"
+        static let antiCopyrightPreset  = "shortcast.antiCopyrightPreset"
         static let subtitleAppearance = "shortcast.subtitleAppearance"
         static let hookAppearance = "shortcast.hookAppearance"
         static let workingDirectoryBookmark = "shortcast.workingDirectoryBookmark"

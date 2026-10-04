@@ -13,10 +13,93 @@ struct SettingsView: View {
     }
     @State private var connection: ConnectionState = .idle
 
+    private let cleanupService: any ProjectCleanupServiceProtocol = ProjectCleanupService.shared
+    @State private var removableSizeBytes: Int64?
+    @State private var isCalculatingSize = false
+    @State private var isCleaning = false
+    @State private var cleanupResult: CleanupReport?
+    @State private var showCleanupConfirm = false
+
+    @State private var isOpeningBrowserLogin = false
+    @State private var isCheckingBrowserAuth = false
+    @State private var browserAuthStatus: BrowserAuthStatus?
+    @State private var browserAuthError: String?
+
+    private enum TelegramConnectionState: Equatable {
+        case idle, checking, ok(String), failed(String)
+    }
+    @State private var telegramConnection: TelegramConnectionState = .idle
+
     var body: some View {
         @Bindable var settings = settings
 
         Form {
+            Section("Браузерная публикация (Без API-ключей)") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Автономная публикация шортсов напрямую через локальный Google Chrome. Не требует платных агрегаторов, прохождения строгой модерации Meta / TikTok или developer API-ключей.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 12) {
+                        Button {
+                            openBrowserLogin()
+                        } label: {
+                            Label("Войти в аккаунты", systemImage: "person.crop.circle.badge.checkmark")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.purple)
+                        .disabled(isOpeningBrowserLogin)
+
+                        Button("Проверить статус") {
+                            checkBrowserAuth()
+                        }
+                        .disabled(isCheckingBrowserAuth)
+
+                        if isOpeningBrowserLogin || isCheckingBrowserAuth {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+
+                    if let status = browserAuthStatus {
+                        HStack(spacing: 16) {
+                            browserPlatformBadge("TikTok", ok: status.tiktok)
+                            browserPlatformBadge("Instagram", ok: status.instagram)
+                            browserPlatformBadge("YouTube", ok: status.youtube)
+                        }
+                        .padding(.vertical, 4)
+                    }
+
+                    if let err = browserAuthError {
+                        Label(err, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+
+                    Text("Профиль и сохранённые сессии хранятся локально: ~/Library/Application Support/Shortcast/BrowserProfile")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            Section("Telegram-канал (@telonyx_club)") {
+                SecureField("Токен бота Telegram", text: $settings.telegramBotToken)
+                TextField("Канал (username или ID)", text: $settings.telegramChannelId)
+
+                Toggle("Автопубликация при экспорте", isOn: $settings.autoPostToTelegram)
+
+                Text("Для автоматической публикации шортсов и карточек фильмов в канал @telonyx_club создайте бота в @BotFather, скопируйте токен и добавьте бота администратором в ваш канал с правом публикации сообщений.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 10) {
+                    Button("Проверить бота", action: testTelegramConnection)
+                        .disabled(settings.telegramBotToken.trimmed.isEmpty || telegramConnection == .checking)
+                    telegramConnectionStatus
+                    Spacer()
+                    Link("Создать бота (@BotFather) ↗", destination: URL(string: "https://t.me/BotFather")!)
+                }
+            }
+
             Section("Upload-Post account") {
                 SecureField("API key", text: $settings.apiKey)
                 TextField("Profile name", text: $settings.profileName)
@@ -83,6 +166,20 @@ struct SettingsView: View {
             Section("Publishing") {
                 Toggle("Upload TikTok as a draft", isOn: $settings.tiktokAsDraft)
                 Text("Drafts land in the TikTok inbox so you can finish editing in the app before posting.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Защита от Content ID (TikTok Shield)") {
+                Toggle("Включить защиту по умолчанию", isOn: $settings.antiCopyrightEnabled)
+                if settings.antiCopyrightEnabled {
+                    Picker("Пресет по умолчанию", selection: $settings.antiCopyrightPreset) {
+                        ForEach(AntiCopyrightPreset.allCases) { preset in
+                            Text(preset.displayName).tag(preset)
+                        }
+                    }
+                }
+                Text("Автоматически применяет акустический питч-шифт (+14¢), зеркалирование, 35мм микро-зерно и спектральный EQ ко всем шортсам. Защищает от блокировок звука и теневых банов в TikTok.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -156,6 +253,74 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Project storage & cleanup") {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Deep clean project")
+                                .font(.callout.weight(.medium))
+                            Text("Deletes render cache, intermediate clip cuts, input copies, and compiler caches to reclaim disk space.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(role: .destructive) {
+                            showCleanupConfirm = true
+                        } label: {
+                            if isCleaning {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Text("Clean Now")
+                            }
+                        }
+                        .disabled(isCleaning)
+                    }
+
+                    HStack(spacing: 8) {
+                        if let bytes = removableSizeBytes {
+                            Text("Removable cache size: **\(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))**")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if isCalculatingSize {
+                            ProgressView().controlSize(.mini)
+                            Text("Calculating cache size…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Button {
+                            Task { await refreshRemovableSize() }
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(isCleaning || isCalculatingSize)
+                        .help("Refresh cache size")
+                    }
+
+                    if let result = cleanupResult {
+                        Label("Freed \(result.formattedBytesFreed) (\(result.filesRemovedCount) files removed)", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                }
+                .confirmationDialog(
+                    "Deep Clean Project?",
+                    isPresented: $showCleanupConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("Delete Cached and Temporary Files", role: .destructive) {
+                        runDeepClean()
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("This will delete all cached renders, temporary cuts, and copies of videos in the input folder. Your original media and exported files in the output directory will not be touched.")
+                }
+            }
+
             Section("How a long video becomes shorts") {
                 pipelineRole(
                     step: "1", icon: "waveform",
@@ -175,6 +340,19 @@ struct SettingsView: View {
                     model: settings.copywriterModel.displayName,
                     detail: "You choose this one ↓",
                     status: settings.copywriterModel.watchesClips ? modelStatus : directorStatus)
+            }
+
+            Section("Режим поиска киномоментов (Жанр)") {
+                Picker("Направление поиска", selection: $settings.cinemaGenreMode) {
+                    ForEach(CinemaGenreMode.allCases) { mode in
+                        Label(mode.title, systemImage: mode.symbol).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Text(settings.cinemaGenreMode.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Caption writer") {
@@ -284,6 +462,86 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 500, height: 600)
+        .task(id: settings.workingDirectory) {
+            await refreshRemovableSize()
+        }
+        .task {
+            checkBrowserAuth()
+        }
+    }
+
+    // MARK: - Browser Publishing Actions
+
+    @ViewBuilder
+    private func browserPlatformBadge(_ name: String, ok: Bool) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle")
+                .foregroundStyle(ok ? .green : .secondary)
+            Text(name)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(ok ? .primary : .secondary)
+        }
+    }
+
+    private func checkBrowserAuth() {
+        isCheckingBrowserAuth = true
+        browserAuthError = nil
+        Task {
+            do {
+                let status = try await BrowserAutomationService.shared.checkAuthStatus()
+                await MainActor.run {
+                    browserAuthStatus = status
+                    isCheckingBrowserAuth = false
+                }
+            } catch {
+                await MainActor.run {
+                    browserAuthError = error.localizedDescription
+                    isCheckingBrowserAuth = false
+                }
+            }
+        }
+    }
+
+    private func openBrowserLogin() {
+        isOpeningBrowserLogin = true
+        browserAuthError = nil
+        Task {
+            do {
+                let status = try await BrowserAutomationService.shared.openLoginSession()
+                await MainActor.run {
+                    browserAuthStatus = status
+                    isOpeningBrowserLogin = false
+                }
+            } catch {
+                await MainActor.run {
+                    browserAuthError = error.localizedDescription
+                    isOpeningBrowserLogin = false
+                }
+            }
+        }
+    }
+
+    // MARK: - Cleanup actions
+
+    private func refreshRemovableSize() async {
+        isCalculatingSize = true
+        removableSizeBytes = await cleanupService.calculateRemovableSize(workingDirectory: settings.workingDirectory)
+        isCalculatingSize = false
+    }
+
+    private func runDeepClean() {
+        isCleaning = true
+        cleanupResult = nil
+        Task {
+            do {
+                let report = try await cleanupService.performDeepClean(workingDirectory: settings.workingDirectory)
+                cleanupResult = report
+                removableSizeBytes = await cleanupService.calculateRemovableSize(workingDirectory: settings.workingDirectory)
+            } catch {
+                // Non-fatal cleanup error
+            }
+            isCleaning = false
+        }
     }
 
     // MARK: - Connection test
@@ -318,6 +576,42 @@ struct SettingsView: View {
                 connection = .ok
             } catch {
                 connection = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var telegramConnectionStatus: some View {
+        switch telegramConnection {
+        case .idle:
+            EmptyView()
+        case .checking:
+            ProgressView().controlSize(.small)
+        case .ok(let info):
+            Label(info, systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .font(.caption)
+        case .failed(let message):
+            Label(message, systemImage: "xmark.circle.fill")
+                .foregroundStyle(.red)
+                .font(.caption)
+                .lineLimit(2)
+        }
+    }
+
+    private func testTelegramConnection() {
+        telegramConnection = .checking
+        let botToken = settings.telegramBotToken
+        let channelId = settings.telegramChannelId
+        Task {
+            do {
+                let (botUsername, channelTitle) = try await TelegramPublishingService.shared.testConnection(
+                    botToken: botToken,
+                    channelId: channelId
+                )
+                telegramConnection = .ok("Бот \(botUsername) подключен к «\(channelTitle)»")
+            } catch {
+                telegramConnection = .failed(error.localizedDescription)
             }
         }
     }

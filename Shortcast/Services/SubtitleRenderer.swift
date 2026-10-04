@@ -208,6 +208,18 @@ struct SubtitleAppearance: Codable, Equatable, Sendable {
 
     static let cinemaGrunge = cinemaPremium
 
+    /// Shortcast Cinematic Long-form (16:9 Landscape YouTube):
+    /// Strictly 1-2 words per snap, kinetic micro-punch (1.14 -> 1.0),
+    /// off-white #F5F5F7, electric gold #FFE45C / #F5D020 highlight,
+    /// high-contrast crisp stroke, deep shadow, lower-third safe zone avoiding actors' faces.
+    static let cinemaLongform = SubtitleAppearance(
+        textColorHex: "#FFFFFF", textBorderColorHex: "#000000", textBorderWidth: 3.8,
+        accentColorHex: "#FFE45C", punchlineColorHex: "#E50914", bgColorHex: "#000000", bgOpacity: 0.0,
+        fontSizeScale: 0.048, fontWeightRaw: "heavy", fontChoiceRaw: FontChoice.russoOne.rawValue,
+        verticalPosition: 0.82, horizontalAlign: "center",
+        animationRaw: "pop", highlightModeRaw: "keyword", maxWordsPerCaption: 2,
+        maxWidthScale: 0.65, cornerRadiusScale: 0.0, paddingScale: 0.008)
+
     static let defaults: [String: SubtitleAppearance] = [
         "tiktok": .tiktok,
         "creator": .creator,
@@ -216,6 +228,7 @@ struct SubtitleAppearance: Codable, Equatable, Sendable {
         "neon": .neon,
         "cinemaGrunge": .cinemaGrunge,
         "cinemaPremium": .cinemaPremium,
+        "cinemaLongform": .cinemaLongform,
     ]
 
     // MARK: Helpers
@@ -323,6 +336,20 @@ struct SubtitleSegment: Sendable {
         self.end = end
         self.text = text.cleanedTranscriptText
         self.words = words
+    }
+
+    /// Returns a copy of the segment with start, end, and word timestamps scaled by `factor`
+    /// (e.g. `1.0 / audioSpeedMultiplier` for time-stretched video).
+    func scaled(by factor: Double) -> SubtitleSegment {
+        let scaledWords = words.map {
+            WordTimestamp(word: $0.word, start: $0.start * factor, end: $0.end * factor)
+        }
+        return SubtitleSegment(
+            start: start * factor,
+            end: end * factor,
+            text: text,
+            words: scaledWords
+        )
     }
 }
 
@@ -630,7 +657,7 @@ enum SubtitleRenderer {
         return snaps
     }
 
-    private static func resolveFont(name: String, size: CGFloat, fallback: NSFont.Weight = .heavy) -> NSFont {
+    static func resolveFont(name: String, size: CGFloat, fallback: NSFont.Weight = .heavy) -> NSFont {
         FontDownloadService.shared.registerBundledFonts()
         
         // 1. Try exact PostScript name match
@@ -790,7 +817,7 @@ enum SubtitleRenderer {
         return ctx.makeImage()
     }
 
-    private static func buildKineticSubtitleLayer(
+    static func buildKineticSubtitleLayer(
         asset: AVAsset? = nil,
         segments: [SubtitleSegment],
         appearance: SubtitleAppearance,

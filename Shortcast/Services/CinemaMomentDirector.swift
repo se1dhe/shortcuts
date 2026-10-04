@@ -1,31 +1,31 @@
 import Foundation
 
 /// Represents a continuous cut within a multi-segment cinema edit.
-public struct TimeSegment: Codable, Sendable, Equatable {
-    public var start: Double
-    public var end: Double
+struct TimeSegment: Codable, Sendable, Equatable {
+    var start: Double
+    var end: Double
 
-    public init(start: Double, end: Double) {
+    init(start: Double, end: Double) {
         self.start = start
         self.end = end
     }
 
-    public var duration: Double { max(end - start, 0) }
+    var duration: Double { max(end - start, 0) }
 }
 
 /// A structured cinema edit candidate focused on a coherent character arc or dramatic conflict.
-public struct CinemaStoryArc: Codable, Sendable, Identifiable, Equatable {
-    public var id: String { "\(character)_\(arcTitle)_\(Int(segments.first?.start ?? 0))" }
-    public var character: String          // e.g. "Дон Вито Корлеоне", "Майкл", "Джокер"
-    public var arcTitle: String           // e.g. "Кодекс чести", "Выстрел в ресторане", "Дилемма на паромах"
-    public var hook: String               // e.g. "Ты просишь без уважения, но ты не предлагаешь дружбу"
-    public var punchline: String          // e.g. "Я сделаю предложение, от которого нельзя отказаться"
-    public var segments: [TimeSegment]    // Multi-cut sequence of the scene
-    public var viralScore: Int            // 0 - 100
-    public var mood: String               // "dramatic", "tense", "mobster", "comedy", "action"
-    public var summary: String
+struct CinemaStoryArc: Codable, Sendable, Identifiable, Equatable {
+    var id: String { "\(character)_\(arcTitle)_\(Int(segments.first?.start ?? 0))" }
+    var character: String          // e.g. "Дон Вито Корлеоне", "Майкл", "Джокер"
+    var arcTitle: String           // e.g. "Кодекс чести", "Выстрел в ресторане", "Дилемма на паромах"
+    var hook: String               // e.g. "Ты просишь без уважения, но ты не предлагаешь дружбу"
+    var punchline: String          // e.g. "Я сделаю предложение, от которого нельзя отказаться"
+    var segments: [TimeSegment]    // Multi-cut sequence of the scene
+    var viralScore: Int            // 0 - 100
+    var mood: String               // "dramatic", "tense", "mobster", "comedy", "action"
+    var summary: String
 
-    public init(
+    init(
         character: String,
         arcTitle: String,
         hook: String,
@@ -45,7 +45,7 @@ public struct CinemaStoryArc: Codable, Sendable, Identifiable, Equatable {
         self.summary = summary
     }
 
-    public var totalDuration: Double {
+    var totalDuration: Double {
         segments.reduce(0) { $0 + $1.duration }
     }
 
@@ -72,15 +72,20 @@ public struct CinemaStoryArc: Codable, Sendable, Identifiable, Equatable {
 /// Specialized director that instructs the local LLM (Qwen 3.5 9B / Gemma)
 /// to analyze a feature film's screenplay and cluster it into coherent character arcs
 /// following the benchmark cinema editing grammar.
-public enum CinemaMomentDirector {
+enum CinemaMomentDirector {
 
     /// System instructions for the movie editor LLM.
-    public static func cinemaSystemPrompt(movieTitle: String, language: String? = nil, sceneMap: String? = nil) -> String {
+    static func cinemaSystemPrompt(
+        movieTitle: String,
+        language: String? = nil,
+        sceneMap: String? = nil,
+        isComedy: Bool = false
+    ) -> String {
         let sceneMapInstruction = sceneMap != nil ? """
         
         AVAILABLE SUPER-BLOCKS & SCENE MAP:
         \(sceneMap!)
-        Use the super-blocks and cut rates to identify scenes with high dramatic density, intense confrontation, and rapid montage pacing. You may select segments from a single high-intensity super-block OR connect 2 to 4 thematic moments from different blocks around a central idea.
+        Use the super-blocks and cut rates to identify scenes with high dramatic/comedic density, intense confrontation or dialogue ping-pong, and rapid montage pacing. You may select segments from a single high-intensity super-block OR connect 2 to 4 thematic moments from different blocks around a central idea.
         """ : ""
         
         let langInstruction: String
@@ -94,6 +99,53 @@ public enum CinemaMomentDirector {
             }
         } else {
             langInstruction = "Respond in the primary language of the transcript for character names, titles, hooks, and summaries."
+        }
+
+        if isComedy {
+            return """
+            You are an elite Hollywood comedy editor, stand-up & sitcom director, and viral Reels/Shorts creator.
+            You specialize in creating viral **Comedy & Humor Dialogue Shorts** for TikTok, Reels, and YouTube Shorts from comedy films and series.
+
+            Your mission is to analyze the screenplay for "\(movieTitle)" and discover STRICTLY 1 to 3 HILARIOUS, WITTY, or ECCENTRIC COMEDY SCENES with Viral Score >= 80.
+            Focus on: Sharp witty dialogue, situational comedy, absurd escalations, unexpected comebacks, hilarious banter, and iconic punchlines.
+            Quality over quantity: It is far better to produce 1-2 hilarious masterpieces of pure comedy than multiple mediocre fragments.
+            DO NOT simply find random isolated quotes or short 5-15 second fragments. All total durations under 10.0 seconds are strictly forbidden and will be rejected!
+
+            DIRECTORIAL PHILOSOPHY (COMEDY NARRATIVE ARC):
+            PRIORITIZE 1 CONTINUOUS COMEDIC SCENE (1 segment) with complete comedic arc:
+            1. Setup / Hook (0-5s): A funny statement, curious premise, or quirky start that grabs immediate attention and stops the scroll.
+            2. Comedic Escalation (5-35s): Awkward tension building up, absurdity growing, dialogue ping-pong between characters.
+            3. Turning Point / Climax (35-48s): The peak of absurdity or highest point of comedic awkwardness.
+            4. Punchline (48-58s): The killer joke, ironic resolution, or final hilarious reaction face/quote that makes the viewer laugh and share.
+
+            IMPORTANT EDITING GRAMMAR:
+            - TOTAL DURATION: Sum of all segments MUST be STRICTLY between 42.0 and 58.0 seconds total. Any edit under 10.0 seconds is strictly rejected! Any edit over 58.0 seconds is clamped.
+            - SEGMENTS: 1 to 4 segments. PRIORITIZE 1 CONTINUOUS SCENE (1 segment). If combining moments, they MUST be closely adjacent in time. Do NOT splice distant unrelated scenes from different acts of the movie.
+            - The `mood` field MUST be "eccentricComedy" (or "tarantinoDialogue" for dry dark humor).
+            - For `hook` and `punchline` strings, insert XML tags for kinetic typography:
+              * <yellow> for key witty verbs, jokes, and funny phrases.
+              * <red> for names, punchlines, absurdity peaks, or final comebacks.
+              Example: "Ты правда думаешь, что я поверю в эту <yellow>чушь</yellow>? Ты же просто <red>идиот</red>!"\(sceneMapInstruction)
+
+            Output ONLY a valid JSON array of objects with this exact structure (STRICTLY 1 to 3 objects):
+            [
+              {
+                "character": "Character Name",
+                "arcTitle": "Catchy Funny Title (2-4 words)",
+                "hook": "Opening hook dialogue line with <red> and <yellow> tags",
+                "punchline": "Closing hilarious punchline with <red> and <yellow> tags",
+                "segments": [
+                  {"start": 124.5, "end": 150.0},
+                  {"start": 155.0, "end": 180.0}
+                ],
+                "viralScore": 95,
+                "mood": "eccentricComedy",
+                "summary": "Explanation of the joke and comedic situation"
+              }
+            ]
+            \(langInstruction)
+            CRITICAL: You MUST output 'start' and 'end' in DECIMAL SECONDS (e.g. 124.5). DO NOT use MM:SS in the JSON!
+            """
         }
 
         return """
@@ -149,10 +201,20 @@ public enum CinemaMomentDirector {
     }
 
     /// User prompt submitting the transcript.
-    public static func cinemaUserPrompt(transcript: String, movieTitle: String, sceneMap: String? = nil) -> String {
-        """
-        Movie: "\(movieTitle)"
-        Analyze the following transcript with timestamps [SECONDS] and return STRICTLY 1 to 3 elite viral cinema story arcs (duration STRICTLY between 42.0 and 58.0 seconds total, Viral Score >= 80) in the requested JSON format.
+    static func cinemaUserPrompt(
+        transcript: String,
+        movieTitle: String,
+        sceneMap: String? = nil,
+        isComedy: Bool = false
+    ) -> String {
+        let genreTag = isComedy ? " [Режим: Комедия / Юмор]" : ""
+        let focusTag = isComedy
+            ? "hilarious viral comedy story arcs (duration STRICTLY between 42.0 and 58.0 seconds total, Viral Score >= 80, setup -> escalation -> punchline)"
+            : "elite viral cinema story arcs (duration STRICTLY between 42.0 and 58.0 seconds total, Viral Score >= 80)"
+
+        return """
+        Movie: "\(movieTitle)"\(genreTag)
+        Analyze the following transcript with timestamps [SECONDS] and return STRICTLY 1 to 3 \(focusTag) in the requested JSON format.
         You may select a single gripping scene OR unite 2 to 4 key moments from across the film around one powerful narrative idea.
 
         Transcript:
@@ -161,7 +223,11 @@ public enum CinemaMomentDirector {
     }
 
     /// Robust parser for LLM JSON output.
-    public static func parseArcs(from rawText: String, transcriptSegments: [TranscriptSegment]? = nil) -> [CinemaStoryArc] {
+    static func parseArcs(
+        from rawText: String,
+        transcriptSegments: [TranscriptSegment]? = nil,
+        isComedy: Bool = false
+    ) -> [CinemaStoryArc] {
         let jsonString = extractJSON(from: rawText) ?? rawText
         let fixed = fixTimeFormats(in: jsonString)
         
@@ -197,10 +263,12 @@ public enum CinemaMomentDirector {
                     hook: hook,
                     punchline: punchline,
                     duration: duration,
-                    segments: segments
+                    segments: segments,
+                    isComedy: isComedy
                 )
                 
                 let finalScore = Int(Double(llmScore) * 0.4 + Double(algScore) * 0.6)
+                let effectiveMood = (isComedy && (mood.isEmpty || mood == "dramatic")) ? "eccentricComedy" : (mood.isEmpty ? "dramatic" : mood)
 
                 arcs.append(CinemaStoryArc(
                     character: char,
@@ -209,7 +277,7 @@ public enum CinemaMomentDirector {
                     punchline: punchline,
                     segments: segments,
                     viralScore: finalScore,
-                    mood: mood.isEmpty ? "dramatic" : mood,
+                    mood: effectiveMood,
                     summary: summary
                 ))
             }
@@ -236,12 +304,13 @@ public enum CinemaMomentDirector {
                     }
                     let h = item.hook ?? ""
                     let p = item.punchline ?? ""
-                    let alg = calculateAlgorithmicScore(hook: h, punchline: p, duration: dur, segments: cleanSegments)
+                    let alg = calculateAlgorithmicScore(hook: h, punchline: p, duration: dur, segments: cleanSegments, isComedy: isComedy)
                     let score = Int(Double(item.viralScore ?? 85) * 0.4 + Double(alg) * 0.6)
+                    let effMood = (isComedy && ((item.mood ?? "").isEmpty || item.mood == "dramatic")) ? "eccentricComedy" : (item.mood ?? "dramatic")
                     return CinemaStoryArc(
                         character: char, arcTitle: title, hook: h,
                         punchline: p, segments: cleanSegments,
-                        viralScore: score, mood: item.mood ?? "dramatic", summary: item.summary ?? "")
+                        viralScore: score, mood: effMood, summary: item.summary ?? "")
                 }
                 arcs.append(contentsOf: decodedArcs)
             }
@@ -336,11 +405,12 @@ public enum CinemaMomentDirector {
 
     // MARK: - Algorithmic Story Arc Scoring (Phase 5.5)
 
-    public static func calculateAlgorithmicScore(
+    static func calculateAlgorithmicScore(
         hook: String,
         punchline: String,
         duration: Double,
-        segments: [TimeSegment]
+        segments: [TimeSegment],
+        isComedy: Bool = false
     ) -> Int {
         // Immediate disqualification for short scraps (< 35s)
         guard duration >= 10.0 else { return 0 }
@@ -378,17 +448,33 @@ public enum CinemaMomentDirector {
             score += 5
         }
         
-        // 4. Dramatic escalation / conflict markers
-        let conflictKeywords = [
-            "не", "нет", "хватит", "никогда", "зачем", "почему", "стой", "убью",
-            "правда", "ложь", "виновен", "суд", "деньги", "жизнь", "смерть", "страх",
-            "убирайся", "смотри", "уверен", "знаешь", "хочешь", "клянусь"
-        ]
-        let conflictMatches = conflictKeywords.filter { lower.contains($0) }.count
-        if conflictMatches >= 2 {
-            score += 15
-        } else if conflictMatches == 1 {
-            score += 8
+        // 4. Dramatic escalation / Comedic humor markers
+        if isComedy {
+            let comedyKeywords = [
+                "смешно", "шутка", "прикол", "дурак", "идиот", "правда", "серьезно", "серьёзно",
+                "боже", "чё", "что", "погоди", "слушай", "ладно", "с ума сошел", "с ума сошёл",
+                "прикалываешься", "гонишь", "отвали", "замолчи", "конечно", "не может быть",
+                "ха", "ха-ха", "эй", "мужик", "чувак", "ты шутишь", "гляди", "посмотри",
+                "ну да", "ага", "куда", "зачем", "блин", "чёрт", "черт", "funny", "joke", "crazy"
+            ]
+            let comedyMatches = comedyKeywords.filter { lower.contains($0) }.count
+            if comedyMatches >= 2 {
+                score += 15
+            } else if comedyMatches == 1 {
+                score += 8
+            }
+        } else {
+            let conflictKeywords = [
+                "не", "нет", "хватит", "никогда", "зачем", "почему", "стой", "убью",
+                "правда", "ложь", "виновен", "суд", "деньги", "жизнь", "смерть", "страх",
+                "убирайся", "смотри", "уверен", "знаешь", "хочешь", "клянусь"
+            ]
+            let conflictMatches = conflictKeywords.filter { lower.contains($0) }.count
+            if conflictMatches >= 2 {
+                score += 15
+            } else if conflictMatches == 1 {
+                score += 8
+            }
         }
         
         // 5. Narrative pacing & segment structure (Dialogue Mode)
@@ -426,7 +512,7 @@ public enum CinemaMomentDirector {
     }
 
     /// Overload for backward compatibility
-    public static func calculateAlgorithmicScore(transcript: String, duration: Double, segments: [TimeSegment]) -> Int {
+    static func calculateAlgorithmicScore(transcript: String, duration: Double, segments: [TimeSegment]) -> Int {
         calculateAlgorithmicScore(hook: transcript, punchline: "", duration: duration, segments: segments)
     }
 
@@ -434,7 +520,7 @@ public enum CinemaMomentDirector {
 
     /// Filters and caps candidates to strictly 1 to 3 best cinematic story arcs with Viral Score >= 80
     /// and duration strictly within 40.0–58.0 seconds.
-    public static func filterEliteCandidates(
+    static func filterEliteCandidates(
         arcs: [CinemaStoryArc],
         transcriptSegments: [TranscriptSegment]? = nil,
         boundaryDetector: SentenceBoundaryDetecting = SentenceBoundaryDetector()

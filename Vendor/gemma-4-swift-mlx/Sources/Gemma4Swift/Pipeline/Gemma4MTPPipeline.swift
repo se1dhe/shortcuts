@@ -152,7 +152,7 @@ public actor Gemma4MTPPipeline {
                 let messages: [[String: String]] = [["role": "user", "content": userPrompt]]
                 promptIds = try context.tokenizer.applyChatTemplate(messages: messages)
             } else {
-                promptIds = try context.tokenizer.encode(text: userPrompt)
+                promptIds = context.tokenizer.encode(text: userPrompt)
             }
             let inputArr = MLXArray(promptIds.map { Int32($0) }).reshaped(1, -1)
 
@@ -299,7 +299,7 @@ public actor Gemma4MTPPipeline {
             return s
         }
 
-        await self.setStats(stats)
+        self.setStats(stats)
     }
 
     private func setStats(_ s: Stats) {

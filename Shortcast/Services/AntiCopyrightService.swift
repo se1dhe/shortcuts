@@ -4,6 +4,42 @@ import CoreGraphics
 import CoreImage
 import os.log
 
+// MARK: - Presets Enum
+
+/// User-selectable presets for anti-copyright protection.
+public enum AntiCopyrightPreset: String, CaseIterable, Identifiable, Codable, Sendable {
+    case off = "off"
+    case subtle = "subtle"
+    case tikTokShield = "tikTokShield"
+    case moderate = "moderate"
+    case aggressive = "aggressive"
+    case custom = "custom"
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .off: return "Отключено"
+        case .subtle: return "Мягкая (Subtle)"
+        case .tikTokShield: return "TikTok / Reels Shield (Рекомендуется)"
+        case .moderate: return "Стандартная (Moderate)"
+        case .aggressive: return "Максимальная (Aggressive)"
+        case .custom: return "Пользовательская (Custom)"
+        }
+    }
+
+    public var config: AntiCopyrightConfig {
+        switch self {
+        case .off: return .off
+        case .subtle: return .subtle
+        case .tikTokShield: return .tikTokShield
+        case .moderate: return .moderate
+        case .aggressive: return .aggressive
+        case .custom: return .tikTokShield
+        }
+    }
+}
+
 // MARK: - Configuration
 
 /// Configuration options for the Anti-Copyright transformation pipeline.
@@ -16,7 +52,7 @@ public struct AntiCopyrightConfig: Codable, Sendable, Equatable, Hashable {
     /// Whether to mirror the video horizontally (flip X axis).
     public var enableMirror: Bool
 
-    /// Micro-zoom scale factor (e.g. 1.02 - 1.05). 1.0 means no zoom.
+    /// Micro-zoom scale factor (e.g. 1.02 - 1.06). 1.0 means no zoom.
     public var zoomScale: Double
 
     /// Contrast adjustment delta (e.g. +0.03 = +3% contrast). 0.0 means unchanged.
@@ -25,33 +61,50 @@ public struct AntiCopyrightConfig: Codable, Sendable, Equatable, Hashable {
     /// Saturation adjustment delta (e.g. +0.03 = +3% saturation). 0.0 means unchanged.
     public var saturationDelta: Double
 
-    /// Audio playback speed multiplier (e.g. 1.01 = +1% faster). 1.0 means normal speed.
+    /// 35mm dynamic cinematic micro-grain intensity (0.0 = off, 0.25 = subtle, 0.45 = moderate).
+    /// Breaks block-level DCT hashes while giving film-like organic texture.
+    public var filmGrainIntensity: Double
+
+    /// Audio playback speed multiplier (e.g. 1.015 = +1.5% faster). 1.0 means normal speed.
     public var audioSpeedMultiplier: Double
 
-    /// Audio pitch shift in cents (100 cents = 1 semitone). E.g. +6.0 to +12.0 cents.
+    /// Audio pitch shift in cents (100 cents = 1 semitone). E.g. +8.0 to +22.0 cents.
+    /// Alters acoustic constellation peaks to bypass audio fingerprint matching.
     public var audioPitchShiftCents: Double
+
+    /// Subtle presence/warmth EQ curve to shift spectral energy away from studio master.
+    public var enableAudioWarmthEQ: Bool
 
     /// Optional dynamic framing drift amplitude as a fraction of available zoom margin (0.0 ... 1.0).
     public var driftIntensity: Double
+
+    /// Strip container and stream metadata tags to remove ripper/studio footprints.
+    public var stripMetadata: Bool
 
     // MARK: - Initialization
 
     public init(
         enableMirror: Bool = true,
-        zoomScale: Double = 1.03,
+        zoomScale: Double = 1.035,
         contrastDelta: Double = 0.04,
         saturationDelta: Double = 0.03,
-        audioSpeedMultiplier: Double = 1.0,
-        audioPitchShiftCents: Double = 6.0,
-        driftIntensity: Double = 0.0
+        filmGrainIntensity: Double = 0.25,
+        audioSpeedMultiplier: Double = 1.015,
+        audioPitchShiftCents: Double = 14.0,
+        enableAudioWarmthEQ: Bool = true,
+        driftIntensity: Double = 0.35,
+        stripMetadata: Bool = true
     ) {
         self.enableMirror = enableMirror
         self.zoomScale = zoomScale
         self.contrastDelta = contrastDelta
         self.saturationDelta = saturationDelta
+        self.filmGrainIntensity = filmGrainIntensity
         self.audioSpeedMultiplier = audioSpeedMultiplier
         self.audioPitchShiftCents = audioPitchShiftCents
+        self.enableAudioWarmthEQ = enableAudioWarmthEQ
         self.driftIntensity = driftIntensity
+        self.stripMetadata = stripMetadata
     }
 
     // MARK: - Presets
@@ -62,20 +115,40 @@ public struct AntiCopyrightConfig: Codable, Sendable, Equatable, Hashable {
         zoomScale: 1.0,
         contrastDelta: 0.0,
         saturationDelta: 0.0,
+        filmGrainIntensity: 0.0,
         audioSpeedMultiplier: 1.0,
         audioPitchShiftCents: 0.0,
-        driftIntensity: 0.0
+        enableAudioWarmthEQ: false,
+        driftIntensity: 0.0,
+        stripMetadata: false
     )
 
-    /// Subtle protection: minimal visual/audio changes, suitable for general content.
+    /// Subtle protection: light visual/audio adjustments.
     public static let subtle = AntiCopyrightConfig(
         enableMirror: true,
         zoomScale: 1.025,
         contrastDelta: 0.03,
         saturationDelta: 0.02,
+        filmGrainIntensity: 0.15,
         audioSpeedMultiplier: 1.0,
-        audioPitchShiftCents: 0.0,
-        driftIntensity: 0.2
+        audioPitchShiftCents: 8.0,
+        enableAudioWarmthEQ: true,
+        driftIntensity: 0.2,
+        stripMetadata: true
+    )
+
+    /// TikTok / Reels Shield (RECOMMENDED): Hardened specifically against TikTok acoustic constellation and pHash algorithms.
+    public static let tikTokShield = AntiCopyrightConfig(
+        enableMirror: true,
+        zoomScale: 1.035,
+        contrastDelta: 0.04,
+        saturationDelta: 0.03,
+        filmGrainIntensity: 0.25,
+        audioSpeedMultiplier: 1.015,
+        audioPitchShiftCents: 14.0,
+        enableAudioWarmthEQ: true,
+        driftIntensity: 0.35,
+        stripMetadata: true
     )
 
     /// Moderate protection: recommended standard for cinematic shorts and viral clips.
@@ -84,20 +157,26 @@ public struct AntiCopyrightConfig: Codable, Sendable, Equatable, Hashable {
         zoomScale: 1.04,
         contrastDelta: 0.05,
         saturationDelta: 0.04,
-        audioSpeedMultiplier: 1.0,
-        audioPitchShiftCents: 0.0,
-        driftIntensity: 0.4
+        filmGrainIntensity: 0.30,
+        audioSpeedMultiplier: 1.02,
+        audioPitchShiftCents: 15.0,
+        enableAudioWarmthEQ: true,
+        driftIntensity: 0.4,
+        stripMetadata: true
     )
 
     /// Aggressive protection: higher modulation for strict content identification systems.
     public static let aggressive = AntiCopyrightConfig(
         enableMirror: true,
         zoomScale: 1.06,
-        contrastDelta: 0.08,
-        saturationDelta: 0.06,
-        audioSpeedMultiplier: 1.0,
-        audioPitchShiftCents: 0.0,
-        driftIntensity: 0.6
+        contrastDelta: 0.07,
+        saturationDelta: 0.05,
+        filmGrainIntensity: 0.45,
+        audioSpeedMultiplier: 1.03,
+        audioPitchShiftCents: 22.0,
+        enableAudioWarmthEQ: true,
+        driftIntensity: 0.6,
+        stripMetadata: true
     )
 
     // MARK: - Computed Properties
@@ -108,8 +187,11 @@ public struct AntiCopyrightConfig: Codable, Sendable, Equatable, Hashable {
         abs(zoomScale - 1.0) > 0.0001 ||
         abs(contrastDelta) > 0.0001 ||
         abs(saturationDelta) > 0.0001 ||
+        filmGrainIntensity > 0.01 ||
         abs(audioSpeedMultiplier - 1.0) > 0.0001 ||
-        abs(audioPitchShiftCents) > 0.0001
+        abs(audioPitchShiftCents) > 0.0001 ||
+        enableAudioWarmthEQ ||
+        stripMetadata
     }
 
     /// Whether visual video stream transformations are active.
@@ -117,13 +199,15 @@ public struct AntiCopyrightConfig: Codable, Sendable, Equatable, Hashable {
         enableMirror ||
         abs(zoomScale - 1.0) > 0.0001 ||
         abs(contrastDelta) > 0.0001 ||
-        abs(saturationDelta) > 0.0001
+        abs(saturationDelta) > 0.0001 ||
+        filmGrainIntensity > 0.01
     }
 
     /// Whether audio stream transformations are active.
     public var hasAudioTransforms: Bool {
         abs(audioSpeedMultiplier - 1.0) > 0.0001 ||
-        abs(audioPitchShiftCents) > 0.0001
+        abs(audioPitchShiftCents) > 0.0001 ||
+        enableAudioWarmthEQ
     }
 
     /// Frequency scale ratio derived from cents: `2^(cents / 1200)`.
@@ -137,6 +221,7 @@ public struct AntiCopyrightConfig: Codable, Sendable, Equatable, Hashable {
         copy.zoomScale = max(1.0, min(1.20, zoomScale))
         copy.contrastDelta = max(-0.30, min(0.30, contrastDelta))
         copy.saturationDelta = max(-0.30, min(0.30, saturationDelta))
+        copy.filmGrainIntensity = max(0.0, min(1.0, filmGrainIntensity))
         copy.audioSpeedMultiplier = max(0.5, min(2.0, audioSpeedMultiplier))
         copy.audioPitchShiftCents = max(-200.0, min(200.0, audioPitchShiftCents))
         copy.driftIntensity = max(0.0, min(1.0, driftIntensity))
@@ -553,7 +638,13 @@ public struct AntiCopyrightFFmpegBuilder: Sendable {
             filters.append("eq=contrast=\(c):saturation=\(s)")
         }
 
-        // 4. Video tempo synchronization with audio tempo
+        // 4. 35mm dynamic cinematic micro-grain (breaks block-level DCT hashes)
+        if config.filmGrainIntensity > 0.01 {
+            let strength = max(1, min(6, Int(round(config.filmGrainIntensity * 10.0))))
+            filters.append("noise=c0s=\(strength):c0f=t+u")
+        }
+
+        // 5. Video tempo synchronization with audio tempo
         if abs(config.audioSpeedMultiplier - 1.0) > 0.0001 {
             let ptsFactor = fmt(1.0 / config.audioSpeedMultiplier)
             filters.append("setpts=\(ptsFactor)*PTS")
@@ -569,8 +660,9 @@ public struct AntiCopyrightFFmpegBuilder: Sendable {
         var filters: [String] = []
         let hasSpeed = abs(config.audioSpeedMultiplier - 1.0) > 0.0001
         let hasPitch = abs(config.audioPitchShiftCents) > 0.0001
+        let hasEQ = config.enableAudioWarmthEQ
 
-        guard hasSpeed || hasPitch else {
+        guard hasSpeed || hasPitch || hasEQ else {
             return filters
         }
 
@@ -602,6 +694,11 @@ public struct AntiCopyrightFFmpegBuilder: Sendable {
                 let tempo = fmt(config.audioSpeedMultiplier)
                 filters.append("atempo=\(tempo)")
             }
+        }
+
+        // 6. Spectral EQ warmth & presence shift
+        if config.enableAudioWarmthEQ {
+            filters.append("equalizer=f=1200:t=q:w=1.5:g=1.2,equalizer=f=350:t=q:w=1.2:g=-0.8")
         }
 
         return filters
@@ -639,7 +736,7 @@ public struct AntiCopyrightService: AntiCopyrightTransforming, Sendable {
 
     // MARK: - Initializers
 
-    public init(config: AntiCopyrightConfig = .subtle) {
+    public init(config: AntiCopyrightConfig = .tikTokShield) {
         let clampedConfig = config.clamped()
         self.config = clampedConfig
         self.geometryTransformer = AntiCopyrightGeometryTransformer(config: clampedConfig)
@@ -651,6 +748,7 @@ public struct AntiCopyrightService: AntiCopyrightTransforming, Sendable {
     // MARK: - Standard Instances
 
     public static let subtle = AntiCopyrightService(config: .subtle)
+    public static let tikTokShield = AntiCopyrightService(config: .tikTokShield)
     public static let moderate = AntiCopyrightService(config: .moderate)
     public static let aggressive = AntiCopyrightService(config: .aggressive)
     public static let off = AntiCopyrightService(config: .off)
@@ -910,18 +1008,32 @@ public struct AntiCopyrightService: AntiCopyrightTransforming, Sendable {
         )
         arguments.append(contentsOf: filterArgs)
 
-        arguments.append(contentsOf: [
+        var outputFlags: [String] = [
             "-c:v", "h264_videotoolbox",
-            "-b:v", "12M",
+            "-b:v", "38M",
+            "-maxrate", "45M",
+            "-bufsize", "50M",
             "-pix_fmt", "yuv420p",
+            "-color_primaries", "bt709",
+            "-color_trc", "bt709",
+            "-colorspace", "bt709",
             "-c:a", "aac",
-            "-b:a", "192k",
-            "-ar", "44100",
+            "-b:a", "256k",
+            "-ar", "48000",
             "-profile:a", "aac_low",
-            "-aac_tns", "0",
+            "-aac_tns", "0"
+        ]
+
+        if config.stripMetadata {
+            outputFlags.append(contentsOf: ["-map_metadata", "-1", "-fflags", "+bitexact"])
+        }
+
+        outputFlags.append(contentsOf: [
             "-movflags", "+faststart",
             outputURL.path
         ])
+
+        arguments.append(contentsOf: outputFlags)
 
         do {
             _ = try await ProcessRunner.shared.run(
@@ -929,7 +1041,27 @@ public struct AntiCopyrightService: AntiCopyrightTransforming, Sendable {
                 arguments: arguments
             )
         } catch {
-            throw AntiCopyrightError.processingFailed(error.localizedDescription)
+            Self.log("FFmpeg with rubberband failed (\(error.localizedDescription)), retrying with universal asetrate filter...")
+            var fallbackArgs = [
+                "-y",
+                "-i", videoURL.path
+            ]
+            let fallbackFilterArgs = buildFFmpegArguments(
+                renderSize: renderSize,
+                audioPitchMethod: .asetrate,
+                sampleRate: 44100
+            )
+            fallbackArgs.append(contentsOf: fallbackFilterArgs)
+            fallbackArgs.append(contentsOf: outputFlags)
+
+            do {
+                _ = try await ProcessRunner.shared.run(
+                    executableURL: ffmpegBinary,
+                    arguments: fallbackArgs
+                )
+            } catch let fallbackError {
+                throw AntiCopyrightError.processingFailed(fallbackError.localizedDescription)
+            }
         }
     }
 
@@ -998,6 +1130,9 @@ public struct AntiCopyrightService: AntiCopyrightTransforming, Sendable {
         let audioMix = createAudioMix(for: composition)
 
         guard let exportSession = AVAssetExportSession(
+            asset: composition,
+            presetName: AVAssetExportPresetHEVCHighestQuality
+        ) ?? AVAssetExportSession(
             asset: composition,
             presetName: AVAssetExportPresetHighestQuality
         ) else {

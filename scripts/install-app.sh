@@ -20,22 +20,34 @@ if [[ -z "$SRC" && -n "${TARGET_BUILD_DIR:-}" && -n "${FULL_PRODUCT_NAME:-}" ]];
   fi
 fi
 
-# 2. Fallback discovery in project build directories
+# 2. Fallback discovery in Xcode DerivedData and project build directories (pick newest)
 if [[ -z "$SRC" || ! -d "$SRC" ]]; then
-  POSSIBLE_DIRS=(
-    ".derivedData/Build/Products/Debug/Short Generator.app"
-    ".derivedData/Build/Products/Release/Short Generator.app"
+  POSSIBLE_CANDIDATES=()
+  for P in \
+    "$HOME"/Library/Developer/Xcode/DerivedData/Shortcast-*/Build/Products/Release/"Short Generator.app" \
+    "$HOME"/Library/Developer/Xcode/DerivedData/Shortcast-*/Build/Products/Debug/"Short Generator.app" \
+    ".derivedData/Build/Products/Release/Short Generator.app" \
+    ".derivedData/Build/Products/Debug/Short Generator.app" \
+    "build/Build/Products/Release/Short Generator.app" \
     "build/Build/Products/Debug/Short Generator.app"
-    "build/Build/Products/Release/Short Generator.app"
-    ".derivedData/Build/Products/Debug/Shortcast.app"
-    ".derivedData/Build/Products/Release/Shortcast.app"
-  )
-  for P in "${POSSIBLE_DIRS[@]}"; do
+  do
     if [[ -d "$P" ]]; then
-      SRC="$P"
-      break
+      POSSIBLE_CANDIDATES+=("$P")
     fi
   done
+
+  if [[ ${#POSSIBLE_CANDIDATES[@]} -gt 0 ]]; then
+    NEWEST=""
+    NEWEST_TIME=0
+    for CAND in "${POSSIBLE_CANDIDATES[@]}"; do
+      MTIME=$(stat -f "%m" "$CAND" 2>/dev/null || echo 0)
+      if [[ "$MTIME" -gt "$NEWEST_TIME" ]]; then
+        NEWEST_TIME="$MTIME"
+        NEWEST="$CAND"
+      fi
+    done
+    SRC="$NEWEST"
+  fi
 fi
 
 if [[ -z "$SRC" || ! -d "$SRC" ]]; then

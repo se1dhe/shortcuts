@@ -177,12 +177,14 @@ struct ContentView: View {
 
     private var appVersionString: String {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
-        return "v\(version)"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+        return "v\(version) (build \(build))"
     }
 
     private var sidebarBottomInfo: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
             Divider()
+            
             HStack(spacing: 8) {
                 Circle()
                     .fill(modelManager.isReady ? Color.green : Color.orange)
@@ -190,17 +192,15 @@ struct ContentView: View {
                 Text(modelManager.isReady ? "MLX Движок готов" : "Инициализация…")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                
-                Spacer()
-                
-                Text(appVersionString)
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.tertiary)
-                    .help("Версия \(appVersionString) (Сборка \(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"))")
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            
+            Text(appVersionString)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .help("Текущая версия приложения")
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
     }
 
     // MARK: - Detail Content

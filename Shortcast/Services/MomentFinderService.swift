@@ -507,7 +507,7 @@ final class MomentFinderService {
     }
 
     /// Generates 4 to 7 deep philosophical themes/concepts for a film using the Director model.
-    func generateThematicConcepts(transcriptSample: String, movieTitle: String) async -> [ThematicConcept] {
+    func generateThematicConcepts(transcriptSample: String, movieTitle: String, movieOverview: String? = nil) async -> [ThematicConcept] {
         guard let container else {
             Self.log("generateThematicConcepts skipped: no model loaded")
             return []
@@ -534,7 +534,13 @@ final class MomentFinderService {
             generateParameters: params,
             additionalContext: ["enable_thinking": false])
 
-        let userPrompt = "Фильм: «\(movieTitle)»\n\nСрез ключевых диалогов и реплик:\n\"\"\"\n\(sample.prefix(3500))\n\"\"\"\n\nВыдели от 4 до 7 фундаментальных тем. Верни строго валидный JSON-массив:"
+        var promptParts: [String] = ["Фильм: «\(movieTitle)»"]
+        if let overview = movieOverview?.trimmingCharacters(in: .whitespacesAndNewlines), !overview.isEmpty {
+            promptParts.append("Синопсис/сюжет фильма:\n\"\"\"\n\(overview)\n\"\"\"")
+        }
+        promptParts.append("Срез ключевых диалогов фильма (хронологически по актам сюжета):\n\"\"\"\n\(sample.prefix(4500))\n\"\"\"")
+        promptParts.append("Выдели от 4 до 7 фундаментальных философских тем. Верни строго валидный JSON-массив:")
+        let userPrompt = promptParts.joined(separator: "\n\n")
 
         do {
             var raw = ""

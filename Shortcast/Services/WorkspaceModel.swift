@@ -458,6 +458,8 @@ final class WorkspaceModel {
             let concepts = try await thematicService.discoverConcepts(
                 from: transcript,
                 movieTitle: effectiveMovieTitle,
+                movieOverview: movie?.overview,
+                forceAI: false,
                 modelManager: modelManager
             )
             self.discoveredConcepts = concepts
@@ -541,16 +543,54 @@ final class WorkspaceModel {
         }
     }
 
-    func cancelLongformSelection() {
-        self.discoveredConcepts = []
+    /// Возврат к выбору темы для текущего фильма без повторной обработки видео и Whisper
+    func chooseAnotherConcept() {
+        self.longformResult = nil
         self.selectedConcept = nil
-        cleanUpTempInput()
-        self.phase = .empty
+        self.phase = .selectingLongformConcept
+    }
+
+    /// Повторный запуск генерации альтернативных тем с помощью нейросети Director
+    func regenerateThematicConcepts(modelManager: ModelManager) async {
+        guard let transcript = storedTranscript else { return }
+        let effectiveTitle = detectedMovie?.title ?? job?.effectiveTitle ?? "Фильм"
+        let overview = detectedMovie?.overview
+        let thematicService = LongformThematicService()
+
+        do {
+            let freshConcepts = try await thematicService.discoverConcepts(
+                from: transcript,
+                movieTitle: effectiveTitle,
+                movieOverview: overview,
+                forceAI: true,
+                modelManager: modelManager
+            )
+            if !freshConcepts.isEmpty {
+                self.discoveredConcepts = freshConcepts
+            }
+        } catch {
+            Self.log("regenerateThematicConcepts failed: \(error.localizedDescription)")
+        }
+    }
+
+    func cancelLongformSelection() {
+        if self.longformResult != nil {
+            // Если эссе уже было собрано ранее, просто возвращаемся к просмотру результата
+            self.phase = .longformResults
+        } else {
+            self.discoveredConcepts = []
+            self.selectedConcept = nil
+            cleanUpTempInput()
+            self.phase = .empty
+        }
     }
 
     func resetLongform() {
         self.longformResult = nil
         self.selectedConcept = nil
+        self.storedTranscript = nil
+        self.discoveredConcepts = []
+        self.detectedMovie = nil
         cleanUpTempInput()
         self.phase = .empty
     }

@@ -7,7 +7,8 @@ struct LongformResultsView: View {
 
     let result: LongformBuildResult
     let movieTitle: String
-    let onReset: () -> Void
+    let onChooseAnotherTheme: () -> Void
+    let onStartNewMovie: () -> Void
 
     @Environment(WorkspaceModel.self) private var workspace
     @Environment(ModelManager.self) private var modelManager
@@ -225,16 +226,32 @@ struct LongformResultsView: View {
 
                 Spacer()
 
-                HStack {
-                    Button(role: .cancel) {
-                        onReset()
+                HStack(spacing: 12) {
+                    Button {
+                        onChooseAnotherTheme()
                     } label: {
-                        HStack {
+                        HStack(spacing: 6) {
                             Image(systemName: "arrow.counterclockwise")
                             Text("Выбрать другую тему")
+                                .fontWeight(.semibold)
                         }
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderedProminent)
+                    .tint(.yellow)
+                    .help("Выбрать или ввести другую тему без повторного анализа фильма")
+
+                    Button(role: .destructive) {
+                        onStartNewMovie()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "xmark.circle")
+                            Text("Новый фильм")
+                        }
+                        .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Сбросить текущий фильм и добавить другой")
 
                     Spacer()
 
@@ -246,8 +263,7 @@ struct LongformResultsView: View {
                             Text("Экспорт…")
                         }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.yellow)
+                    .buttonStyle(.bordered)
                 }
             }
             .padding(18)

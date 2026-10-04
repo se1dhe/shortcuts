@@ -7,12 +7,14 @@ struct ThematicConceptSelectionSheet: View {
     let concepts: [ThematicConcept]
     let onSelect: (ThematicConcept, String, URL?, Float, Bool) -> Void
     let onCancel: () -> Void
+    let onRegenerate: (() -> Void)?
 
     @State private var editedMovieTitle: String
     @State private var selectedConceptId: String? = nil
     @State private var customWord: String = ""
     @State private var customTitle: String = ""
     @State private var showCustomInput: Bool = false
+    @State private var isRegenerating: Bool = false
 
     // Музыкальное сопровождение (Ambient / Cinematic Dark)
     @State private var ambientMusicEnabled: Bool = true
@@ -33,13 +35,15 @@ struct ThematicConceptSelectionSheet: View {
         movieTitle: String,
         concepts: [ThematicConcept],
         onSelect: @escaping (ThematicConcept, String, URL?, Float, Bool) -> Void,
-        onCancel: @escaping () -> Void
+        onCancel: @escaping () -> Void,
+        onRegenerate: (() -> Void)? = nil
     ) {
         self.initialMovieTitle = movieTitle
         self._editedMovieTitle = State(initialValue: movieTitle)
         self.concepts = concepts
         self.onSelect = onSelect
         self.onCancel = onCancel
+        self.onRegenerate = onRegenerate
     }
 
     var activeSelection: ThematicConcept? {
@@ -96,12 +100,36 @@ struct ThematicConceptSelectionSheet: View {
         VStack(spacing: 16) {
             // Заголовок и блок названия фильма
             VStack(spacing: 10) {
-                HStack(spacing: 10) {
+                HStack(spacing: 12) {
                     Image(systemName: "film.fill")
                         .font(.title2)
                         .foregroundStyle(.yellow)
                     Text("Выберите центральную идею фильма")
                         .font(.title2.weight(.bold))
+
+                    if let onRegenerate {
+                        Button {
+                            isRegenerating = true
+                            onRegenerate()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                                isRegenerating = false
+                            }
+                        } label: {
+                            HStack(spacing: 5) {
+                                if isRegenerating {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Image(systemName: "sparkles")
+                                }
+                                Text(isRegenerating ? "Генерация тем..." : "Сгенерировать другие темы с AI")
+                            }
+                            .font(.caption.weight(.semibold))
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.yellow)
+                        .disabled(isRegenerating)
+                        .help("Сгенерировать другие философские темы фильма через нейросеть Director")
+                    }
                 }
 
                 // Поле подтверждения / редактирования названия фильма

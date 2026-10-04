@@ -34,19 +34,82 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         """
     }
 
-    func discoverConcepts(from transcript: Transcript, movieTitle: String, modelManager: ModelManager? = nil) async throws -> [ThematicConcept] {
-        // 1. Проверяем, есть ли для фильма авторские эталоны тем (Револьвер, Бойцовский клуб, Крестный отец и др.)
-        let bespoke = bespokeConcepts(for: movieTitle)
-        if !bespoke.isEmpty {
-            return bespoke
+    /// Извлекает репрезентативный срез реплик хронологически по всем 4 актам фильма
+    static func stratifiedThematicSample(from transcript: Transcript, targetSegmentsCount: Int = 160) -> String {
+        let segments = transcript.segments.filter { seg in
+            let text = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let wordCount = text.split(whereSeparator: { $0.isWhitespace }).count
+            return wordCount >= 3
         }
 
-        let sampleText = transcript.segments.prefix(100).map(\.text).joined(separator: "\n")
+        guard !segments.isEmpty else {
+            return transcript.segments.prefix(60).map(\.text).joined(separator: "\n")
+        }
 
-        // 2. Для остальных фильмов генерируем уникальные концепты через модель Director
+        guard segments.count > targetSegmentsCount else {
+            return segments.map { formatSegmentForPrompt($0) }.joined(separator: "\n")
+        }
+
+        let totalDuration = segments.last?.end ?? 1.0
+
+        let quarters = [
+            (label: "Акт I (Экспозиция и конфликт)", range: 0.0 ... totalDuration * 0.25, count: targetSegmentsCount / 4),
+            (label: "Акт II (Кризис и падение)", range: totalDuration * 0.25 ... totalDuration * 0.50, count: targetSegmentsCount / 4),
+            (label: "Акт III (Борьба и кульминация)", range: totalDuration * 0.50 ... totalDuration * 0.75, count: targetSegmentsCount / 4),
+            (label: "Акт IV (Катарсис и финал)", range: totalDuration * 0.75 ... totalDuration, count: targetSegmentsCount / 4)
+        ]
+
+        var lines: [String] = []
+
+        for q in quarters {
+            lines.append("--- \(q.label) ---")
+            let qSegs = segments.filter { $0.start >= q.range.lowerBound && $0.start <= q.range.upperBound }
+            guard !qSegs.isEmpty else { continue }
+
+            let step = max(1, qSegs.count / max(1, q.count))
+            var chosen = 0
+            for idx in stride(from: 0, to: qSegs.count, by: step) {
+                if chosen >= q.count { break }
+                lines.append(formatSegmentForPrompt(qSegs[idx]))
+                chosen += 1
+            }
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private static func formatSegmentForPrompt(_ seg: TranscriptSegment) -> String {
+        let minutes = Int(seg.start) / 60
+        let seconds = Int(seg.start) % 60
+        let timeStr = String(format: "%02d:%02d", minutes, seconds)
+        return "[\(timeStr)] \(seg.text.trimmingCharacters(in: .whitespacesAndNewlines))"
+    }
+
+    func discoverConcepts(
+        from transcript: Transcript,
+        movieTitle: String,
+        movieOverview: String? = nil,
+        forceAI: Bool = false,
+        modelManager: ModelManager? = nil
+    ) async throws -> [ThematicConcept] {
+        // 1. Если не запрошена принудительная генерация через AI, проверяем эталоны для культовых фильмов
+        if !forceAI {
+            let bespoke = bespokeConcepts(for: movieTitle)
+            if !bespoke.isEmpty {
+                return bespoke
+            }
+        }
+
+        let sampleText = Self.stratifiedThematicSample(from: transcript)
+
+        // 2. Для остальных фильмов (или при forceAI) генерируем уникальные концепты через модель Director
         if let mm = modelManager, !sampleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             await mm.prepareDirectorIfNeeded()
-            let aiConcepts = await mm.momentFinder.generateThematicConcepts(transcriptSample: sampleText, movieTitle: movieTitle)
+            let aiConcepts = await mm.momentFinder.generateThematicConcepts(
+                transcriptSample: sampleText,
+                movieTitle: movieTitle,
+                movieOverview: movieOverview
+            )
             if aiConcepts.count >= 3 {
                 return aiConcepts
             }

@@ -56,10 +56,34 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         let durAct3 = clampedTarget * LongformActType.struggle.targetDurationRatio
         let durAct4 = clampedTarget * LongformActType.catharsis.targetDurationRatio
 
-        let act1Segs = selectCohesiveSegments(from: segments, in: act1Window, targetDuration: durAct1)
-        let act2Segs = selectCohesiveSegments(from: segments, in: act2Window, targetDuration: durAct2)
-        let act3Segs = selectCohesiveSegments(from: segments, in: act3Window, targetDuration: durAct3)
-        let act4Segs = selectCohesiveSegments(from: segments, in: act4Window, targetDuration: durAct4)
+        let act1Segs = selectCohesiveSegments(
+            from: segments,
+            in: act1Window,
+            targetDuration: durAct1,
+            concept: concept,
+            actType: .hook
+        )
+        let act2Segs = selectCohesiveSegments(
+            from: segments,
+            in: act2Window,
+            targetDuration: durAct2,
+            concept: concept,
+            actType: .downfall
+        )
+        let act3Segs = selectCohesiveSegments(
+            from: segments,
+            in: act3Window,
+            targetDuration: durAct3,
+            concept: concept,
+            actType: .struggle
+        )
+        let act4Segs = selectCohesiveSegments(
+            from: segments,
+            in: act4Window,
+            targetDuration: durAct4,
+            concept: concept,
+            actType: .catharsis
+        )
 
         let acts = [
             LongformAct(
@@ -97,11 +121,13 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         )
     }
 
-    /// Выбирает непрерывный связный блок диалога заданной длительности внутри временного окна
+    /// Выбирает диалоговый фрагмент, семантически соответствующий концепту и драматургии акта
     private func selectCohesiveSegments(
         from allSegments: [TranscriptSegment],
         in window: ClosedRange<Double>,
-        targetDuration: Double
+        targetDuration: Double,
+        concept: ThematicConcept,
+        actType: LongformActType
     ) -> [TimeSegment] {
         let candidates = allSegments.filter { $0.start >= window.lowerBound && $0.end <= window.upperBound }
         guard !candidates.isEmpty else {
@@ -109,22 +135,70 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             return [TimeSegment(start: start, end: start + targetDuration)]
         }
 
-        // Ищем плотный блок диалогов с наилучшей смысловой насыщенностью
+        let thematicKeywords = extractThematicKeywords(for: concept)
+        let dramaticKeywords = actDramaticKeywords(for: actType)
+        let coreWord = concept.word.lowercased()
+
         var bestStartIdx = 0
         var bestLength = 0
-        var bestScore = 0
+        var bestScore: Double = -10_000.0
 
         for i in 0..<candidates.count {
             var currDur = 0.0
             var j = i
             var wordCount = 0
+            var thematicMatchPoints = 0
+            var dramaticBeatCount = 0
+            var fillerCount = 0
+
             while j < candidates.count && currDur < targetDuration {
-                currDur = candidates[j].end - candidates[i].start
-                wordCount += candidates[j].words.count
+                let seg = candidates[j]
+                currDur = seg.end - candidates[i].start
+                let words = seg.words.count > 0 ? seg.words.count : seg.text.split(whereSeparator: { $0.isWhitespace }).count
+                wordCount += words
+
+                let lowerText = seg.text.lowercased()
+
+                // 1. Оценка совпадения с философским концептом
+                if lowerText.contains(coreWord) {
+                    thematicMatchPoints += 8
+                }
+                for kw in thematicKeywords {
+                    if lowerText.contains(kw) {
+                        thematicMatchPoints += 2
+                    }
+                }
+
+                // 2. Оценка драматургического бита для данного акта
+                for dkw in dramaticKeywords {
+                    if lowerText.contains(dkw) {
+                        dramaticBeatCount += 1
+                    }
+                }
+
+                // 3. Штраф за пустые короткие междометия
+                if words <= 2 && thematicMatchPoints == 0 {
+                    fillerCount += 1
+                }
+
                 j += 1
             }
-            if wordCount > bestScore {
-                bestScore = wordCount
+
+            guard currDur >= min(20.0, targetDuration * 0.40) else { continue }
+
+            let durationFillRatio = min(1.0, currDur / targetDuration)
+            let speechDensity = currDur > 0 ? Double(wordCount) / currDur : 0.0
+
+            // Итоговый скор: максимальный вес отдается репликам по выбранной теме
+            let score = (Double(thematicMatchPoints) * 50.0)
+                + (Double(dramaticBeatCount) * 14.0)
+                + (Double(wordCount) * 0.3)
+                + (speechDensity >= 1.2 ? 15.0 : -10.0)
+                - (Double(fillerCount) * 6.0)
+                + (durationFillRatio * 15.0)
+
+            if score > bestScore {
+                bestScore = score
                 bestStartIdx = i
                 bestLength = j - i
             }
@@ -137,11 +211,60 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
 
         let actualDur = last.end - first.start
         if actualDur > targetDuration * 1.35 {
-            // Обрезаем до целевой длительности
             return [TimeSegment(start: first.start, end: first.start + targetDuration)]
         }
 
         return [TimeSegment(start: first.start, end: max(last.end, first.start + 15.0))]
+    }
+
+    private func extractThematicKeywords(for concept: ThematicConcept) -> [String] {
+        var keywords: Set<String> = []
+        let wordLower = concept.word.lowercased()
+        keywords.insert(wordLower)
+
+        let semanticThematicMap: [String: [String]] = [
+            "эго": ["эго", "гордост", "голов", "враг", "внутри", "я сам", "меня", "себя", "разум", "мысл", "контрол", "побед", "слаб", "боль", "признай", "правд", "голос"],
+            "обман": ["обман", "разводк", "лож", "правд", "игра", "шахмат", "противник", "умн", "правил", "сделк", "деньг", "довер", "жадност", "манипул", "верит", "карты"],
+            "страх": ["страх", "боит", "боишься", "больно", "смерт", "убит", "паник", "пистолет", "выстрел", "кров", "потер", "конец", "трясет", "ужас", "слабост"],
+            "иллюзия": ["иллюзи", "кажет", "реальност", "видит", "слеп", "глаз", "сон", "правд", "скрыт", "прячет", "понима", "кажется", "зеркал", "морок"],
+            "жадность": ["жадност", "деньг", "богат", "алчност", "миллион", "долг", "заплат", "цен", "купит", "золот", "казино", "выигрыш", "мало"],
+            "терпение": ["терпен", "ждать", "время", "спеш", "тишин", "выдержк", "спокойн", "холоднокров", "секунд"],
+            "характер": ["характер", "воля", "сил", "сломат", "высто", "удар", "пада", "встават", "терпеть", "до конца"],
+            "одиночество": ["один", "одиночеств", "пустот", "никого", "один на один", "тишин", "бросил", "сам"],
+            "предательство": ["преда", "нож в спину", "верност", "предатель", "измен", "верил", "подставил", "крыс"],
+            "семья": ["семь", "брат", "отец", "сын", "дочь", "родн", "дом", "дети", "мать", "защит", "кров"]
+        ]
+
+        for (key, list) in semanticThematicMap {
+            if wordLower.contains(key) || key.contains(wordLower) {
+                for item in list { keywords.insert(item) }
+            }
+        }
+
+        let fullContext = "\(concept.tagline) \(concept.philosophicalPremise) \(concept.suggestedTitle)"
+        let tokens = fullContext.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count >= 4 }
+
+        for token in tokens.prefix(12) {
+            let stem = String(token.prefix(5))
+            keywords.insert(stem)
+        }
+
+        return Array(keywords)
+    }
+
+    private func actDramaticKeywords(for actType: LongformActType) -> [String] {
+        switch actType {
+        case .hook:
+            return ["всегда", "никогда", "знаешь", "правило", "в этом мире", "жизнь", "выбор", "кто ты", "запомни", "смысл", "смотри", "слушай"]
+        case .downfall:
+            return ["нет", "нельзя", "проиграл", "ошибка", "уходи", "почему ты", "ложь", "черт", "уничтож", "хватит", "поздно", "пропал"]
+        case .struggle:
+            return ["стреляй", "попробуй", "смотри", "мы", "против", "я не сдамся", "выход", "делай", "бей", "стой", "держись", "вперед"]
+        case .catharsis:
+            return ["теперь", "понимаю", "всё кончено", "свободен", "жизнь", "выбор", "правда", "на самом деле", "конец", "прости", "отпусти"]
+        }
     }
 
     /// Синтетическая арка при отсутствии детального транскрипта

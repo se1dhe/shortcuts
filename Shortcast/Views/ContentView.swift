@@ -280,6 +280,11 @@ struct ContentView: View {
                 },
                 onCancel: {
                     workspace.cancelLongformSelection()
+                },
+                onRegenerate: {
+                    Task {
+                        await workspace.regenerateThematicConcepts(modelManager: modelManager)
+                    }
                 }
             )
         case .buildingLongform(let fraction, let step):
@@ -305,7 +310,10 @@ struct ContentView: View {
                 LongformResultsView(
                     result: result,
                     movieTitle: workspace.detectedMovie?.title ?? workspace.job?.effectiveTitle ?? "Фильм",
-                    onReset: {
+                    onChooseAnotherTheme: {
+                        workspace.chooseAnotherConcept()
+                    },
+                    onStartNewMovie: {
                         workspace.resetLongform()
                     }
                 )

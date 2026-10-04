@@ -365,8 +365,8 @@ enum CinemaMomentDirector {
     private static func extractJSON(from text: String) -> String? {
         if let start = text.range(of: "["),
            let end = text.range(of: "]", options: .backwards),
-           start.lowerBound <= end.upperBound {
-            let json = String(text[start.lowerBound...end.upperBound])
+           start.lowerBound <= end.lowerBound {
+            let json = String(text[start.lowerBound..<end.upperBound])
             return fixTimeFormats(in: json)
         }
         return nil

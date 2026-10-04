@@ -53,8 +53,10 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
     /// Парсит структурированный ответ модели в список ThematicConcept
     static func parseConcepts(from jsonText: String) -> [ThematicConcept] {
         var clean = jsonText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let start = clean.range(of: "["), let end = clean.range(of: "]", options: .backwards) {
-            clean = String(clean[start.lowerBound...end.upperBound])
+        if let start = clean.range(of: "["),
+           let end = clean.range(of: "]", options: .backwards),
+           start.lowerBound <= end.lowerBound {
+            clean = String(clean[start.lowerBound..<end.upperBound])
         }
 
         struct RawConcept: Decodable {

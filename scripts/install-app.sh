@@ -40,7 +40,12 @@ if [[ -z "$SRC" || ! -d "$SRC" ]]; then
     NEWEST=""
     NEWEST_TIME=0
     for CAND in "${POSSIBLE_CANDIDATES[@]}"; do
-      MTIME=$(stat -f "%m" "$CAND" 2>/dev/null || echo 0)
+      BIN="$(find "$CAND/Contents/MacOS" -type f 2>/dev/null | head -n 1)"
+      if [[ -n "$BIN" && -f "$BIN" ]]; then
+        MTIME=$(stat -f "%m" "$BIN" 2>/dev/null || echo 0)
+      else
+        MTIME=$(stat -f "%m" "$CAND" 2>/dev/null || echo 0)
+      fi
       if [[ "$MTIME" -gt "$NEWEST_TIME" ]]; then
         NEWEST_TIME="$MTIME"
         NEWEST="$CAND"

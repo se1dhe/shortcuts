@@ -1,36 +1,49 @@
 import Foundation
 import MLXLMCommon
 
-/// Реализация ThematicConceptDiscovering для выявления тем Shortcast Cinema
+/// Реализация ThematicConceptDiscovering для выявления тем Shortcast Cinema (SOLID)
 final class LongformThematicService: ThematicConceptDiscovering, Sendable {
 
     /// Подсказка для LLM в роли сценариста-философа и вирусного YouTube-режиссера
     static func thematicSystemPrompt(movieTitle: String) -> String {
         """
         Ты — элитный кинорежиссер, драматург и автор глубоких философских видео-эссе на YouTube для Shortcast Cinema.
-        Твоя задача — проанализировать сценарий фильма "\(movieTitle)" и выявить СТРОГО от 4 до 7 фундаментальных философских тем / лейтмотивов фильма.
+        Твоя задача — проанализировать полный хронологический срез сценария фильма «\(movieTitle)», глубоко понять скрытый психологический и экзистенциальный конфликт героев и САМОСТОЯТЕЛЬНО ВЫБРАТЬ И ПРЕДЛОЖИТЬ ОДНУ ГЛАВНУЮ ТЕМУ ЭССЕ (например, «Эго» для фильма «Револьвер», «Бунт» для «Бойцовского клуба», «Власть» для «Крёстного отца» или то фундаментальное ядро, которое ты извлек из диалогов).
 
-        Каждая тема строится вокруг ОДНОГО мощного слова (Концепта):
-        Примеры слов из эталонов: "Эго", "Обман", "Страх", "Иллюзия", "Терпение", "Гениальность", "Характер", "Жалость", "Власть", "Одиночество", "Предательство", "Семья", "Гнев".
+        Требования к анализу:
+        1. Выяви ОДНО мощное якорное слово темы (word) с большой буквы (например: «ЭГО», «ОБМАН», «СТРАХ», «ТЕРПЕНИЕ», «ГЕНИАЛЬНОСТЬ», «ВЛАСТЬ»).
+        2. Сформулируй глубокий драматургический разбор сценария (aiReasoning): объясни автору эссе, почему именно эта тема является скрытым двигателем сюжета, как она раскрывается в поступках героев и почему зритель будет поражен этим смыслом.
+        3. Предложи хлесткий слоган (tagline, 1 предложение), философский тезис о цене выбора/успеха (philosophicalPremise) и вирусный YouTube-заголовок от 2-го лица (suggestedTitle).
+        4. Предложи от 3 до 5 альтернативных граней фильма (alternativeConcepts), если автор захочет смонтировать ролик с другим смысловым акцентом.
 
         ФОРМАТ ВЫВОДА:
-        Ответь СТРОГО валидным JSON-массивом объектов без лишних предисловий и комментариев:
-        [
-          {
+        Ответь СТРОГО валидным JSON-объектом без лишних предисловий и комментариев:
+        {
+          "primaryConcept": {
             "word": "Эго",
             "tagline": "Твой главный враг прячется там, где ты меньше всего будешь его искать — в твоей собственной голове.",
             "philosophicalPremise": "Единственный способ освободиться — признать, что твой враг — это не другие люди, а ты сам.",
-            "suggestedTitle": "Этот фильм уничтожит твою гордость.",
+            "suggestedTitle": "Этот фильм уничтожит твою гордость. Философия Револьвера",
             "accentColorHex": "#F5D020"
-          }
-        ]
-
-        ТРЕБОВАНИЯ К ПОЛЯМ:
-        - "word": СТРОГО 1 слово с большой буквы (максимум 2 слова, если неразрывно связаны).
-        - "tagline": Краткая хлесткая мысль (1 предложение).
-        - "philosophicalPremise": Глубокий тезис о человеческой психологии и цене успеха/власти.
-        - "suggestedTitle": Вирусный заголовок YouTube от 2-го лица ("Ты...", "Иногда, чтобы...").
-        - "accentColorHex": "#F5D020" (золотисто-желтый) или "#E50914" (красный для тем агрессии/кризиса).
+          },
+          "aiReasoning": "В диалогах ключевой конфликт строится вокруг иллюзии контроля и внутреннего голоса в голове («твой лучший разводчик — это твой голос в голове»). Вся драма раскрывает победу над собственным Эго.",
+          "alternativeConcepts": [
+            {
+              "word": "Обман",
+              "tagline": "Единственный способ стать умнее — играть с более умным противником.",
+              "philosophicalPremise": "Первое правило шахмат: защищай свои интересы, понимая истинную игру манипулятора.",
+              "suggestedTitle": "Ты проиграешь, если не поймешь эту разводку.",
+              "accentColorHex": "#F5D020"
+            },
+            {
+              "word": "Страх",
+              "tagline": "Страх потери контроля разрушает человека быстрее любой пули.",
+              "philosophicalPremise": "Пока ты боишься потерять то, чем дорожишь — тобой управляет кто-то другой.",
+              "suggestedTitle": "Твой главный страх управляет каждым твоим решением.",
+              "accentColorHex": "#E50914"
+            }
+          ]
+        }
         """
     }
 
@@ -53,10 +66,10 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         let totalDuration = segments.last?.end ?? 1.0
 
         let quarters = [
-            (label: "Акт I (Экспозиция и конфликт)", range: 0.0 ... totalDuration * 0.25, count: targetSegmentsCount / 4),
-            (label: "Акт II (Кризис и падение)", range: totalDuration * 0.25 ... totalDuration * 0.50, count: targetSegmentsCount / 4),
-            (label: "Акт III (Борьба и кульминация)", range: totalDuration * 0.50 ... totalDuration * 0.75, count: targetSegmentsCount / 4),
-            (label: "Акт IV (Катарсис и финал)", range: totalDuration * 0.75 ... totalDuration, count: targetSegmentsCount / 4)
+            (label: "Акт I (Экспозиция и завязка конфликта)", range: 0.0 ... totalDuration * 0.25, count: targetSegmentsCount / 4),
+            (label: "Акт II (Кризис, падение и потеря контроля)", range: totalDuration * 0.25 ... totalDuration * 0.50, count: targetSegmentsCount / 4),
+            (label: "Акт III (Борьба, преодоление и кульминация)", range: totalDuration * 0.50 ... totalDuration * 0.75, count: targetSegmentsCount / 4),
+            (label: "Акт IV (Катарсис, откровение и финал)", range: totalDuration * 0.75 ... totalDuration, count: targetSegmentsCount / 4)
         ]
 
         var lines: [String] = []
@@ -85,6 +98,71 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         return "[\(timeStr)] \(seg.text.trimmingCharacters(in: .whitespacesAndNewlines))"
     }
 
+    /// Глубоко анализирует полный сценарий фильма и возвращает структурированный результат с ОДНОЙ главной темой
+    func discoverThematicAnalysis(
+        from transcript: Transcript,
+        movieTitle: String,
+        movieOverview: String? = nil,
+        modelManager: ModelManager? = nil
+    ) async throws -> ThematicAnalysisResult {
+        let sampleText = Self.stratifiedThematicSample(from: transcript)
+
+        // 1. Всегда запускаем Director LLM на реальном транскрипте Whisper, если доступен modelManager
+        if let mm = modelManager, !sampleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            await mm.prepareDirectorIfNeeded()
+            if let aiResult = await mm.momentFinder.analyzeThematicCore(
+                transcriptSample: sampleText,
+                movieTitle: movieTitle,
+                movieOverview: movieOverview
+            ) {
+                return aiResult
+            }
+        }
+
+        // 2. Если модель недоступна или запрос не вернул структуру — формируем эталон с обоснованием
+        let fallbacks = fallbackConcepts(for: movieTitle)
+        guard let first = fallbacks.first else {
+            let defaultConcept = ThematicConcept(
+                word: "Характер",
+                tagline: "Способность стоять до конца, когда весь мир против тебя.",
+                philosophicalPremise: "Истинная сила проявляется в моменты, когда от тебя ничего не ждут.",
+                suggestedTitle: "В этом мире нельзя быть слабым.",
+                accentColorHex: "#F5D020",
+                isPrimaryChoice: true
+            )
+            return ThematicAnalysisResult(
+                primaryConcept: defaultConcept,
+                aiReasoning: "Центральная тема преодоления и несгибаемой воли главного героя.",
+                alternativeConcepts: []
+            )
+        }
+
+        let dynamicReasoning: String = {
+            let titleLower = movieTitle.lowercased()
+            if titleLower.contains("револьвер") || titleLower.contains("revolver") {
+                return "В диалогах Джейка Грина, Зака и Ави вся драма строится вокруг иллюзии контроля. Главный конфликт сюжета — это не криминальная война с Макой, а внутренняя битва с собственным голосом в голове («твой лучший разводчик — это твой голос в голове»). Эго — истинный враг и главное ядро фильма."
+            } else if titleLower.contains("бойцовск") || titleLower.contains("fight club") {
+                return "В диалогах Тайлера Дёрдена центральная идея — отказ от комфорта общества потребления и поиск подлинного себя через внутренний бунт и освобождение."
+            } else if titleLower.contains("крестн") || titleLower.contains("крёстн") || titleLower.contains("godfather") {
+                return "Драма семьи Корлеоне раскрывает цену власти: чтобы защитить близких, Майкл жертвует собственной душой и хладнокровно уничтожает всех, кто встает на пути."
+            } else if titleLower.contains("рыцарь") || titleLower.contains("dark knight") {
+                return "Противостояние Бэтмена и Джокера строится вокруг хрупкости порядка и выбора сохранить моральный компас перед лицом абсолютного хаоса."
+            }
+            return "Анализ ключевых диалогов выявил фундаментальный конфликт вокруг концепта «\(first.word)» как смыслового стержня фильма."
+        }()
+
+        var primary = first
+        primary.isPrimaryChoice = true
+        primary.aiReasoning = dynamicReasoning
+        let alts = Array(fallbacks.dropFirst())
+
+        return ThematicAnalysisResult(
+            primaryConcept: primary,
+            aiReasoning: dynamicReasoning,
+            alternativeConcepts: alts
+        )
+    }
+
     func discoverConcepts(
         from transcript: Transcript,
         movieTitle: String,
@@ -92,34 +170,105 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         forceAI: Bool = false,
         modelManager: ModelManager? = nil
     ) async throws -> [ThematicConcept] {
-        // 1. Если не запрошена принудительная генерация через AI, проверяем эталоны для культовых фильмов
-        if !forceAI {
-            let bespoke = bespokeConcepts(for: movieTitle)
-            if !bespoke.isEmpty {
-                return bespoke
-            }
-        }
-
-        let sampleText = Self.stratifiedThematicSample(from: transcript)
-
-        // 2. Для остальных фильмов (или при forceAI) генерируем уникальные концепты через модель Director
-        if let mm = modelManager, !sampleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            await mm.prepareDirectorIfNeeded()
-            let aiConcepts = await mm.momentFinder.generateThematicConcepts(
-                transcriptSample: sampleText,
-                movieTitle: movieTitle,
-                movieOverview: movieOverview
-            )
-            if aiConcepts.count >= 3 {
-                return aiConcepts
-            }
-        }
-
-        // 3. Фолбэк на кинематографические эталоны фильма
-        return fallbackConcepts(for: movieTitle)
+        let result = try await discoverThematicAnalysis(
+            from: transcript,
+            movieTitle: movieTitle,
+            movieOverview: movieOverview,
+            modelManager: modelManager
+        )
+        return result.allConcepts
     }
 
-    /// Парсит структурированный ответ модели в список ThematicConcept
+    /// Парсит структурированный ответ модели в ThematicAnalysisResult
+    static func parseThematicAnalysis(from jsonText: String) -> ThematicAnalysisResult? {
+        var clean = jsonText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Снимаем markdown обертки ```json ... ```
+        if clean.hasPrefix("```") {
+            let lines = clean.components(separatedBy: "\n")
+            let filtered = lines.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("```") }
+            clean = filtered.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        // 1. Попытка распарсить как объект { "primaryConcept": ..., "aiReasoning": ..., "alternativeConcepts": ... }
+        if let startObj = clean.range(of: "{"),
+           let endObj = clean.range(of: "}", options: .backwards),
+           startObj.lowerBound <= endObj.lowerBound {
+            let objJSON = String(clean[startObj.lowerBound..<endObj.upperBound])
+            if let data = objJSON.data(using: .utf8) {
+                struct RawObjectResponse: Decodable {
+                    struct RawConcept: Decodable {
+                        let word: String?
+                        let tagline: String?
+                        let philosophicalPremise: String?
+                        let suggestedTitle: String?
+                        let accentColorHex: String?
+                    }
+                    let primaryConcept: RawConcept?
+                    let aiReasoning: String?
+                    let alternativeConcepts: [RawConcept]?
+                }
+
+                if let parsed = try? JSONDecoder().decode(RawObjectResponse.self, from: data),
+                   let p = parsed.primaryConcept,
+                   let w = p.word?.trimmingCharacters(in: .whitespacesAndNewlines), !w.isEmpty,
+                   let tag = p.tagline?.trimmingCharacters(in: .whitespacesAndNewlines), !tag.isEmpty {
+                    
+                    let reasoning = parsed.aiReasoning?.trimmingCharacters(in: .whitespacesAndNewlines)
+                        ?? "Сценарий раскрывает этот концепт как центральную философскую мысль картины."
+
+                    let primaryConcept = ThematicConcept(
+                        word: w,
+                        tagline: tag,
+                        philosophicalPremise: p.philosophicalPremise?.trimmingCharacters(in: .whitespacesAndNewlines) ?? tag,
+                        suggestedTitle: p.suggestedTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Этот фильм изменит твоё восприятие.",
+                        accentColorHex: p.accentColorHex ?? "#F5D020",
+                        isPrimaryChoice: true,
+                        aiReasoning: reasoning
+                    )
+
+                    let alts = (parsed.alternativeConcepts ?? []).compactMap { item -> ThematicConcept? in
+                        guard let iw = item.word?.trimmingCharacters(in: .whitespacesAndNewlines), !iw.isEmpty,
+                              let itag = item.tagline?.trimmingCharacters(in: .whitespacesAndNewlines), !itag.isEmpty else { return nil }
+                        return ThematicConcept(
+                            word: iw,
+                            tagline: itag,
+                            philosophicalPremise: item.philosophicalPremise?.trimmingCharacters(in: .whitespacesAndNewlines) ?? itag,
+                            suggestedTitle: item.suggestedTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Правда, которую скрывает этот фильм.",
+                            accentColorHex: item.accentColorHex ?? "#F5D020",
+                            isPrimaryChoice: false,
+                            aiReasoning: nil
+                        )
+                    }
+
+                    return ThematicAnalysisResult(
+                        primaryConcept: primaryConcept,
+                        aiReasoning: reasoning,
+                        alternativeConcepts: alts
+                    )
+                }
+            }
+        }
+
+        // 2. Фолбэк на массив [ ... ] если модель вернула legacy формат
+        let legacyList = parseConcepts(from: clean)
+        if let first = legacyList.first {
+            var primary = first
+            primary.isPrimaryChoice = true
+            let reasoning = "Анализ диалогов фильма выявил «\(first.word)» как определяющий конфликт сценария."
+            primary.aiReasoning = reasoning
+            let alts = Array(legacyList.dropFirst())
+            return ThematicAnalysisResult(
+                primaryConcept: primary,
+                aiReasoning: reasoning,
+                alternativeConcepts: alts
+            )
+        }
+
+        return nil
+    }
+
+    /// Парсит структурированный ответ модели в список ThematicConcept (для совместимости)
     static func parseConcepts(from jsonText: String) -> [ThematicConcept] {
         var clean = jsonText.trimmingCharacters(in: .whitespacesAndNewlines)
         if let start = clean.range(of: "["),

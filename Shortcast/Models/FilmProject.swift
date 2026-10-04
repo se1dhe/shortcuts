@@ -26,6 +26,9 @@ struct FilmProject: Identifiable, Codable, Sendable {
     /// Сгенерированные философские концепты для видео-эссе
     var discoveredConcepts: [ThematicConcept]
 
+    /// Полный структурированный анализ фильма с ОДНОЙ главной темой и разбором ИИ
+    var thematicAnalysis: ThematicAnalysisResult?
+
     /// Выбранный пользователем концепт эссе
     var selectedConcept: ThematicConcept?
 
@@ -49,6 +52,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
         transcript: Transcript? = nil,
         scenes: [DetectedScene] = [],
         discoveredConcepts: [ThematicConcept] = [],
+        thematicAnalysis: ThematicAnalysisResult? = nil,
         selectedConcept: ThematicConcept? = nil,
         longformResult: LongformBuildResult? = nil,
         candidates: [ClipCandidate] = [],
@@ -65,6 +69,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
         self.transcript = transcript
         self.scenes = scenes
         self.discoveredConcepts = discoveredConcepts
+        self.thematicAnalysis = thematicAnalysis
         self.selectedConcept = selectedConcept
         self.longformResult = longformResult
         self.candidates = candidates
@@ -74,7 +79,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id, sourceMovieURL, movieFileName, movieTitle, movieYear, durationSeconds
-        case tmdbMetadata, transcript, scenes, discoveredConcepts, selectedConcept
+        case tmdbMetadata, transcript, scenes, discoveredConcepts, thematicAnalysis, selectedConcept
         case candidates, createdAt, updatedAt
     }
 
@@ -90,6 +95,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
         transcript = try container.decodeIfPresent(Transcript.self, forKey: .transcript)
         scenes = try container.decode([DetectedScene].self, forKey: .scenes)
         discoveredConcepts = try container.decode([ThematicConcept].self, forKey: .discoveredConcepts)
+        thematicAnalysis = try container.decodeIfPresent(ThematicAnalysisResult.self, forKey: .thematicAnalysis)
         selectedConcept = try container.decodeIfPresent(ThematicConcept.self, forKey: .selectedConcept)
         candidates = try container.decode([ClipCandidate].self, forKey: .candidates)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
@@ -109,6 +115,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
         try container.encodeIfPresent(transcript, forKey: .transcript)
         try container.encode(scenes, forKey: .scenes)
         try container.encode(discoveredConcepts, forKey: .discoveredConcepts)
+        try container.encodeIfPresent(thematicAnalysis, forKey: .thematicAnalysis)
         try container.encodeIfPresent(selectedConcept, forKey: .selectedConcept)
         try container.encode(candidates, forKey: .candidates)
         try container.encode(createdAt, forKey: .createdAt)

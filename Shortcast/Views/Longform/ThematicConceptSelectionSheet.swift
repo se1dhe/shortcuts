@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// Экран выбора или ввода философского лейтмотива фильма в стиле канала @prrodan
+/// Экран выбора или ввода философского лейтмотива фильма в стиле канала @prrodan (SOLID)
 struct ThematicConceptSelectionSheet: View {
 
     let initialMovieTitle: String
     let concepts: [ThematicConcept]
+    let aiReasoning: String?
     let onSelect: (ThematicConcept, String, URL?, Float, Bool) -> Void
     let onCancel: () -> Void
     let onRegenerate: (() -> Void)?
@@ -34,6 +35,7 @@ struct ThematicConceptSelectionSheet: View {
     init(
         movieTitle: String,
         concepts: [ThematicConcept],
+        aiReasoning: String? = nil,
         onSelect: @escaping (ThematicConcept, String, URL?, Float, Bool) -> Void,
         onCancel: @escaping () -> Void,
         onRegenerate: (() -> Void)? = nil
@@ -41,9 +43,22 @@ struct ThematicConceptSelectionSheet: View {
         self.initialMovieTitle = movieTitle
         self._editedMovieTitle = State(initialValue: movieTitle)
         self.concepts = concepts
+        self.aiReasoning = aiReasoning
         self.onSelect = onSelect
         self.onCancel = onCancel
         self.onRegenerate = onRegenerate
+
+        let primaryId = concepts.first(where: { $0.isPrimaryChoice })?.id ?? concepts.first?.id
+        self._selectedConceptId = State(initialValue: primaryId)
+    }
+
+    private var primaryConcept: ThematicConcept? {
+        concepts.first(where: { $0.isPrimaryChoice }) ?? concepts.first
+    }
+
+    private var alternativeConcepts: [ThematicConcept] {
+        guard let p = primaryConcept else { return [] }
+        return concepts.filter { $0.id != p.id }
     }
 
     var activeSelection: ThematicConcept? {
@@ -58,7 +73,7 @@ struct ThematicConceptSelectionSheet: View {
                 accentColorHex: "#F5D020"
             )
         }
-        return concepts.first(where: { $0.id == selectedConceptId }) ?? concepts.first
+        return concepts.first(where: { $0.id == selectedConceptId }) ?? primaryConcept ?? concepts.first
     }
 
     private var resolvedMusicURL: URL? {
@@ -104,7 +119,7 @@ struct ThematicConceptSelectionSheet: View {
                     Image(systemName: "film.fill")
                         .font(.title2)
                         .foregroundStyle(.yellow)
-                    Text("Выберите центральную идею фильма")
+                    Text("Центральная тема кино-эссе (Shortcast Cinema)")
                         .font(.title2.weight(.bold))
 
                     if let onRegenerate {
@@ -121,14 +136,14 @@ struct ThematicConceptSelectionSheet: View {
                                 } else {
                                     Image(systemName: "sparkles")
                                 }
-                                Text(isRegenerating ? "Генерация тем..." : "Сгенерировать другие темы с AI")
+                                Text(isRegenerating ? "Анализ сценария..." : "Пересчитать темы с AI")
                             }
                             .font(.caption.weight(.semibold))
                         }
                         .buttonStyle(.bordered)
                         .tint(.yellow)
                         .disabled(isRegenerating)
-                        .help("Сгенерировать другие философские темы фильма через нейросеть Director")
+                        .help("Повторно запустить глубокий анализ сценария через нейросеть Director")
                     }
                 }
 
@@ -154,7 +169,7 @@ struct ThematicConceptSelectionSheet: View {
                 }
                 .frame(maxWidth: 540)
 
-                Text("Название фильма выше будет использовано во вступительной заставке, описании и тегах YouTube. Выберите философский лейтмотив:")
+                Text("Нейросеть проанализировала диалоги и выбрала фундаментальную тему для 5–8 минутного ролика:")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -164,72 +179,200 @@ struct ThematicConceptSelectionSheet: View {
 
             // Сетка карточек концептов
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 12) {
-                    ForEach(concepts) { concept in
-                        let isSelected = (selectedConceptId == concept.id || (selectedConceptId == nil && concept.id == concepts.first?.id)) && !showCustomInput
-                        let isGenerated = LongformHistoryService.shared.isConceptGenerated(movieTitle: editedMovieTitle, conceptWord: concept.word)
-                        
+                VStack(spacing: 14) {
+                    // HERO CARD: Главный выбор нейросети (100% фокус эссе)
+                    if let primary = primaryConcept {
+                        let isSelected = (selectedConceptId == primary.id || selectedConceptId == nil) && !showCustomInput
+                        let isGenerated = LongformHistoryService.shared.isConceptGenerated(movieTitle: editedMovieTitle, conceptWord: primary.word)
+                        let reasoningText = primary.aiReasoning ?? aiReasoning
+
                         Button {
                             showCustomInput = false
-                            selectedConceptId = concept.id
+                            selectedConceptId = primary.id
                         } label: {
-                            HStack(alignment: .center, spacing: 18) {
-                                // Крупное якорное слово темы (Shortcast Cinema)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack(spacing: 8) {
-                                        Text(concept.word.uppercased())
-                                            .font(.system(size: 22, weight: .heavy, design: .rounded))
-                                            .foregroundStyle(isSelected ? .white : .primary)
+                            VStack(alignment: .leading, spacing: 10) {
+                                // Верхний бейдж Hero-карточки
+                                HStack(spacing: 8) {
+                                    HStack(spacing: 5) {
+                                        Image(systemName: "sparkles")
+                                            .font(.caption2)
+                                        Text("ВЫБОР ИИ • ГЛАВНАЯ ТЕМА ЭССЕ")
+                                            .font(.system(size: 10, weight: .black, design: .rounded))
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.yellow.opacity(0.20))
+                                    .foregroundStyle(.yellow)
+                                    .clipShape(Capsule())
 
-                                        if isGenerated {
-                                            Text("УЖЕ СМОНТИРОВАНО ✓")
-                                                .font(.system(size: 9, weight: .black))
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background(Color.green.opacity(0.2))
-                                                .foregroundStyle(.green)
-                                                .clipShape(Capsule())
-                                        }
+                                    if isGenerated {
+                                        Text("УЖЕ СМОНТИРОВАНО ✓")
+                                            .font(.system(size: 9, weight: .black))
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.green.opacity(0.2))
+                                            .foregroundStyle(.green)
+                                            .clipShape(Capsule())
                                     }
 
-                                    Text(concept.suggestedTitle)
-                                        .font(.caption.weight(.medium))
-                                        .foregroundStyle(Color(hex: concept.accentColorHex))
-                                }
-                                .frame(width: 280, alignment: .leading)
+                                    Spacer()
 
-                                Divider()
-                                    .frame(height: 44)
-
-                                // Смысловой посыл и слоган
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(concept.tagline)
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(.primary)
-
-                                    Text(concept.philosophicalPremise)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(2)
+                                    Text("РЕКОМЕНДОВАНО ДЛЯ YOUTUBE")
+                                        .font(.system(size: 10, weight: .heavy))
+                                        .foregroundStyle(Color.yellow.opacity(0.85))
                                 }
 
-                                Spacer()
+                                // Основная строка концепта
+                                HStack(alignment: .center, spacing: 18) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(primary.word.uppercased())
+                                            .font(.system(size: 26, weight: .heavy, design: .rounded))
+                                            .foregroundStyle(isSelected ? .white : .primary)
 
-                                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                                    .font(.title2)
-                                    .foregroundStyle(isSelected ? .yellow : .secondary.opacity(0.4))
+                                        Text(primary.suggestedTitle)
+                                            .font(.caption.weight(.bold))
+                                            .foregroundStyle(Color(hex: primary.accentColorHex))
+                                    }
+                                    .frame(width: 290, alignment: .leading)
+
+                                    Divider()
+                                        .frame(height: 48)
+
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(primary.tagline)
+                                            .font(.subheadline.weight(.bold))
+                                            .foregroundStyle(.primary)
+
+                                        Text(primary.philosophicalPremise)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                    }
+
+                                    Spacer()
+
+                                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                        .font(.title)
+                                        .foregroundStyle(isSelected ? .yellow : .secondary.opacity(0.4))
+                                }
+
+                                // Драматургический разбор сценария от ИИ
+                                if let reasoning = reasoningText, !reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                    HStack(alignment: .top, spacing: 10) {
+                                        Image(systemName: "brain.head.profile")
+                                            .font(.subheadline)
+                                            .foregroundStyle(.yellow)
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text("Почему модель выбрала именно эту тему:")
+                                                .font(.caption.weight(.bold))
+                                                .foregroundStyle(.yellow)
+                                            Text(reasoning)
+                                                .font(.caption)
+                                                .foregroundStyle(.primary.opacity(0.95))
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
+                                    }
+                                    .padding(10)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(Color.black.opacity(0.35))
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(Color.yellow.opacity(0.35), lineWidth: 1)
+                                    )
+                                }
                             }
                             .padding(14)
                             .background(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(isSelected ? Color.yellow.opacity(0.12) : Color(nsColor: .controlBackgroundColor))
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(isSelected ? Color.yellow.opacity(0.14) : Color(nsColor: .controlBackgroundColor))
                             )
                             .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(isSelected ? Color.yellow : Color.secondary.opacity(0.15), lineWidth: isSelected ? 2 : 1)
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(isSelected ? Color.yellow : Color.yellow.opacity(0.4), lineWidth: isSelected ? 2.5 : 1.2)
                             )
                         }
                         .buttonStyle(.plain)
+                    }
+
+                    // Секция альтернативных тем
+                    if !alternativeConcepts.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Альтернативные грани и темы фильма:")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                            }
+                            .padding(.top, 4)
+
+                            ForEach(alternativeConcepts) { concept in
+                                let isSelected = (selectedConceptId == concept.id) && !showCustomInput
+                                let isGenerated = LongformHistoryService.shared.isConceptGenerated(movieTitle: editedMovieTitle, conceptWord: concept.word)
+
+                                Button {
+                                    showCustomInput = false
+                                    selectedConceptId = concept.id
+                                } label: {
+                                    HStack(alignment: .center, spacing: 18) {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            HStack(spacing: 8) {
+                                                Text(concept.word.uppercased())
+                                                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                                                    .foregroundStyle(isSelected ? .white : .primary)
+
+                                                if isGenerated {
+                                                    Text("СМОНТИРОВАНО ✓")
+                                                        .font(.system(size: 9, weight: .black))
+                                                        .padding(.horizontal, 6)
+                                                        .padding(.vertical, 2)
+                                                        .background(Color.green.opacity(0.2))
+                                                        .foregroundStyle(.green)
+                                                        .clipShape(Capsule())
+                                                }
+                                            }
+
+                                            Text(concept.suggestedTitle)
+                                                .font(.caption.weight(.medium))
+                                                .foregroundStyle(Color(hex: concept.accentColorHex))
+                                        }
+                                        .frame(width: 290, alignment: .leading)
+
+                                        Divider()
+                                            .frame(height: 40)
+
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(concept.tagline)
+                                                .font(.subheadline.weight(.semibold))
+                                                .foregroundStyle(.primary)
+
+                                            Text(concept.philosophicalPremise)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(2)
+                                        }
+
+                                        Spacer()
+
+                                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                            .font(.title2)
+                                            .foregroundStyle(isSelected ? .yellow : .secondary.opacity(0.4))
+                                    }
+                                    .padding(12)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(isSelected ? Color.yellow.opacity(0.12) : Color(nsColor: .controlBackgroundColor))
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .stroke(isSelected ? Color.yellow : Color.secondary.opacity(0.15), lineWidth: isSelected ? 2 : 1)
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
                     }
 
                     // Кастомный ввод
@@ -240,7 +383,7 @@ struct ThematicConceptSelectionSheet: View {
                             HStack {
                                 Image(systemName: showCustomInput ? "chevron.down" : "plus.circle.fill")
                                     .foregroundStyle(.yellow)
-                                Text("Ввести своё философское слово/тему")
+                                Text("Ввести своё философское слово/тему вручную")
                                     .font(.subheadline.weight(.medium))
                                 Spacer()
                             }
@@ -263,7 +406,7 @@ struct ThematicConceptSelectionSheet: View {
                 }
                 .padding(.horizontal, 6)
             }
-            .frame(maxHeight: 280)
+            .frame(maxHeight: 330)
 
             Divider()
 
@@ -381,7 +524,7 @@ struct ThematicConceptSelectionSheet: View {
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "film.fill")
-                        Text("Смонтировать длинный ролик (5–8 мин)")
+                        Text("Смонтировать кино-эссе (5–8 мин)")
                     }
                     .font(.headline)
                     .padding(.horizontal, 16)
@@ -395,7 +538,7 @@ struct ThematicConceptSelectionSheet: View {
             .padding(.bottom, 8)
         }
         .padding(22)
-        .frame(minWidth: 740, minHeight: 600)
+        .frame(minWidth: 780, minHeight: 640)
         .onChange(of: selectedPresetIndex) { _, _ in
             if previewController.isPlaying, let url = resolvedMusicURL {
                 previewController.play(url: url, volume: Float(ambientVolume))

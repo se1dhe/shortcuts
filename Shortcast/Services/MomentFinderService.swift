@@ -512,19 +512,23 @@ final class MomentFinderService {
         }
     }
 
-    /// Generates 4 to 7 deep philosophical themes/concepts for a film using the Director model.
-    func generateThematicConcepts(transcriptSample: String, movieTitle: String, movieOverview: String? = nil) async -> [ThematicConcept] {
+    /// Глубоко анализирует полный срез сценария по всем 4 актам и выбирает ОДНУ главную тему эссе с разбором ИИ
+    func analyzeThematicCore(
+        transcriptSample: String,
+        movieTitle: String,
+        movieOverview: String? = nil
+    ) async -> ThematicAnalysisResult? {
         guard let container else {
-            Self.log("generateThematicConcepts skipped: no model loaded")
-            return []
+            Self.log("analyzeThematicCore skipped: no model loaded")
+            return nil
         }
         let sample = transcriptSample.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !sample.isEmpty else { return [] }
+        guard !sample.isEmpty else { return nil }
 
         let s = profile.sampling
         var params = GenerateParameters(
-            maxTokens: 1200,
-            temperature: 0.4,
+            maxTokens: 1600,
+            temperature: 0.35,
             topP: s.topP,
             topK: s.topK,
             minP: s.minP,
@@ -544,8 +548,10 @@ final class MomentFinderService {
         if let overview = movieOverview?.trimmingCharacters(in: .whitespacesAndNewlines), !overview.isEmpty {
             promptParts.append("Синопсис/сюжет фильма:\n\"\"\"\n\(overview)\n\"\"\"")
         }
-        promptParts.append("Срез ключевых диалогов фильма (хронологически по актам сюжета):\n\"\"\"\n\(sample.prefix(4500))\n\"\"\"")
-        promptParts.append("Выдели от 4 до 7 фундаментальных философских тем. Верни строго валидный JSON-массив:")
+        // Передаем богатый срез диалогов по всем 4 актам (до 28000 символов), без урезания до 4500 символов
+        let fullDialogueSample = String(sample.prefix(28_000))
+        promptParts.append("Срез ключевых диалогов фильма (хронологически по 4 актам сюжета):\n\"\"\"\n\(fullDialogueSample)\n\"\"\"")
+        promptParts.append("Выбери ОДНУ ГЛАВНУЮ тему эссе (primaryConcept), подробно обоснуй выбор (aiReasoning) и предложи альтернативные грани (alternativeConcepts). Верни СТРОГО валидный JSON-объект:")
         let userPrompt = promptParts.joined(separator: "\n\n")
 
         do {
@@ -553,12 +559,24 @@ final class MomentFinderService {
             for try await chunk in session.streamResponse(to: userPrompt) {
                 raw += chunk
             }
-            Self.log("generateThematicConcepts output (\(raw.count) chars)")
-            return LongformThematicService.parseConcepts(from: raw)
+            Self.log("analyzeThematicCore output (\(raw.count) chars)")
+            return LongformThematicService.parseThematicAnalysis(from: raw)
         } catch {
-            Self.log("generateThematicConcepts failed: \(error.localizedDescription)")
-            return []
+            Self.log("analyzeThematicCore failed: \(error.localizedDescription)")
+            return nil
         }
+    }
+
+    /// Generates deep philosophical themes/concepts for a film using the Director model (backward compatibility).
+    func generateThematicConcepts(transcriptSample: String, movieTitle: String, movieOverview: String? = nil) async -> [ThematicConcept] {
+        if let analysis = await analyzeThematicCore(
+            transcriptSample: transcriptSample,
+            movieTitle: movieTitle,
+            movieOverview: movieOverview
+        ) {
+            return analysis.allConcepts
+        }
+        return []
     }
 
     private func parseMovieInference(_ raw: String, fallbackTitle: String, fallbackYear: String?) -> TMDBMovie? {

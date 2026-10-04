@@ -90,6 +90,10 @@ final class WorkspaceModel {
     var storedTranscript: Transcript?
     /// Выявленные темы для длинного ролика Shortcast Cinema
     var discoveredConcepts: [ThematicConcept] = []
+    /// Полный анализ фильма с ОДНОЙ главной темой и разбором ИИ
+    var thematicAnalysis: ThematicAnalysisResult?
+    /// Драматургический разбор сценария от ИИ
+    var thematicReasoning: String?
     /// Выбранная тема для ролика
     var selectedConcept: ThematicConcept?
     /// Результат генерации длинного ролика
@@ -355,7 +359,14 @@ final class WorkspaceModel {
                     self.detectedMovie = m
                 }
             }
-            if !existingProject.discoveredConcepts.isEmpty && self.detectedMovie != nil {
+            if let ta = existingProject.thematicAnalysis, self.detectedMovie != nil {
+                self.thematicAnalysis = ta
+                self.thematicReasoning = ta.aiReasoning
+                self.discoveredConcepts = ta.allConcepts
+                if self.selectedConcept == nil {
+                    self.selectedConcept = ta.primaryConcept
+                }
+            } else if !existingProject.discoveredConcepts.isEmpty && self.detectedMovie != nil {
                 self.discoveredConcepts = existingProject.discoveredConcepts
             }
             if let sc = existingProject.selectedConcept, self.detectedMovie != nil {
@@ -518,24 +529,32 @@ final class WorkspaceModel {
                 effectiveMovieTitle = "Фильм"
             }
 
-            // 3. Выявление философских тем (Shortcast Thematic Engine)
-            let concepts: [ThematicConcept]
-            if !self.discoveredConcepts.isEmpty {
-                concepts = self.discoveredConcepts
-            } else if let cached = self.currentProject?.discoveredConcepts, !cached.isEmpty {
-                concepts = cached
-                self.discoveredConcepts = cached
+            // 3. Выявление философских тем и автономный выбор ОДНОЙ главной темы (Shortcast Thematic Engine)
+            let analysis: ThematicAnalysisResult
+            if let existing = self.thematicAnalysis ?? self.currentProject?.thematicAnalysis {
+                analysis = existing
+                self.thematicAnalysis = existing
+                self.thematicReasoning = existing.aiReasoning
+                self.discoveredConcepts = existing.allConcepts
+                if self.selectedConcept == nil {
+                    self.selectedConcept = existing.primaryConcept
+                }
             } else {
                 let thematicService = LongformThematicService()
-                concepts = try await thematicService.discoverConcepts(
+                analysis = try await thematicService.discoverThematicAnalysis(
                     from: transcript,
                     movieTitle: effectiveMovieTitle,
                     movieOverview: movie?.overview,
-                    forceAI: false,
                     modelManager: modelManager
                 )
-                self.discoveredConcepts = concepts
-                self.currentProject?.discoveredConcepts = concepts
+                self.thematicAnalysis = analysis
+                self.thematicReasoning = analysis.aiReasoning
+                self.discoveredConcepts = analysis.allConcepts
+                // АВТОНОМНЫЙ ВЫБОР: модель сама выбирает и предлагает ОДНУ главную тему
+                self.selectedConcept = analysis.primaryConcept
+                self.currentProject?.thematicAnalysis = analysis
+                self.currentProject?.discoveredConcepts = analysis.allConcepts
+                self.currentProject?.selectedConcept = analysis.primaryConcept
                 if let project = self.currentProject {
                     try? await filmProjectService.saveProject(project)
                 }
@@ -640,15 +659,21 @@ final class WorkspaceModel {
         let thematicService = LongformThematicService()
 
         do {
-            let freshConcepts = try await thematicService.discoverConcepts(
+            let freshAnalysis = try await thematicService.discoverThematicAnalysis(
                 from: transcript,
                 movieTitle: effectiveTitle,
                 movieOverview: overview,
-                forceAI: true,
                 modelManager: modelManager
             )
-            if !freshConcepts.isEmpty {
-                self.discoveredConcepts = freshConcepts
+            self.thematicAnalysis = freshAnalysis
+            self.thematicReasoning = freshAnalysis.aiReasoning
+            self.discoveredConcepts = freshAnalysis.allConcepts
+            self.selectedConcept = freshAnalysis.primaryConcept
+            self.currentProject?.thematicAnalysis = freshAnalysis
+            self.currentProject?.discoveredConcepts = freshAnalysis.allConcepts
+            self.currentProject?.selectedConcept = freshAnalysis.primaryConcept
+            if let project = self.currentProject {
+                try? await filmProjectService.saveProject(project)
             }
         } catch {
             Self.log("regenerateThematicConcepts failed: \(error.localizedDescription)")
@@ -660,6 +685,8 @@ final class WorkspaceModel {
             // Если эссе уже было собрано ранее, просто возвращаемся к просмотру результата
             self.phase = .longformResults
         } else {
+            self.thematicAnalysis = nil
+            self.thematicReasoning = nil
             self.discoveredConcepts = []
             self.selectedConcept = nil
             cleanUpTempInput()
@@ -669,6 +696,8 @@ final class WorkspaceModel {
 
     func resetLongform() {
         self.longformResult = nil
+        self.thematicAnalysis = nil
+        self.thematicReasoning = nil
         self.selectedConcept = nil
         self.storedTranscript = nil
         self.discoveredConcepts = []

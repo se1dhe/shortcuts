@@ -262,6 +262,7 @@ struct ContentView: View {
             ThematicConceptSelectionSheet(
                 movieTitle: workspace.detectedMovie?.title ?? workspace.job?.effectiveTitle ?? "Фильм",
                 concepts: workspace.discoveredConcepts,
+                aiReasoning: workspace.thematicReasoning,
                 onSelect: { concept, confirmedTitle, musicURL, musicVolume, duckingEnabled in
                     workspace.confirmLongformConcept(
                         concept,

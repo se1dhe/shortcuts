@@ -35,9 +35,15 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
     }
 
     func discoverConcepts(from transcript: Transcript, movieTitle: String, modelManager: ModelManager? = nil) async throws -> [ThematicConcept] {
+        // 1. Проверяем, есть ли для фильма авторские эталоны тем (Револьвер, Бойцовский клуб, Крестный отец и др.)
+        let bespoke = bespokeConcepts(for: movieTitle)
+        if !bespoke.isEmpty {
+            return bespoke
+        }
+
         let sampleText = transcript.segments.prefix(100).map(\.text).joined(separator: "\n")
 
-        // 1. Попытка сгенерировать уникальные концепты через модель Director
+        // 2. Для остальных фильмов генерируем уникальные концепты через модель Director
         if let mm = modelManager, !sampleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             await mm.prepareDirectorIfNeeded()
             let aiConcepts = await mm.momentFinder.generateThematicConcepts(transcriptSample: sampleText, movieTitle: movieTitle)
@@ -46,7 +52,7 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
             }
         }
 
-        // 2. Фолбэк на кинематографические эталоны фильма
+        // 3. Фолбэк на кинематографические эталоны фильма
         return fallbackConcepts(for: movieTitle)
     }
 
@@ -91,8 +97,8 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         return []
     }
 
-    /// Высококачественные эталонные темы для фильма по умолчанию
-    func fallbackConcepts(for movieTitle: String) -> [ThematicConcept] {
+    /// Высококачественные авторские эталонные темы для ключевых шедевров кинематографа
+    func bespokeConcepts(for movieTitle: String) -> [ThematicConcept] {
         let titleLower = movieTitle.lowercased()
 
         if titleLower.contains("револьвер") || titleLower.contains("revolver") {
@@ -352,7 +358,20 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
             ]
         }
 
-        // Универсальный кинематографический эталон
+        return []
+    }
+
+    /// Фолбэк на кинематографические эталоны фильма
+    func fallbackConcepts(for movieTitle: String) -> [ThematicConcept] {
+        let bespoke = bespokeConcepts(for: movieTitle)
+        if !bespoke.isEmpty {
+            return bespoke
+        }
+        return universalFallbackConcepts()
+    }
+
+    /// Универсальный кинематографический эталон
+    func universalFallbackConcepts() -> [ThematicConcept] {
         return [
             ThematicConcept(
                 word: "Характер",

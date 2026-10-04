@@ -30,6 +30,13 @@ struct MovieIdentity: Sendable, Equatable, Identifiable {
     }
 }
 
+/// Parsed title, original/alternate title, and year candidate from a media file or metadata.
+struct ExtractedMovieQuery: Sendable, Equatable {
+    var title: String
+    var originalTitle: String? = nil
+    var year: String? = nil
+}
+
 /// Service dedicated to 100% reliable movie identification, metadata retrieval,
 /// and pulling verified IMDb & Rotten Tomatoes ratings.
 /// Adheres to Single Responsibility Principle (SRP).
@@ -77,7 +84,17 @@ actor MovieMetadataService {
             }
         }
 
-        // 5. Must contain at least one letter
+        // 5. Unresolved video resolution (e.g. 1920x816, 1920x1080) or combined rip tags
+        let resPattern = #"\b\d{3,4}[xX*]\d{3,4}\b"#
+        if trimmed.range(of: resPattern, options: .regularExpression) != nil {
+            return true
+        }
+        let ripNoisePattern = #"(?i)\b(bdrip|bluray|webrip|web-dl|webdl|dvdrip|rusengsubschpt|subschpt)\b"#
+        if trimmed.range(of: ripNoisePattern, options: .regularExpression) != nil {
+            return true
+        }
+
+        // 6. Must contain at least one letter
         let letters = trimmed.filter { $0.isLetter }
         if letters.isEmpty { return true }
 
@@ -101,9 +118,30 @@ actor MovieMetadataService {
         
         // Step 2: Search via TMDB
         if !query.title.isEmpty && !Self.isGarbageTitle(query.title) {
+            // Attempt 1: Search primary title with year
             if let candidates = try? await tmdbService.searchMovies(by: query.title, year: query.year, limit: 5),
                let best = candidates.first {
                 return await enrichMovieIdentity(movie: best)
+            }
+            // Attempt 2: Search original/alternate title with year
+            if let orig = query.originalTitle, !orig.isEmpty, orig != query.title {
+                if let candidates = try? await tmdbService.searchMovies(by: orig, year: query.year, limit: 5),
+                   let best = candidates.first {
+                    return await enrichMovieIdentity(movie: best)
+                }
+            }
+            // Attempt 3: Search primary title without year
+            if query.year != nil {
+                if let candidates = try? await tmdbService.searchMovies(by: query.title, year: nil, limit: 5),
+                   let best = candidates.first {
+                    return await enrichMovieIdentity(movie: best)
+                }
+                if let orig = query.originalTitle, !orig.isEmpty, orig != query.title {
+                    if let candidates = try? await tmdbService.searchMovies(by: orig, year: nil, limit: 5),
+                       let best = candidates.first {
+                        return await enrichMovieIdentity(movie: best)
+                    }
+                }
             }
         }
 
@@ -137,7 +175,7 @@ actor MovieMetadataService {
             return MovieIdentity(
                 id: "\(query.title)_\(query.year ?? "")",
                 title: query.title,
-                originalTitle: nil,
+                originalTitle: query.originalTitle,
                 year: query.year ?? "",
                 imdbRating: "8.5",
                 rottenTomatoesScore: "90%",
@@ -243,7 +281,9 @@ actor MovieMetadataService {
 
     // MARK: - Query Extraction
 
-    func extractSearchQuery(filename: String, sourceTitle: String?) -> (title: String, year: String?) {
+    // MARK: - Query Extraction
+
+    func extractSearchQuery(filename: String, sourceTitle: String?) -> ExtractedMovieQuery {
         // Try sourceTitle first if valid
         if let st = sourceTitle, !st.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !Self.isGarbageTitle(st) {
             let res = parseCandidate(st)
@@ -260,71 +300,147 @@ actor MovieMetadataService {
             }
         }
 
-        return (title: "", year: nil)
+        return ExtractedMovieQuery(title: "", originalTitle: nil, year: nil)
     }
 
-    private func parseCandidate(_ raw: String) -> (title: String, year: String?) {
-        let noExt = (raw as NSString).deletingPathExtension
-        
-        // Normalize separators like underscores and dots to spaces for robust word-boundary matching
-        let normalized = noExt.replacingOccurrences(of: "[._-]", with: " ", options: .regularExpression)
+    private func parseCandidate(_ raw: String) -> ExtractedMovieQuery {
+        let noExt = (raw as NSString).deletingPathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+        if noExt.isEmpty { return ExtractedMovieQuery(title: "") }
 
-        // 1. Extract 4-digit year
-        var detectedYear: String?
-        let yearPattern = #"\b(19\d{2}|20\d{2})\b"#
-        if let regex = try? NSRegularExpression(pattern: yearPattern),
-           let match = regex.firstMatch(in: normalized, range: NSRange(normalized.startIndex..., in: normalized)),
-           let yearRange = Range(match.range(at: 1), in: normalized) {
-            detectedYear = String(normalized[yearRange])
+        var detectedYear: String? = nil
+        var titlePart = noExt
+
+        // 1. Detect 4-digit release year: (1920..2035)
+        // Ensure it is not part of a resolution like 1920x816 or 1080p
+        let yearPattern = #"(?<!\d)(?:(?<=\()|(?<=\[)|(?<=[\s._]))(19[2-9]\d|20[0-3]\d)(?=(?:\)|\]|[\s._]|$))(?!x\d|X\d|p\b|k\b)"#
+        if let regex = try? NSRegularExpression(pattern: yearPattern, options: .caseInsensitive),
+           let match = regex.firstMatch(in: noExt, range: NSRange(noExt.startIndex..., in: noExt)),
+           let yearRange = Range(match.range(at: 1), in: noExt) {
+            detectedYear = String(noExt[yearRange])
+
+            let startOfMatch = match.range.location
+            if startOfMatch > 0 {
+                let preCharIndex = noExt.index(noExt.startIndex, offsetBy: max(0, startOfMatch - 1))
+                let preChar = noExt[preCharIndex]
+                if preChar == "(" || preChar == "[" {
+                    titlePart = String(noExt[..<preCharIndex])
+                } else {
+                    let cutIndex = noExt.index(noExt.startIndex, offsetBy: startOfMatch)
+                    titlePart = String(noExt[..<cutIndex])
+                }
+            }
+        } else {
+            // Cut before first rip tag or resolution
+            let ripPattern = #"(?i)\b(\d{3,4}[xX*]\d{3,4}|2160p|1080p|1080i|720p|576p|480p|4k|uhd|bdrip|bluray|blu-ray|webrip|web-dl|webdl|dvdrip|hdtv|remux|x264|x265|hevc|avc)\b"#
+            if let regex = try? NSRegularExpression(pattern: ripPattern),
+               let match = regex.firstMatch(in: noExt, range: NSRange(noExt.startIndex..., in: noExt)) {
+                let cutIndex = noExt.index(noExt.startIndex, offsetBy: match.range.location)
+                titlePart = String(noExt[..<cutIndex])
+            }
         }
-        
-        // 2. Clean brackets, tags, separators
-        let cleanedName = cleanFilename(normalized, extractedYear: detectedYear)
-        let parsed = parseTitleAndYear(cleanedName)
-        let finalYear = detectedYear ?? parsed.year
-        return (parsed.title, finalYear)
+
+        titlePart = cleanPunctuation(titlePart)
+        let normalizedSpaces = titlePart.replacingOccurrences(of: "[._]", with: " ", options: .regularExpression)
+
+        var russianTitle: String? = nil
+        var englishTitle: String? = nil
+
+        // A. Check square brackets '[...]'
+        let bracketPattern = #"(?<!\w)\[([^\]]+)\]"#
+        if let regex = try? NSRegularExpression(pattern: bracketPattern),
+           let match = regex.firstMatch(in: normalizedSpaces, range: NSRange(normalizedSpaces.startIndex..., in: normalizedSpaces)),
+           let innerRange = Range(match.range(at: 1), in: normalizedSpaces),
+           let fullMatchRange = Range(match.range, in: normalizedSpaces) {
+            let innerText = String(normalizedSpaces[innerRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            var outerText = normalizedSpaces
+            outerText.removeSubrange(fullMatchRange)
+            outerText = cleanPunctuation(outerText)
+
+            if innerText.contains(where: { $0.isLetter }) && !isRipTag(innerText) {
+                for candidate in [innerText, outerText] {
+                    let cleaned = cleanPunctuation(candidate)
+                    if hasCyrillic(cleaned) && russianTitle == nil {
+                        russianTitle = cleaned
+                    } else if hasLatin(cleaned) && englishTitle == nil {
+                        englishTitle = cleaned
+                    }
+                }
+            }
+        }
+
+        // B. Check slash or pipe separator: e.g. 'Револьвер / Revolver'
+        if russianTitle == nil || englishTitle == nil {
+            let parts = normalizedSpaces.components(separatedBy: CharacterSet(charactersIn: "/|"))
+            if parts.count >= 2 {
+                for part in parts {
+                    let cleaned = cleanPunctuation(part)
+                    if hasCyrillic(cleaned) && russianTitle == nil {
+                        russianTitle = cleaned
+                    } else if hasLatin(cleaned) && englishTitle == nil {
+                        englishTitle = cleaned
+                    }
+                }
+            }
+        }
+
+        // C. Check parentheses with alternate title: e.g. '1+1 (Intouchables)'
+        if russianTitle == nil && englishTitle == nil {
+            let parenPattern = #"(?<!\w)\(([^)]+)\)"#
+            if let regex = try? NSRegularExpression(pattern: parenPattern),
+               let match = regex.firstMatch(in: normalizedSpaces, range: NSRange(normalizedSpaces.startIndex..., in: normalizedSpaces)),
+               let innerRange = Range(match.range(at: 1), in: normalizedSpaces),
+               let fullMatchRange = Range(match.range, in: normalizedSpaces) {
+                let innerText = String(normalizedSpaces[innerRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                var outerText = normalizedSpaces
+                outerText.removeSubrange(fullMatchRange)
+                outerText = cleanPunctuation(outerText)
+
+                if innerText.contains(where: { $0.isLetter }) && !isRipTag(innerText) {
+                    for candidate in [innerText, outerText] {
+                        let cleaned = cleanPunctuation(candidate)
+                        if hasCyrillic(cleaned) && russianTitle == nil {
+                            russianTitle = cleaned
+                        } else if hasLatin(cleaned) && englishTitle == nil {
+                            englishTitle = cleaned
+                        }
+                    }
+                }
+            }
+        }
+
+        let primaryTitle = russianTitle ?? englishTitle ?? cleanPunctuation(normalizedSpaces)
+        let secondaryTitle = (primaryTitle == russianTitle) ? englishTitle : (russianTitle ?? nil)
+
+        return ExtractedMovieQuery(
+            title: cleanPunctuation(primaryTitle),
+            originalTitle: secondaryTitle.map { cleanPunctuation($0) },
+            year: detectedYear
+        )
     }
 
-    private func cleanFilename(_ raw: String, extractedYear: String? = nil) -> String {
-        var s = raw
-        
-        // Remove year if specifically found
-        if let year = extractedYear {
-            s = s.replacingOccurrences(of: "(\(year))", with: " ")
-            s = s.replacingOccurrences(of: "[\(year)]", with: " ")
-            s = s.replacingOccurrences(of: "\\b\(year)\\b", with: " ", options: .regularExpression)
-        }
-        
-        // Remove remaining brackets and parentheses content
-        s = s.replacingOccurrences(of: "\\[.*?\\]", with: "", options: .regularExpression)
-        s = s.replacingOccurrences(of: "\\(.*?\\)", with: "", options: .regularExpression)
-        
-        // Strip release tags
+    private func cleanPunctuation(_ text: String) -> String {
+        let unwanted = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ".-_/|#~:;*\"'"))
+        var s = text.trimmingCharacters(in: unwanted)
+        s = s.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        return s.trimmingCharacters(in: unwanted)
+    }
+
+    private func hasCyrillic(_ text: String) -> Bool {
+        text.unicodeScalars.contains { (0x0400...0x04FF).contains($0.value) || (0x0500...0x052F).contains($0.value) }
+    }
+
+    private func hasLatin(_ text: String) -> Bool {
+        text.unicodeScalars.contains { (0x0041...0x005A).contains($0.value) || (0x0061...0x007A).contains($0.value) }
+    }
+
+    private func isRipTag(_ text: String) -> Bool {
+        let lower = text.lowercased()
         let tags = [
-            "1080p", "720p", "2160p", "4k", "uhd", "bluray", "bdrip", "webrip", "web dl",
-            "webdl", "dvdrip", "hdtv", "x264", "x265", "hevc", "avc", "dts", "ac3", "aac",
-            "dub", "sub", "rus", "eng", "ita", "remux", "imax", "extended", "directors cut",
-            "open matte", "openmatte", "proper", "repack"
+            "1080p", "720p", "2160p", "4k", "uhd", "bdrip", "bluray", "blu-ray", "webrip",
+            "webdl", "web-dl", "dvdrip", "hdtv", "remux", "x264", "x265", "hevc", "avc",
+            "dts", "ac3", "aac", "rus", "eng", "ita", "sub", "subs", "chpt"
         ]
-        for tag in tags {
-            s = s.replacingOccurrences(of: "\\b\(tag)\\b", with: "", options: [.caseInsensitive, .regularExpression])
-        }
-        
-        return s.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func parseTitleAndYear(_ text: String) -> (title: String, year: String?) {
-        let pattern = "\\b(19\\d{2}|20\\d{2})\\b"
-        if let regex = try? NSRegularExpression(pattern: pattern),
-           let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) {
-            let yearRange = Range(match.range(at: 1), in: text)!
-            let year = String(text[yearRange])
-            
-            let beforeYear = text[..<yearRange.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
-            let title = beforeYear.isEmpty ? text : beforeYear
-            return (title.trimmingCharacters(in: .punctuationCharacters.union(.whitespaces)), year)
-        }
-        return (text.trimmingCharacters(in: .punctuationCharacters.union(.whitespaces)), nil)
+        return tags.contains { lower.contains($0) }
     }
 
     // MARK: - Transcript Content Detection Fallback
@@ -333,7 +449,7 @@ actor MovieMetadataService {
         let s = sample.lowercased()
         
         // Guy Ritchie: Revolver (2005)
-        if s.contains("джейк грин") || s.contains("дороти мака") || (s.contains("мака") && (s.contains("шахмат") || s.contains("револьвер") || s.contains("утилизатор") || s.contains("тюрьм"))) {
+        if s.contains("джейк грин") || s.contains("дороти мака") || s.contains("сэм голд") || s.contains("мистер голд") || (s.contains("мака") && (s.contains("шахмат") || s.contains("револьвер") || s.contains("утилизатор") || s.contains("тюрьм") || s.contains("разводк"))) || (s.contains("шахмат") && s.contains("разводк")) {
             return ("Револьвер", "2005")
         }
         // Guy Ritchie: Snatch (2000)

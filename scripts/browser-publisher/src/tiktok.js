@@ -12,9 +12,11 @@ export async function uploadToTikTok(page, { videoPath, caption, hashtags = [], 
   console.log(JSON.stringify({ type: 'progress', platform: 'tiktok', message: 'Открытие TikTok Creator Center...' }));
 
   await page.goto('https://www.tiktok.com/creator-center/upload', {
-    waitUntil: 'networkidle',
-    timeout: 45000,
+    waitUntil: 'domcontentloaded',
+    timeout: 60000,
   });
+
+  await page.waitForTimeout(2000);
 
   // Check login state
   const currentUrl = page.url();

@@ -11,9 +11,11 @@ export async function uploadToInstagram(page, { videoPath, caption, hashtags = [
   console.log(JSON.stringify({ type: 'progress', platform: 'instagram', message: 'Открытие Instagram Web...' }));
 
   await page.goto('https://www.instagram.com', {
-    waitUntil: 'networkidle',
-    timeout: 45000,
+    waitUntil: 'domcontentloaded',
+    timeout: 60000,
   });
+
+  await page.waitForTimeout(2000);
 
   // Check login state
   const isLoginPage = page.url().includes('/accounts/login') ||

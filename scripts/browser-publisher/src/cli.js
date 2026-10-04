@@ -91,6 +91,7 @@ async function main() {
             caption: content.caption,
             hashtags: content.hashtags,
             isPublic: jobData.isPublic,
+            isShort: jobData.isShort === true,
           });
           results.youtube = { status: 'success' };
         }

@@ -336,9 +336,31 @@ final class WorkspaceModel {
         if let existingProject = try? await filmProjectService.loadProject(for: sandboxFriendlyURL) {
             self.currentProject = existingProject
             if let t = existingProject.transcript { self.storedTranscript = t }
-            if let m = existingProject.tmdbMetadata { self.detectedMovie = m }
-            if !existingProject.discoveredConcepts.isEmpty { self.discoveredConcepts = existingProject.discoveredConcepts }
-            if let sc = existingProject.selectedConcept { self.selectedConcept = sc }
+
+            // Проверяем сохраненные метаданные фильма на предмет старых галлюцинаций LLM
+            let fileQuery = MovieMetadataService.parseCandidate(originalBaseName)
+            if let m = existingProject.tmdbMetadata {
+                let hasValidFileTitle = !fileQuery.title.isEmpty && !MovieMetadataService.isGarbageTitle(fileQuery.title)
+                let matchesTitle = m.title.localizedCaseInsensitiveContains(fileQuery.title) ||
+                    (fileQuery.originalTitle.map { m.title.localizedCaseInsensitiveContains($0) } ?? false) ||
+                    (m.originalTitle.map { $0.localizedCaseInsensitiveContains(fileQuery.title) } ?? false)
+                let isPlaceholder = m.overview.isEmpty && (m.posterURL == nil)
+
+                if hasValidFileTitle && !matchesTitle && isPlaceholder {
+                    Self.log("Discarding mismatched cached movie metadata: '\(m.title)' vs filename candidate '\(fileQuery.title)'")
+                    self.detectedMovie = nil
+                    self.currentProject?.tmdbMetadata = nil
+                    self.currentProject?.discoveredConcepts = []
+                } else {
+                    self.detectedMovie = m
+                }
+            }
+            if !existingProject.discoveredConcepts.isEmpty && self.detectedMovie != nil {
+                self.discoveredConcepts = existingProject.discoveredConcepts
+            }
+            if let sc = existingProject.selectedConcept, self.detectedMovie != nil {
+                self.selectedConcept = sc
+            }
             if let lr = existingProject.longformResult { self.longformResult = lr }
             Self.log("Loaded cached FilmProject: \(existingProject.movieTitle) (\(existingProject.candidates.count) candidates, \(existingProject.discoveredConcepts.count) concepts)")
         } else {
@@ -448,7 +470,7 @@ final class WorkspaceModel {
                 } else {
                     // Задействуем Director LLM (Qwen/Gemma) для идентификации по репликам
                     await modelManager.prepareDirectorIfNeeded()
-                    if let inferred = await modelManager.momentFinder.detectMovieFromTranscript(sample: sampleDialogue) {
+                    if let inferred = await modelManager.momentFinder.detectMovieFromTranscript(sample: sampleDialogue, candidateTitle: initialCandidate) {
                         movie = await movieMetadata.resolveMovie(
                             filename: inferred.title,
                             sourceTitle: inferred.title,

@@ -32,20 +32,15 @@ struct VideoJob: Identifiable, Sendable, Equatable {
     /// Returns a human-friendly title candidate, prioritizing metadata and original file name over internal temp names.
     var effectiveTitle: String {
         if let metaTitle = sourceMetadata?.title,
-           !metaTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           !MovieMetadataService.isGarbageTitle(metaTitle) {
+           !metaTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return metaTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         if let orig = originalFileName,
-           !orig.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           !MovieMetadataService.isGarbageTitle(orig) {
+           !orig.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return orig.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         let fileBase = (fileName as NSString).deletingPathExtension
-        if !MovieMetadataService.isGarbageTitle(fileBase) {
-            return fileBase.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return ""
+        return fileBase.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// `m:ss`, e.g. `0:42`.

@@ -223,6 +223,11 @@ enum CinemaContentGenerator {
             }
         }
 
+        let parsedCandidate = MovieMetadataService.parseCandidate(raw)
+        if !parsedCandidate.title.isEmpty && !MovieMetadataService.isGarbageTitle(parsedCandidate.title) {
+            return MovieSearchQuery(title: parsedCandidate.title, year: parsedCandidate.year)
+        }
+
         // Pull a year out before we strip parentheses.
         let year = raw.range(of: #"\b(19|20)\d{2}\b"#, options: .regularExpression)
             .map { String(raw[$0]) }

@@ -447,7 +447,7 @@ final class MomentFinderService {
     }
 
     /// Identifies the movie/series (title + year) from dialogue lines and quotes in the transcript.
-    func detectMovieFromTranscript(sample: String) async -> (title: String, year: String)? {
+    func detectMovieFromTranscript(sample: String, candidateTitle: String? = nil) async -> (title: String, year: String)? {
         guard let container else {
             Self.log("detectMovieFromTranscript skipped: no model loaded")
             return nil
@@ -480,7 +480,13 @@ final class MomentFinderService {
             generateParameters: params,
             additionalContext: ["enable_thinking": false])
 
-        let userPrompt = "Movie dialogue sample:\n\"\"\"\n\(cleanedSample.prefix(2500))\n\"\"\"\n\nReturn JSON:"
+        var promptParts: [String] = []
+        if let candidate = candidateTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !candidate.isEmpty {
+            promptParts.append("Candidate title from filename or metadata: \"\(candidate)\". Verify if the dialogue matches this film or identify the correct one.")
+        }
+        promptParts.append("Movie dialogue sample:\n\"\"\"\n\(cleanedSample.prefix(2500))\n\"\"\"")
+        promptParts.append("Return JSON:")
+        let userPrompt = promptParts.joined(separator: "\n\n")
 
         do {
             var raw = ""

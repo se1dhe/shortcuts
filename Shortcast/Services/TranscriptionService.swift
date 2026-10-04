@@ -6,7 +6,7 @@ import Observation
 // WordTimestamp is defined in Shortcast/Models/WordTimestamp.swift
 
 /// One spoken segment with its time range, in seconds.
-struct TranscriptSegment: Sendable, Equatable {
+struct TranscriptSegment: Codable, Sendable, Equatable {
     let start: Double
     let end: Double
     let text: String
@@ -22,7 +22,7 @@ struct TranscriptSegment: Sendable, Equatable {
 
 /// A full transcript with timestamps. Fed to the Director to pick moments, and
 /// sliced per clip to ground each caption in what's actually said there.
-struct Transcript: Sendable, Equatable {
+struct Transcript: Codable, Sendable, Equatable {
     let segments: [TranscriptSegment]
     let language: String?
 

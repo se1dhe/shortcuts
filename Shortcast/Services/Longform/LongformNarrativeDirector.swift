@@ -220,7 +220,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         var refined = detector.refineSceneBoundary(
             range: rawRange,
             maxAllowedDuration: targetDuration * 1.35,
-            in: segments
+            in: allSegments
         )
 
         // Для финального катарсиса (Акт 4) добавляем 2.8с атмосферного видеоряда
@@ -230,6 +230,23 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         }
 
         return [refined]
+    }
+
+    /// Публичный метод для юнит-тестирования и внешнего выравнивания границ сцен
+    public static func refineSceneBoundary(
+        in segments: [TranscriptSegment],
+        around range: Range<Double>,
+        maxAllowedDuration: Double
+    ) -> Range<Double> {
+        let detector = SentenceBoundaryDetector(
+            headPadding: 0.20,
+            tailPadding: 0.45,
+            minSegmentDuration: 15.0,
+            maxShortsDuration: maxAllowedDuration
+        )
+        let timeSeg = TimeSegment(start: range.lowerBound, end: range.upperBound)
+        let refined = detector.refineSceneBoundary(range: timeSeg, maxAllowedDuration: maxAllowedDuration, in: segments)
+        return refined.start..<refined.end
     }
 
     private func extractThematicKeywords(for concept: ThematicConcept) -> [String] {

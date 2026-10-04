@@ -1,7 +1,7 @@
 import Foundation
 
 /// Represents a fully resolved movie with verified global ratings and posters.
-struct MovieIdentity: Sendable, Equatable, Identifiable {
+struct MovieIdentity: Codable, Sendable, Equatable, Identifiable {
     var id: String
     var title: String
     var originalTitle: String?

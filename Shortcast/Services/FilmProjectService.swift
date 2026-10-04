@@ -2,7 +2,7 @@ import Foundation
 import os.log
 
 /// Протокол управления проектами фильмов (SOLID: Interface Segregation & Dependency Inversion).
-public protocol FilmProjectServicing: Sendable {
+protocol FilmProjectServicing: Sendable {
     func loadProject(for movieURL: URL) async throws -> FilmProject?
     func saveProject(_ project: FilmProject) async throws
     func deleteProject(id: UUID) async throws
@@ -11,15 +11,15 @@ public protocol FilmProjectServicing: Sendable {
 
 /// Потокобезопасная реализация хранилища проектов фильмов.
 /// Сохраняет проекты в Application Support/Shortcast/Projects в формате JSON.
-public final class FilmProjectService: FilmProjectServicing, Sendable {
+final class FilmProjectService: FilmProjectServicing, Sendable {
 
-    public static let shared = FilmProjectService()
+    static let shared = FilmProjectService()
 
     private static let logger = Logger(subsystem: "app.shortcast", category: "FilmProjectService")
 
     private let storageDirectory: URL
 
-    public init(storageDirectory: URL? = nil) {
+    init(storageDirectory: URL? = nil) {
         if let custom = storageDirectory {
             self.storageDirectory = custom
         } else {
@@ -40,7 +40,7 @@ public final class FilmProjectService: FilmProjectServicing, Sendable {
         return "\(name)_\(size)"
     }
 
-    public func loadProject(for movieURL: URL) async throws -> FilmProject? {
+    func loadProject(for movieURL: URL) async throws -> FilmProject? {
         let key = keyFor(movieURL: movieURL)
         let projects = try await listRecentProjects()
         return projects.first { p in
@@ -48,7 +48,7 @@ public final class FilmProjectService: FilmProjectServicing, Sendable {
         }
     }
 
-    public func saveProject(_ project: FilmProject) async throws {
+    func saveProject(_ project: FilmProject) async throws {
         var updated = project
         updated.updatedAt = Date()
         let url = fileURL(for: updated.id)
@@ -62,14 +62,14 @@ public final class FilmProjectService: FilmProjectServicing, Sendable {
         Self.logger.notice("Saved project \(updated.movieTitle) (\(updated.id.uuidString))")
     }
 
-    public func deleteProject(id: UUID) async throws {
+    func deleteProject(id: UUID) async throws {
         let url = fileURL(for: id)
         if FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
         }
     }
 
-    public func listRecentProjects() async throws -> [FilmProject] {
+    func listRecentProjects() async throws -> [FilmProject] {
         guard let files = try? FileManager.default.contentsOfDirectory(at: storageDirectory, includingPropertiesForKeys: [.contentModificationDateKey]) else {
             return []
         }

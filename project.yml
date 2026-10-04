@@ -66,6 +66,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.shortcast.Shortcast
         PRODUCT_NAME: Short Generator
+        PRODUCT_MODULE_NAME: Shortcast
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"
         GENERATE_INFOPLIST_FILE: NO
@@ -98,10 +99,6 @@ targets:
         script: |
           "${SRCROOT}/scripts/install-app.sh"
         basedOnDependencyAnalysis: false
-    scheme:
-      environmentVariables:
-        OS_ACTIVITY_MODE: disable
-
   ShortcastTests:
     type: bundle.unit-test
     platform: macOS
@@ -112,8 +109,11 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.shortcast.ShortcastTests
+        GENERATE_INFOPLIST_FILE: YES
         MACOSX_DEPLOYMENT_TARGET: "15.0"
         SWIFT_VERSION: "6.0"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Short Generator.app/Contents/MacOS/Short Generator"
+        BUNDLE_LOADER: "$(TEST_HOST)"
 
 schemes:
   Shortcast:
@@ -121,6 +121,9 @@ schemes:
       targets:
         Shortcast: all
         ShortcastTests: [test]
+    run:
+      environmentVariables:
+        OS_ACTIVITY_MODE: disable
     test:
       targets:
         - ShortcastTests

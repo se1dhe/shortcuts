@@ -10,11 +10,10 @@ struct FilmProjectTests {
         let testURL = URL(fileURLWithPath: "/tmp/interstellar.mp4")
         let concept = ThematicConcept(
             word: "ТЕРПЕНИЕ",
-            category: "Человеческий дух",
-            logline: "Испытание расстоянием и временем",
-            why: "Идеально раскрывает лейтмотив Купера",
-            tone: "Драматический, глубокий",
-            searchKeywords: ["космос", "время", "дочь"]
+            tagline: "Испытание расстоянием и временем",
+            philosophicalPremise: "Идеально раскрывает лейтмотив Купера через жертву временем",
+            suggestedTitle: "Почему время — самое безжалостное измерение",
+            accentColorHex: "#F5D020"
         )
 
         let candidate = ClipCandidate(

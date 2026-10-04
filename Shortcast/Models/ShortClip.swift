@@ -277,9 +277,10 @@ final class ShortClip: Identifiable {
                 let renderedURL = try await SinglePassClipCompositor.shared.renderClip(
                     clip: self,
                     workingDirectory: workingDirectory,
+                    customMusicDirectory: customMusicDirectory,
                     outputURL: singlePassOut
                 )
-                RenderedVideoCache.store(renderedURL, for: cacheKey, workingDirectory: workingDirectory)
+                try? RenderedVideoCache.store(renderedURL, key: cacheKey, workingDirectory: workingDirectory)
                 return (renderedURL, true)
             } catch {
                 Self.log("SinglePassClipCompositor fallback to legacy multi-pass: \(error.localizedDescription)")

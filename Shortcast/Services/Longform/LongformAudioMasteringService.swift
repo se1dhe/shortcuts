@@ -36,8 +36,9 @@ final class LongformAudioMasteringService: LongformAudioMasteringProtocol, Senda
 
         // Затухание музыки начинается СТРОГО ПОСЛЕ окончания последней фразы
         // (даем 0.6с на прозвучание эха/интонации, затем плавный спад 2.0-2.5с)
-        let musicFadeStartTime = max(min(lastSpeechEnd + 0.6, totalDuration - 0.5), max(0.0, totalDuration - outroFadeDuration))
-        let climaxStartTime = max(0.0, min(totalDuration - 45.0, musicFadeStartTime - 10.0))
+        let outroFadeDuration: Double = 2.5
+        let musicFadeStartTime: Double = max(min(lastSpeechEnd + 0.6, totalDuration - 0.5), max(0.0, totalDuration - outroFadeDuration))
+        let climaxStartTime: Double = max(0.0, min(totalDuration - 45.0, musicFadeStartTime - 10.0))
 
         // Начальная громкость музыки
         musicParams.setVolume(normalVolume, at: .zero)

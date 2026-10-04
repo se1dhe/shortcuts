@@ -8,22 +8,19 @@ struct SentenceBoundaryTests {
     @Test("SentenceBoundaryDetector does not cut off speech mid-sentence")
     func testBoundaryRefinement() {
         let segments = [
-            Transcript.Segment(
-                id: 1,
+            TranscriptSegment(
                 start: 10.0,
                 end: 13.5,
                 text: "Я думал, что мы успеем,",
                 words: []
             ),
-            Transcript.Segment(
-                id: 2,
+            TranscriptSegment(
                 start: 13.6,
                 end: 18.0,
                 text: "но поезд уже ушел.",
                 words: []
             ),
-            Transcript.Segment(
-                id: 3,
+            TranscriptSegment(
                 start: 18.2,
                 end: 22.0,
                 text: "И теперь нам некуда идти...",
@@ -47,8 +44,7 @@ struct SentenceBoundaryTests {
 
     @Test("Outro scene includes sufficient tail padding for fade to black strictly after speech")
     func testFinalSceneFadeOutPadding() {
-        let lastSegment = Transcript.Segment(
-            id: 10,
+        let lastSegment = TranscriptSegment(
             start: 120.0,
             end: 125.0,
             text: "Это был наш единственный шанс.",

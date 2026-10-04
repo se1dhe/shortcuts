@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import os
 
 enum MediaExtractorError: LocalizedError {
     case noVideoTrack

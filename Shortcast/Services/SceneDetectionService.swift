@@ -13,7 +13,7 @@ struct SceneDetectionService {
         let confidence: Double     // 0.0-1.0 how strong the scene change is
     }
     
-    struct Scene: Sendable {
+    struct Scene: Codable, Sendable, Equatable {
         let start: Double
         let end: Double
         var duration: Double { end - start }

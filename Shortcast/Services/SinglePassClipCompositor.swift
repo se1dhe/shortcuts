@@ -5,11 +5,30 @@ import CoreMedia
 import Foundation
 import os.log
 
+/// Внутренние ошибки однопроходного экспорта клипов.
+enum SinglePassError: LocalizedError {
+    case compositionFailed
+    case cannotCreateExportSession
+    case exportFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .compositionFailed:
+            return "Не удалось создать видео-дорожку для композиции."
+        case .cannotCreateExportSession:
+            return "Не удалось инициализировать сессию экспорта AVAssetExportSession."
+        case .exportFailed(let reason):
+            return "Экспорт клипа завершился с ошибкой: \(reason)"
+        }
+    }
+}
+
 /// Протокол однопроходного рендеринга шортсов (SOLID: Interface Segregation).
-public protocol SinglePassClipCompositing: Sendable {
+protocol SinglePassClipCompositing: Sendable {
     func renderClip(
         clip: ShortClip,
         workingDirectory: URL?,
+        customMusicDirectory: URL?,
         outputURL: URL
     ) async throws -> URL
 }
@@ -18,17 +37,18 @@ public protocol SinglePassClipCompositing: Sendable {
 /// Объединяет тримминг, центрирование/рефрейминг 1:1 или 9:16, субтитры, хук, водяной знак,
 /// промокод и сведение фоновой музыки в ЕДИНЫЙ проход AVFoundation без промежуточных MP4-файлов на диске.
 @MainActor
-public final class SinglePassClipCompositor: SinglePassClipCompositing {
+final class SinglePassClipCompositor: SinglePassClipCompositing {
 
-    public static let shared = SinglePassClipCompositor()
+    static let shared = SinglePassClipCompositor()
 
     private static let logger = Logger(subsystem: "app.shortcast", category: "SinglePassClipCompositor")
 
-    public init() {}
+    init() {}
 
-    public func renderClip(
+    func renderClip(
         clip: ShortClip,
         workingDirectory: URL?,
+        customMusicDirectory: URL? = nil,
         outputURL: URL
     ) async throws -> URL {
         guard let clipJob = clip.clipJob else {
@@ -62,7 +82,7 @@ public final class SinglePassClipCompositor: SinglePassClipCompositing {
         // 2. Сборка единой AVMutableComposition
         let composition = AVMutableComposition()
         guard let compVideoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
-            throw SubtitleError.compositionFailed
+            throw SinglePassError.compositionFailed
         }
 
         try compVideoTrack.insertTimeRange(clipTimeRange, of: sourceVideoTrack, at: .zero)
@@ -74,40 +94,59 @@ public final class SinglePassClipCompositor: SinglePassClipCompositing {
             try? compSpeechTrack?.insertTimeRange(clipTimeRange, of: sourceAudioTrack, at: .zero)
         }
 
-        // 3. Подключение фонового саундтрека (если включен)
+        // 3. Фоновая музыка (если назначена или включена)
         var compMusicTrack: AVMutableCompositionTrack?
-        if clip.backgroundMusicEnabled, let musicURL = clip.selectedMusicURL {
-            let musicAsset = AVURLAsset(url: musicURL)
-            if let sourceMusicTrack = (try? await musicAsset.loadTracks(withMediaType: .audio))?.first {
-                let musicDuration = (try? await musicAsset.load(.duration)) ?? .zero
-                if musicDuration.seconds > 0 {
-                    compMusicTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
-                    var insertPos = CMTime.zero
-                    var startOffset = CMTime(seconds: max(0, clip.musicStartOffsetSeconds), preferredTimescale: 600)
-                    let totalCM = CMTime(seconds: clipDurationSec, preferredTimescale: 600)
+        var musicURL = clip.selectedMusicURL
+        if musicURL == nil && clip.backgroundMusicEnabled {
+            let mood = clip.candidate.mood?.mood.rawValue ?? clip.detectedMovieTitle
+            musicURL = await BackgroundMusicSelector.selectBestTrack(from: customMusicDirectory, mood: mood)
+        }
 
-                    while insertPos < totalCM {
-                        let remaining = CMTimeSubtract(totalCM, insertPos)
-                        let avail = CMTimeSubtract(musicDuration, startOffset)
-                        let chunk = CMTimeMinimum(remaining, avail)
-                        let range = CMTimeRange(start: startOffset, duration: chunk)
-                        try? compMusicTrack?.insertTimeRange(range, of: sourceMusicTrack, at: insertPos)
-                        insertPos = CMTimeAdd(insertPos, chunk)
-                        startOffset = .zero
-                    }
+        if let musicURL, FileManager.default.fileExists(atPath: musicURL.path) {
+            let musicAsset = AVURLAsset(url: musicURL)
+            let audioTracks = try? await musicAsset.loadTracks(withMediaType: AVMediaType.audio)
+            if let sourceMusicAudioTrack = audioTracks?.first {
+                compMusicTrack = composition.addMutableTrack(withMediaType: AVMediaType.audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+                let musicDur = try? await musicAsset.load(.duration)
+                let musicDurSec = musicDur?.seconds ?? clipDurationSec
+
+                // Зацикливание или подрезка музыки под длительность клипа
+                var currentInsertTime: Double = 0
+                while currentInsertTime < clipDurationSec {
+                    let chunkDuration = min(musicDurSec, clipDurationSec - currentInsertTime)
+                    let insertRange = CMTimeRange(
+                        start: .zero,
+                        duration: CMTime(seconds: chunkDuration, preferredTimescale: 600)
+                    )
+                    try? compMusicTrack?.insertTimeRange(
+                        insertRange,
+                        of: sourceMusicAudioTrack,
+                        at: CMTime(seconds: currentInsertTime, preferredTimescale: 600)
+                    )
+                    currentInsertTime += chunkDuration
                 }
             }
         }
 
-        // 4. Настройка геометрии и рефрейминга 1:1 или 9:16
-        let wantReframe = clip.isCinemaMode ? clip.isLandscape : (clip.reframeEnabled && clip.isLandscape)
+        // 4. Определение разрешения вывода и рефрейминг
+        let isVertical = clip.isCinemaMode ? false : (clip.reframeEnabled && clip.isLandscape)
+        let isCinemaSquare = clip.isCinemaMode && clip.isLandscape
         let renderSize: CGSize
-        if wantReframe {
-            // Квадратный кинематографический формат 1080x1080
+        let wantReframe: Bool
+
+        if isCinemaSquare {
             renderSize = CGSize(width: 1080, height: 1080)
+            wantReframe = true
+        } else if isVertical {
+            renderSize = CGSize(width: 1080, height: 1920)
+            wantReframe = true
         } else {
-            let (target, _) = PromoOverlayRenderer.targetRenderSize(CGSize(width: naturalW, height: naturalH))
-            renderSize = target
+            // Оригинальное соотношение
+            let targetShortSide: CGFloat = 1080
+            let shortSide = min(naturalW, naturalH)
+            let scale = shortSide > 0 ? max(1.0, targetShortSide / shortSide) : 1.0
+            renderSize = CGSize(width: round(naturalW * scale / 2) * 2, height: round(naturalH * scale / 2) * 2)
+            wantReframe = false
         }
 
         let videoComposition = AVMutableVideoComposition()
@@ -124,9 +163,10 @@ public final class SinglePassClipCompositor: SinglePassClipCompositing {
             let scale = renderSize.height / naturalH
             let scaledW = naturalW * scale
             let defaultTx = (renderSize.width - scaledW) / 2.0
-            var transform = preferredTransform.concatenating(CGAffineTransform(scaleX: scale, y: scale))
-            transform = transform.concatenating(CGAffineTransform(translationX: defaultTx, y: 0))
+            var defaultTransform = preferredTransform.concatenating(CGAffineTransform(scaleX: scale, y: scale))
+            defaultTransform = defaultTransform.concatenating(CGAffineTransform(translationX: defaultTx, y: 0))
 
+            let cropTransformer = CinemaCropTransformer()
             if let keyframes = try? await CinemaSquareReframer.sampleAndOptimizeVideoPath(asset: asset),
                keyframes.count > 1 {
                 for i in 0..<(keyframes.count - 1) {
@@ -141,15 +181,23 @@ public final class SinglePassClipCompositor: SinglePassClipCompositing {
                         duration: CMTime(seconds: clampedT2 - t1, preferredTimescale: 600)
                     )
 
-                    var trans1 = preferredTransform.concatenating(CGAffineTransform(scaleX: scale, y: scale))
-                    trans1 = trans1.concatenating(CGAffineTransform(translationX: kf1.cropOriginX, y: 0))
-                    var trans2 = preferredTransform.concatenating(CGAffineTransform(scaleX: scale, y: scale))
-                    trans2 = trans2.concatenating(CGAffineTransform(translationX: kf2.cropOriginX, y: 0))
+                    let trans1 = cropTransformer.makeTransform(
+                        for: kf1.cropX,
+                        base: preferredTransform,
+                        sourceSize: CGSize(width: naturalW, height: naturalH),
+                        targetSize: renderSize
+                    )
+                    let trans2 = cropTransformer.makeTransform(
+                        for: kf2.cropX,
+                        base: preferredTransform,
+                        sourceSize: CGSize(width: naturalW, height: naturalH),
+                        targetSize: renderSize
+                    )
 
                     layerInstruction.setTransformRamp(fromStart: trans1, toEnd: trans2, timeRange: timeRange)
                 }
             } else {
-                layerInstruction.setTransform(transform, at: .zero)
+                layerInstruction.setTransform(defaultTransform, at: .zero)
             }
         } else {
             let scaleX = renderSize.width / naturalW
@@ -215,26 +263,36 @@ public final class SinglePassClipCompositor: SinglePassClipCompositing {
             )
         }
 
-        // Промокод
+        // Баннер промокода / соцсети
         if clip.promoOverlayEnabled && !clip.promoCode.isEmpty {
             PromoOverlayRenderer.addBanner(
                 to: parentLayer,
-                code: clip.promoCode,
-                holdSeconds: clip.promoDurationSeconds,
+                promoCode: clip.promoCode,
                 renderSize: renderSize,
-                totalDuration: clipDurationSec
+                total: clipDurationSec,
+                holdSeconds: clip.promoDurationSeconds
             )
         }
 
         // Оверлей хука (если включен)
         if clip.overlayEnabled && !clip.overlayText.isEmpty {
-            let hookLayer = VideoOverlayRenderer.buildOverlayLayer(
+            let hookBand = VideoOverlayRenderer.makeHookBand(
                 text: clip.overlayText,
-                appearance: clip.hookAppearance,
-                videoSize: renderSize,
-                duration: clipDurationSec
+                renderSize: renderSize,
+                hasPromo: clip.promoOverlayEnabled && !clip.promoCode.isEmpty,
+                appearance: clip.hookAppearance
             )
-            parentLayer.addSublayer(hookLayer)
+            VideoOverlayRenderer.addOpacityAnimation(
+                to: hookBand,
+                total: clipDurationSec,
+                hold: 3.0
+            )
+            VideoOverlayRenderer.addStyleAnimation(
+                to: hookBand,
+                style: clip.hookAppearance.normalized.style,
+                total: clipDurationSec
+            )
+            parentLayer.addSublayer(hookBand)
         }
 
         videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
@@ -248,14 +306,14 @@ public final class SinglePassClipCompositor: SinglePassClipCompositing {
 
         if let compSpeechTrack {
             let speechParam = AVMutableAudioMixInputParameters(track: compSpeechTrack)
-            let vol = clip.isOriginalAudioMuted ? 0.0 : max(0.0, clip.originalAudioVolume)
+            let vol = Float(clip.isOriginalAudioMuted ? 0.0 : max(0.0, clip.originalAudioVolume))
             speechParam.setVolume(vol, at: .zero)
             inputParams.append(speechParam)
         }
 
         if let compMusicTrack {
             let musicParam = AVMutableAudioMixInputParameters(track: compMusicTrack)
-            let baseVol = max(0.0, clip.musicVolume)
+            let baseVol = Float(max(0.0, clip.musicVolume))
 
             if !clip.musicDuckingEnabled {
                 musicParam.setVolume(baseVol, at: .zero)
@@ -305,7 +363,7 @@ public final class SinglePassClipCompositor: SinglePassClipCompositing {
             asset: composition,
             presetName: AVAssetExportPresetHighestQuality
         ) else {
-            throw SubtitleError.cannotCreateExportSession
+            throw SinglePassError.cannotCreateExportSession
         }
 
         exportSession.outputURL = outputURL
@@ -317,7 +375,7 @@ public final class SinglePassClipCompositor: SinglePassClipCompositing {
 
         if exportSession.status != .completed {
             let errorMsg = exportSession.error?.localizedDescription ?? "Неизвестная ошибка экспорта"
-            throw NSError(domain: "SinglePassClipCompositor", code: -1, userInfo: [NSLocalizedDescriptionKey: errorMsg])
+            throw SinglePassError.exportFailed(errorMsg)
         }
 
         Self.logger.notice("Single-Pass Render completed in 1 pass: \(outputURL.path)")

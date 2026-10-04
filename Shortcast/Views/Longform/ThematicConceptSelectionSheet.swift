@@ -20,6 +20,7 @@ struct ThematicConceptSelectionSheet: View {
     @State private var selectedPresetIndex: Int = 0
     @State private var customAudioURL: URL? = nil
     @State private var ambientVolume: Double = 0.18
+    @State private var previewController = AudioPreviewController()
 
     private let musicPresets: [(name: String, fileName: String)] = [
         ("Тёмный эмбиент (Dark Monologue)", "Sigma_Monologue_Dark.m4a"),
@@ -72,13 +73,21 @@ struct ThematicConceptSelectionSheet: View {
         if let url = Bundle.main.url(forResource: fileName, withExtension: nil) {
             return url
         }
-        let localPath = URL(fileURLWithPath: "Shortcast/Resources/Music/\(fileName)")
-        if FileManager.default.fileExists(atPath: localPath.path) {
-            return localPath
+        if let resURL = Bundle.main.resourceURL?.appendingPathComponent(fileName),
+           FileManager.default.fileExists(atPath: resURL.path) {
+            return resURL
+        }
+        if let resMusicURL = Bundle.main.resourceURL?.appendingPathComponent("Music/\(fileName)"),
+           FileManager.default.fileExists(atPath: resMusicURL.path) {
+            return resMusicURL
         }
         let fallback = BackgroundMusicService.shared.defaultMusicDirectory().appendingPathComponent(fileName)
         if FileManager.default.fileExists(atPath: fallback.path) {
             return fallback
+        }
+        let localPath = URL(fileURLWithPath: "Shortcast/Resources/Music/\(fileName)")
+        if FileManager.default.fileExists(atPath: localPath.path) {
+            return localPath
         }
         return nil
     }
@@ -247,14 +256,14 @@ struct ThematicConceptSelectionSheet: View {
                 }
 
                 if ambientMusicEnabled {
-                    HStack(spacing: 14) {
+                    HStack(spacing: 12) {
                         Picker("Саундтрек:", selection: $selectedPresetIndex) {
                             ForEach(0..<musicPresets.count, id: \.self) { idx in
                                 Text(musicPresets[idx].name).tag(idx)
                             }
                         }
                         .pickerStyle(.menu)
-                        .frame(maxWidth: 320)
+                        .frame(maxWidth: 300)
                         .disabled(customAudioURL != nil)
 
                         Button {
@@ -286,6 +295,21 @@ struct ThematicConceptSelectionSheet: View {
                             .buttonStyle(.plain)
                         }
 
+                        // Кнопка предпрослушивания саундтрека
+                        Button {
+                            previewController.toggle(url: resolvedMusicURL, volume: Float(ambientVolume))
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: previewController.isPlaying ? "pause.fill" : "play.fill")
+                                Text(previewController.isPlaying ? "Пауза" : "Слушать")
+                            }
+                            .font(.subheadline.weight(.medium))
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(previewController.isPlaying ? .yellow : .secondary)
+                        .disabled(resolvedMusicURL == nil)
+                        .help(previewController.isPlaying ? "Приостановить предпрослушивание саундтрека" : "Предпрослушать выбранный саундтрек")
+
                         Spacer()
 
                         // Регулятор громкости саундтрека
@@ -294,7 +318,7 @@ struct ThematicConceptSelectionSheet: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Slider(value: $ambientVolume, in: 0.05...0.40)
-                                .frame(width: 100)
+                                .frame(width: 85)
                             Text("\(Int(ambientVolume * 100))%")
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
@@ -311,6 +335,7 @@ struct ThematicConceptSelectionSheet: View {
             // Кнопки управления
             HStack(spacing: 16) {
                 Button("Отмена", role: .cancel) {
+                    previewController.stop()
                     onCancel()
                 }
                 .keyboardShortcut(.cancelAction)
@@ -318,6 +343,7 @@ struct ThematicConceptSelectionSheet: View {
                 Spacer()
 
                 Button {
+                    previewController.stop()
                     if let chosen = activeSelection {
                         let finalTitle = editedMovieTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             ? initialMovieTitle
@@ -342,5 +368,26 @@ struct ThematicConceptSelectionSheet: View {
         }
         .padding(22)
         .frame(minWidth: 740, minHeight: 600)
+        .onChange(of: selectedPresetIndex) { _, _ in
+            if previewController.isPlaying, let url = resolvedMusicURL {
+                previewController.play(url: url, volume: Float(ambientVolume))
+            }
+        }
+        .onChange(of: customAudioURL) { _, _ in
+            if previewController.isPlaying, let url = resolvedMusicURL {
+                previewController.play(url: url, volume: Float(ambientVolume))
+            }
+        }
+        .onChange(of: ambientVolume) { _, newVolume in
+            previewController.updateVolume(Float(newVolume))
+        }
+        .onChange(of: ambientMusicEnabled) { _, isEnabled in
+            if !isEnabled {
+                previewController.stop()
+            }
+        }
+        .onDisappear {
+            previewController.stop()
+        }
     }
 }

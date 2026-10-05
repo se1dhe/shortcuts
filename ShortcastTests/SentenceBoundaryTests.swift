@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import AVFoundation
 @testable import Shortcast
 
 @Suite("SentenceBoundary & Narrative Continuity Tests")
@@ -256,5 +257,41 @@ struct SentenceBoundaryTests {
         }
         #expect(act4Seg.start >= 6600.0)
         #expect(act4Seg.end >= 6663.2 && act4Seg.end < 6665.0)
+    }
+
+    @Test("LongformAudioMasteringService safely schedules non-overlapping volume ramps without AVFoundation exception")
+    func testLongformAudioMasteringServiceSafeRamps() async throws {
+        let composition = AVMutableComposition()
+        guard let speechTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: 1),
+              let musicTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: 2) else {
+            Issue.record("Could not create audio tracks")
+            return
+        }
+
+        let intervals = [
+            TimeSegment(start: 1.0, end: 2.3),
+            TimeSegment(start: 2.4, end: 2.8),
+            TimeSegment(start: 3.0, end: 10.0),
+            TimeSegment(start: 10.3, end: 12.0),
+            TimeSegment(start: 12.2, end: 15.0),
+            TimeSegment(start: 20.0, end: 25.0)
+        ]
+        let cuts = [2.5, 2.7, 10.1, 12.1, 18.0]
+
+        let service = LongformAudioMasteringService()
+        let mix = service.buildAudioMixParameters(
+            composition: composition,
+            musicTrack: musicTrack,
+            speechTrack: speechTrack,
+            speechIntervals: intervals,
+            sceneCutPoints: cuts,
+            totalDuration: 30.0,
+            baseMusicVolume: 0.18,
+            duckingEnabled: true,
+            dialogueFocusEnabled: true,
+            originalMusicDucking: 0.82
+        )
+
+        #expect(mix.inputParameters.count == 2)
     }
 }

@@ -34,108 +34,116 @@ final class LongformAudioMasteringService: LongformAudioMasteringProtocol, Senda
 
         // В первые 2.5 секунды (Cold Open) речь фильма заглушена
         speechParams.setVolume(0.0, at: .zero)
+        var lastSpeechRampEnd: Double = 0.0
 
         if dialogueFocusEnabled && !sortedSpeech.isEmpty {
-            // Если первая реплика начинается не сразу, держим оригинальную дорожку фильма приглушенной
-            let firstSpeechStart = sortedSpeech.first?.start ?? 2.5
-            let initialTargetVolume = (firstSpeechStart <= 2.8) ? 1.0 : duckedSpeechVolume
-            speechParams.setVolumeRamp(
-                fromStartVolume: 0.0,
-                toEndVolume: Float(initialTargetVolume),
-                timeRange: CMTimeRange(
-                    start: CMTime(seconds: 2.2, preferredTimescale: 600),
-                    duration: CMTime(seconds: 0.3, preferredTimescale: 600)
-                )
+            // Объединяем близкие реплики (пауза < 0.8с) во избежание частых перепадов громкости
+            var mergedSpeech: [TimeSegment] = []
+            for s in sortedSpeech {
+                if let last = mergedSpeech.last {
+                    if s.start <= last.end + 0.8 {
+                        mergedSpeech[mergedSpeech.count - 1] = TimeSegment(start: last.start, end: max(last.end, s.end))
+                    } else {
+                        mergedSpeech.append(s)
+                    }
+                } else {
+                    mergedSpeech.append(s)
+                }
+            }
+
+            let firstSpeechStart = mergedSpeech.first?.start ?? 2.5
+            let initialTargetVolume: Float = (firstSpeechStart <= 2.8) ? 1.0 : duckedSpeechVolume
+            safeSetVolumeRamp(
+                params: speechParams,
+                from: 0.0,
+                to: initialTargetVolume,
+                start: 2.2,
+                duration: 0.3,
+                lastRampEnd: &lastSpeechRampEnd
             )
 
-            // Динамическое приглушение оригинальной музыки фильма в паузах между фразами
-            for (idx, interval) in sortedSpeech.enumerated() {
-                // Подъем до 100% громкости прямо перед началом реплики (lead-in 0.18с)
-                let rampUpStart = max(2.5, interval.start - 0.18)
-                let rampUpDur = min(0.15, interval.start - rampUpStart)
-                if rampUpDur > 0.02 && rampUpStart > 2.5 {
-                    speechParams.setVolumeRamp(
-                        fromStartVolume: duckedSpeechVolume,
-                        toEndVolume: 1.0,
-                        timeRange: CMTimeRange(
-                            start: CMTime(seconds: rampUpStart, preferredTimescale: 600),
-                            duration: CMTime(seconds: rampUpDur, preferredTimescale: 600)
-                        )
+            for (idx, interval) in mergedSpeech.enumerated() {
+                // Подъем до 100% громкости перед репликой
+                let rampUpStart = max(lastSpeechRampEnd + 0.01, interval.start - 0.18)
+                let rampUpDur = min(0.15, max(0.04, interval.start - rampUpStart))
+                if rampUpStart < interval.start {
+                    safeSetVolumeRamp(
+                        params: speechParams,
+                        from: duckedSpeechVolume,
+                        to: 1.0,
+                        start: rampUpStart,
+                        duration: rampUpDur,
+                        lastRampEnd: &lastSpeechRampEnd
                     )
                 }
 
-                // Спад до приглушенного уровня после реплики, если до следующей фразы есть пауза > 0.7с
-                let nextStart = (idx + 1 < sortedSpeech.count) ? sortedSpeech[idx + 1].start : totalDuration
+                // Спад до duckedSpeechVolume после реплики, если до следующей фразы есть пауза > 0.8с
+                let nextStart = (idx + 1 < mergedSpeech.count) ? mergedSpeech[idx + 1].start : lastSpeechEnd
                 let pause = nextStart - interval.end
-                if pause > 0.7 && interval.end < lastSpeechEnd {
-                    let rampDownStart = interval.end + 0.15
-                    let rampDownDur: Double = 0.22
-                    if (rampDownStart + rampDownDur) < (nextStart - 0.18) {
-                        speechParams.setVolumeRamp(
-                            fromStartVolume: 1.0,
-                            toEndVolume: duckedSpeechVolume,
-                            timeRange: CMTimeRange(
-                                start: CMTime(seconds: rampDownStart, preferredTimescale: 600),
-                                duration: CMTime(seconds: rampDownDur, preferredTimescale: 600)
-                            )
+                if pause > 0.8 && interval.end < lastSpeechEnd {
+                    let rampDownStart = max(lastSpeechRampEnd + 0.01, interval.end + 0.15)
+                    let rampDownDur: Double = 0.20
+                    if (rampDownStart + rampDownDur) < (nextStart - 0.20) {
+                        safeSetVolumeRamp(
+                            params: speechParams,
+                            from: 1.0,
+                            to: duckedSpeechVolume,
+                            start: rampDownStart,
+                            duration: rampDownDur,
+                            lastRampEnd: &lastSpeechRampEnd
                         )
                     }
                 }
             }
         } else {
             // Классический режим: подъем до 100% громкости к 2.5с
-            speechParams.setVolumeRamp(
-                fromStartVolume: 0.0,
-                toEndVolume: 1.0,
-                timeRange: CMTimeRange(
-                    start: CMTime(seconds: 2.2, preferredTimescale: 600),
-                    duration: CMTime(seconds: 0.3, preferredTimescale: 600)
-                )
+            safeSetVolumeRamp(
+                params: speechParams,
+                from: 0.0,
+                to: 1.0,
+                start: 2.2,
+                duration: 0.3,
+                lastRampEnd: &lastSpeechRampEnd
             )
         }
 
-        // Микро-кроссфейды на склейках сцен (de-click / устранение щелчков и перепадов шума)
-        var lastSpeechRampEnd: Double = 2.5
-        let validCutPoints = sceneCutPoints.sorted().filter { $0 > 2.5 && $0 < min(totalDuration - 0.5, lastSpeechEnd) }
-
+        // Микро-кроссфейды на склейках сцен (только если точка склейки свободна и не пересекается)
+        let validCutPoints = sceneCutPoints.sorted().filter { $0 > (lastSpeechRampEnd + 0.1) && $0 < min(totalDuration - 0.5, lastSpeechEnd) }
         for cut in validCutPoints {
             let fadeDuration: Double = 0.04
             let cutFadeOutStart = cut - fadeDuration
-            guard cutFadeOutStart >= lastSpeechRampEnd else { continue }
+            guard cutFadeOutStart >= lastSpeechRampEnd + 0.01 else { continue }
             let cutFadeInEnd = cut + fadeDuration
             guard cutFadeInEnd < lastSpeechEnd else { continue }
 
-            speechParams.setVolumeRamp(
-                fromStartVolume: 1.0,
-                toEndVolume: 0.0,
-                timeRange: CMTimeRange(
-                    start: CMTime(seconds: cutFadeOutStart, preferredTimescale: 600),
-                    duration: CMTime(seconds: fadeDuration, preferredTimescale: 600)
-                )
+            safeSetVolumeRamp(
+                params: speechParams,
+                from: 1.0,
+                to: 0.0,
+                start: cutFadeOutStart,
+                duration: fadeDuration,
+                lastRampEnd: &lastSpeechRampEnd
             )
-
-            speechParams.setVolumeRamp(
-                fromStartVolume: 0.0,
-                toEndVolume: 1.0,
-                timeRange: CMTimeRange(
-                    start: CMTime(seconds: cut, preferredTimescale: 600),
-                    duration: CMTime(seconds: fadeDuration, preferredTimescale: 600)
-                )
+            safeSetVolumeRamp(
+                params: speechParams,
+                from: 0.0,
+                to: 1.0,
+                start: cut,
+                duration: fadeDuration,
+                lastRampEnd: &lastSpeechRampEnd
             )
-
-            lastSpeechRampEnd = cutFadeInEnd
         }
 
-        // Затухание дорожки речи: речь звучит на 100% громкости ДО КОНЦА,
-        // и только в тишине после последней реплики плавно уходит в ноль
-        let finalSpeechFadeStart = max(lastSpeechEnd, lastSpeechRampEnd)
+        // Затухание дорожки речи: после последней фразы плавно уходит в ноль
+        let finalSpeechFadeStart = max(lastSpeechEnd, lastSpeechRampEnd + 0.01)
         if totalDuration > finalSpeechFadeStart {
-            let speechFadeStartCM = CMTime(seconds: finalSpeechFadeStart, preferredTimescale: 600)
-            let speechFadeDurationCM = CMTime(seconds: max(0.2, totalDuration - finalSpeechFadeStart), preferredTimescale: 600)
-            speechParams.setVolumeRamp(
-                fromStartVolume: 1.0,
-                toEndVolume: 0.0,
-                timeRange: CMTimeRange(start: speechFadeStartCM, duration: speechFadeDurationCM)
+            safeSetVolumeRamp(
+                params: speechParams,
+                from: 1.0,
+                to: 0.0,
+                start: finalSpeechFadeStart,
+                duration: max(0.2, min(1.0, totalDuration - finalSpeechFadeStart)),
+                lastRampEnd: &lastSpeechRampEnd
             )
         }
 
@@ -246,5 +254,24 @@ final class LongformAudioMasteringService: LongformAudioMasteringProtocol, Senda
 
         audioMix.inputParameters = [speechParams, musicParams]
         return audioMix
+    }
+
+    /// Безопасно применяет volume ramp к дорожке, гарантируя полное отсутствие пересечений временных диапазонов в AVFoundation
+    private func safeSetVolumeRamp(
+        params: AVMutableAudioMixInputParameters,
+        from startVolume: Float,
+        to endVolume: Float,
+        start: Double,
+        duration: Double,
+        lastRampEnd: inout Double
+    ) {
+        guard duration >= 0.02 else { return }
+        let safeStart = max(lastRampEnd + 0.005, start)
+        let timeRange = CMTimeRange(
+            start: CMTime(seconds: safeStart, preferredTimescale: 600),
+            duration: CMTime(seconds: duration, preferredTimescale: 600)
+        )
+        params.setVolumeRamp(fromStartVolume: startVolume, toEndVolume: endVolume, timeRange: timeRange)
+        lastRampEnd = safeStart + duration
     }
 }

@@ -63,6 +63,17 @@ protocol LongformPipelineCoordinating: Sendable {
         transcript: Transcript,
         concept: ThematicConcept,
         audioSettings: LongformAudioSettings,
+        existingArc: LongformNarrativeArc?,
+        workingDirectory: URL?,
+        progressHandler: (@Sendable (Double, String) -> Void)?
+    ) async throws -> LongformBuildResult
+
+    func buildLongformVideo(
+        sourceURL: URL,
+        movieTitle: String,
+        transcript: Transcript,
+        concept: ThematicConcept,
+        audioSettings: LongformAudioSettings,
         workingDirectory: URL?,
         progressHandler: (@Sendable (Double, String) -> Void)?
     ) async throws -> LongformBuildResult
@@ -103,6 +114,27 @@ extension LongformPipelineCoordinating {
             transcript: transcript,
             concept: concept,
             audioSettings: settings,
+            workingDirectory: workingDirectory,
+            progressHandler: progressHandler
+        )
+    }
+
+    func buildLongformVideo(
+        sourceURL: URL,
+        movieTitle: String,
+        transcript: Transcript,
+        concept: ThematicConcept,
+        audioSettings: LongformAudioSettings,
+        workingDirectory: URL?,
+        progressHandler: (@Sendable (Double, String) -> Void)?
+    ) async throws -> LongformBuildResult {
+        try await buildLongformVideo(
+            sourceURL: sourceURL,
+            movieTitle: movieTitle,
+            transcript: transcript,
+            concept: concept,
+            audioSettings: audioSettings,
+            existingArc: nil,
             workingDirectory: workingDirectory,
             progressHandler: progressHandler
         )

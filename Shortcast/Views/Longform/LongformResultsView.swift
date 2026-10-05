@@ -21,6 +21,7 @@ struct LongformResultsView: View {
     @State private var copiedComment = false
 
     @State private var showYouTubePublishSheet = false
+    @State private var showSubtitleEditor = false
     @State private var isPostingToTelegram = false
     @State private var telegramPostSuccess = false
     @State private var telegramError: String? = nil
@@ -50,15 +51,27 @@ struct LongformResultsView: View {
 
                     Spacer()
 
-                    HStack(spacing: 12) {
+                    HStack(spacing: 10) {
                         Label(formatDuration(result.duration), systemImage: "clock")
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(.secondary)
 
                         Button {
+                            showSubtitleEditor = true
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "character.cursor.ibeam")
+                                Text("Редактировать субтитры")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.yellow)
+                        .help("Исправить неточности в субтитрах и перерендерить видео с тем же монтажом")
+
+                        Button {
                             NSWorkspace.shared.activateFileViewerSelecting([result.outputURL])
                         } label: {
-                            Label("Показать в Finder", systemImage: "folder")
+                            Label("В Finder", systemImage: "folder")
                         }
                         .buttonStyle(.bordered)
                     }
@@ -277,8 +290,36 @@ struct LongformResultsView: View {
         .sheet(isPresented: $showYouTubePublishSheet) {
             LongformYouTubePublishSheet(result: result, movieTitle: movieTitle, movie: workspace.detectedMovie)
         }
+        .sheet(isPresented: $showSubtitleEditor) {
+            if let transcript = workspace.storedTranscript {
+                LongformSubtitleEditorView(
+                    arc: result.arc,
+                    concept: result.arc.concept,
+                    movieTitle: movieTitle,
+                    allSegments: transcript.segments,
+                    confirmButtonTitle: "Перерендерить с исправленными субтитрами",
+                    backButtonTitle: "Отмена",
+                    onConfirm: { updatedSegments in
+                        showSubtitleEditor = false
+                        workspace.rebuildLongformWithUpdatedSubtitles(
+                            updatedSegments: updatedSegments,
+                            existingResult: result,
+                            settings: settings
+                        )
+                    },
+                    onBack: {
+                        showSubtitleEditor = false
+                    }
+                )
+                .frame(minWidth: 1000, minHeight: 680)
+            }
+        }
         .onAppear {
             player = AVPlayer(url: result.outputURL)
+        }
+        .onChange(of: result.outputURL) { _, newURL in
+            player?.pause()
+            player = AVPlayer(url: newURL)
         }
         .onDisappear {
             player?.pause()

@@ -34,18 +34,25 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         transcript: Transcript,
         concept: ThematicConcept,
         audioSettings: LongformAudioSettings,
+        existingArc: LongformNarrativeArc? = nil,
         workingDirectory: URL? = nil,
         progressHandler: (@Sendable (Double, String) -> Void)? = nil
     ) async throws -> LongformBuildResult {
 
-        // 1. Построение 4-актной драматургической арки
-        progressHandler?(0.10, "Режиссура 4-актной арки «\(concept.word)»...")
-        let arc = try await director.buildArc(
-            from: transcript,
-            concept: concept,
-            movieTitle: movieTitle,
-            targetDuration: 520.0
-        )
+        // 1. Построение или переиспользование 4-актной драматургической арки
+        let arc: LongformNarrativeArc
+        if let existing = existingArc {
+            progressHandler?(0.10, "Использование утвержденного монтажа «\(concept.word)»...")
+            arc = existing
+        } else {
+            progressHandler?(0.10, "Режиссура 4-актной арки «\(concept.word)»...")
+            arc = try await director.buildArc(
+                from: transcript,
+                concept: concept,
+                movieTitle: movieTitle,
+                targetDuration: 520.0
+            )
+        }
 
         let segments = arc.segments
         guard !segments.isEmpty else {

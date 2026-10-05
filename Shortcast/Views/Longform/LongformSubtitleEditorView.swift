@@ -44,6 +44,8 @@ struct LongformSubtitleEditorView: View {
     let concept: ThematicConcept
     let movieTitle: String
     let allSegments: [TranscriptSegment]
+    let confirmButtonTitle: String
+    let backButtonTitle: String
     let onConfirm: ([TranscriptSegment]) -> Void
     let onBack: () -> Void
 
@@ -57,6 +59,8 @@ struct LongformSubtitleEditorView: View {
         concept: ThematicConcept,
         movieTitle: String,
         allSegments: [TranscriptSegment],
+        confirmButtonTitle: String = "Перерендерить кино-эссе",
+        backButtonTitle: String = "Отмена",
         onConfirm: @escaping ([TranscriptSegment]) -> Void,
         onBack: @escaping () -> Void
     ) {
@@ -64,6 +68,8 @@ struct LongformSubtitleEditorView: View {
         self.concept = concept
         self.movieTitle = movieTitle
         self.allSegments = allSegments
+        self.confirmButtonTitle = confirmButtonTitle
+        self.backButtonTitle = backButtonTitle
         self.onConfirm = onConfirm
         self.onBack = onBack
     }
@@ -126,8 +132,8 @@ struct LongformSubtitleEditorView: View {
                 onBack()
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                    Text("Выбор темы")
+                    Image(systemName: "xmark")
+                    Text(backButtonTitle)
                 }
             }
             .buttonStyle(.bordered)
@@ -155,7 +161,7 @@ struct LongformSubtitleEditorView: View {
                     }
                 }
 
-                Text("Фильм «\(movieTitle)» • Проверьте текст перед началом финального видеомонтажа")
+                Text("Фильм «\(movieTitle)» • Исправьте текст субтитров и нажмите «\(confirmButtonTitle)»")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -166,15 +172,15 @@ struct LongformSubtitleEditorView: View {
                 confirmAndProceed()
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "wand.and.stars")
-                    Text("Смонтировать кино-эссе")
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                    Text(confirmButtonTitle)
                 }
                 .font(.headline)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
             }
             .buttonStyle(.borderedProminent)
-            .tint(.accentColor)
+            .tint(.yellow)
             .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, 18)

@@ -264,7 +264,7 @@ struct ContentView: View {
                 concepts: workspace.discoveredConcepts,
                 aiReasoning: workspace.thematicReasoning,
                 onSelect: { concept, confirmedTitle, audioSettings in
-                    workspace.openLongformSubtitleEditor(
+                    workspace.confirmLongformConcept(
                         concept,
                         confirmedMovieTitle: confirmedTitle,
                         audioSettings: audioSettings,

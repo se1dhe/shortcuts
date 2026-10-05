@@ -685,6 +685,54 @@ final class WorkspaceModel {
         confirmLongformConceptInternal(concept, confirmedMovieTitle: confirmedMovieTitle, audioSettings: audioSettings, settings: settings)
     }
 
+    /// Перерендер готового кино-эссе с исправленными субтитрами (сохраняя тот же монтаж сцен и звук)
+    func rebuildLongformWithUpdatedSubtitles(
+        updatedSegments: [TranscriptSegment],
+        existingResult: LongformBuildResult,
+        settings: AppSettings
+    ) {
+        if let stored = storedTranscript {
+            self.storedTranscript = Transcript(segments: updatedSegments, language: stored.language)
+        }
+        guard let currentJob = job, let transcript = storedTranscript else { return }
+
+        let finalMovieTitle = detectedMovie?.title ?? (currentJob.effectiveTitle.isEmpty ? "Фильм" : currentJob.effectiveTitle)
+        let concept = existingResult.arc.concept
+        let audioSettings = stagedAudioSettings ?? LongformAudioSettings()
+        let workDir = settings.workingDirectory ?? currentJob.url.deletingLastPathComponent()
+
+        phase = .buildingLongform(fraction: 0.10, step: "Перерендер видео с обновленными субтитрами...")
+
+        pipelineTask = Task {
+            do {
+                let coordinator = LongformPipelineCoordinator()
+                let result = try await coordinator.buildLongformVideo(
+                    sourceURL: currentJob.url,
+                    movieTitle: finalMovieTitle,
+                    transcript: transcript,
+                    concept: concept,
+                    audioSettings: audioSettings,
+                    existingArc: existingResult.arc,
+                    workingDirectory: workDir
+                ) { [weak self] frac, step in
+                    Task { @MainActor in
+                        self?.longformBuildProgress = (frac, step)
+                        self?.phase = .buildingLongform(fraction: frac, step: step)
+                    }
+                }
+                self.longformResult = result
+                self.currentProject?.longformResult = result
+                if let project = self.currentProject {
+                    try? await self.filmProjectService.saveProject(project)
+                }
+                self.phase = .longformResults
+            } catch {
+                self.errorMessage = "Ошибка перерендера кино-эссе: \(error.localizedDescription)"
+                self.phase = .longformResults
+            }
+        }
+    }
+
     private func confirmLongformConceptInternal(
         _ concept: ThematicConcept,
         confirmedMovieTitle: String? = nil,
@@ -693,6 +741,7 @@ final class WorkspaceModel {
     ) {
         guard let currentJob = job, let transcript = storedTranscript else { return }
         self.selectedConcept = concept
+        self.stagedAudioSettings = audioSettings
 
         let candidate = (confirmedMovieTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let finalMovieTitle: String

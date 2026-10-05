@@ -179,9 +179,9 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         let dramaticKeywords = actDramaticKeywords(for: actType)
         let coreWord = concept.word.lowercased()
 
-        var bestStartIdx = 0
+        var bestStartIdx = -1
         var bestLength = 0
-        var bestScore: Double = -10_000.0
+        var bestScore: Double = -Double.greatestFiniteMagnitude
 
         for i in 0..<candidates.count {
             var currDur = 0.0
@@ -193,11 +193,13 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             var calmIntroBonus = 0.0
             var panicPenalty = 0.0
 
+            let maxSceneGap: Double = (actType == .hook) ? 2.2 : 2.5
+
             while j < candidates.count && currDur < targetDuration {
                 let seg = candidates[j]
                 if j > i {
                     let sceneGap = seg.start - candidates[j - 1].end
-                    if sceneGap > 5.5 {
+                    if sceneGap > maxSceneGap {
                         // Сцена закончилась, далее идет другой эпизод фильма
                         break
                     }
@@ -229,33 +231,50 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                 if actType == .hook {
                     // Особая проверка открывающей реплики кандидата: вступительная сцена обязана начинаться спокойно!
                     let firstText = candidates[i].text.lowercased()
-                    let openingAggressiveWords = ["ай", "убью", "стреляй", "быстрее", "черт", "сука", "бля", "вали", "заткнись", "отвечай", "пять секунд", "секунд", "быстро", "стой", "паника"]
+                    let openingAggressiveWords = [
+                        "ай", "убью", "стреляй", "быстрее", "черт", "сука", "бля", "вали", "заткнись",
+                        "отвечай", "пять секунд", "секунд", "быстро", "стой", "паника", "кто?", "что?",
+                        "кто", "прошу", "не нужно", "нет!"
+                    ]
                     for ow in openingAggressiveWords {
                         if firstText.contains(ow) {
-                            panicPenalty += 80.0 // Сильный штраф, если сцена сразу начинается с вопля, допроса или паники
+                            panicPenalty += 50_000.0 // Полная дисквалификация кандидата с агрессивного крика/допроса
                         }
                     }
+                    // Восклицательный знак в открывающей фразе (крик/приказ) недопустим для интро
                     if candidates[i].text.contains("!") {
-                        panicPenalty += 35.0
+                        panicPenalty += 20_000.0
+                    }
+                    // Короткий резкий вопрос (< 4 слов с "?") — это перепалка/допрос («Кто?», «Что?»), отсекаем
+                    let tokens = firstText.components(separatedBy: CharacterSet.whitespacesAndNewlines).filter { !$0.isEmpty }
+                    if candidates[i].text.contains("?") && tokens.count < 4 {
+                        panicPenalty += 20_000.0
                     }
 
-                    let introReflectiveKeywords = ["я", "мне", "меня", "жизнь", "время", "вещь", "правило", "игра", "понял", "усвоил", "знаю", "думал", "всегда", "мир", "человек", "выбор"]
+                    let introReflectiveKeywords = [
+                        "я", "мне", "меня", "жизнь", "время", "вещь", "правило", "игра", "понял",
+                        "усвоил", "знаю", "думал", "всегда", "мир", "человек", "выбор", "победитель",
+                        "поражение", "смерть", "страх"
+                    ]
                     for rkw in introReflectiveKeywords {
                         if lowerText.contains(rkw) {
-                            calmIntroBonus += 4.0
+                            calmIntroBonus += 15.0
                         }
                     }
 
-                    let aggressivePanicWords = ["ай", "убью", "стреляй", "быстрее", "черт", "сука", "бля", "вали", "заткнись", "отвечай", "пять секунд", "быстро", "стой", "паника", "помогите"]
+                    let aggressivePanicWords = [
+                        "ай", "убью", "стреляй", "быстрее", "черт", "сука", "бля", "вали", "заткнись",
+                        "отвечай", "пять секунд", "быстро", "стой", "паника", "помогите"
+                    ]
                     for pw in aggressivePanicWords {
                         if lowerText.contains(pw) {
-                            panicPenalty += 25.0
+                            panicPenalty += 200.0
                         }
                     }
 
                     let exclamationCount = seg.text.filter { $0 == "!" }.count
                     if exclamationCount >= 1 {
-                        panicPenalty += Double(exclamationCount) * 12.0
+                        panicPenalty += Double(exclamationCount) * 50.0
                     }
                 }
 
@@ -269,10 +288,10 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
 
             // Захватываем завершение предложения (знак препинания или пауза), чтобы не обрубать слова
             var lookahead = j
-            while lookahead < candidates.count && (candidates[lookahead].end - candidates[i].start) < (targetDuration * 1.35) {
+            while lookahead < candidates.count && (candidates[lookahead].end - candidates[i].start) < (targetDuration * 1.75) {
                 if lookahead > i {
                     let sceneGap = candidates[lookahead].start - candidates[lookahead - 1].end
-                    if sceneGap > 5.5 {
+                    if sceneGap > maxSceneGap {
                         break
                     }
                 }
@@ -288,7 +307,26 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             j = lookahead
             currDur = candidates[j - 1].end - candidates[i].start
 
-            guard currDur >= min(20.0, targetDuration * 0.40) else { continue }
+            // Оценка завершенности мысли финальной сцены (Акт IV / Катарсис)
+            let concludingText = candidates[j - 1].text
+            let thoughtEval = ThoughtCompletionScorer.evaluateConcludingPhrase(
+                concludingText,
+                isFinaleAct: actType == .catharsis
+            )
+
+            // Если это финал (Акт IV), кандидат ОБЯЗАН быть законченной мыслью
+            if actType == .catharsis && !thoughtEval.isCompleteThought {
+                continue
+            }
+
+            let minAllowedDur: Double
+            if actType == .catharsis {
+                // Если фраза несет высший катарсис, допускаем лаконичный афоризм от 5.0с
+                minAllowedDur = thoughtEval.isCompleteThought ? 5.0 : min(20.0, targetDuration * 0.40)
+            } else {
+                minAllowedDur = min(20.0, targetDuration * 0.40)
+            }
+            guard currDur >= minAllowedDur else { continue }
 
             let candidateRange = TimeSegment(start: candidates[i].start, end: candidates[j - 1].end)
             if overlapsAny(range: candidateRange, in: usedRanges) {
@@ -313,12 +351,6 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                 densityScore = (speechDensity >= 1.0 ? 12.0 : -6.0)
             }
 
-            // Оценка завершенности мысли финальной сцены (Акт IV / Катарсис)
-            let concludingText = candidates[j - 1].text
-            let thoughtEval = ThoughtCompletionScorer.evaluateConcludingPhrase(
-                concludingText,
-                isFinaleAct: actType == .catharsis
-            )
             let catharsisCompletionScore = (actType == .catharsis) ? thoughtEval.scoreModifier : 0.0
 
             // Итоговый скор: максимальный вес отдается репликам по выбранной теме
@@ -339,6 +371,11 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             }
         }
 
+        guard bestStartIdx >= 0 else {
+            let start = max(window.lowerBound, minStartTime)
+            return [TimeSegment(start: start, end: start + targetDuration)]
+        }
+
         let slice = candidates[bestStartIdx..<(min(bestStartIdx + max(bestLength, 1), candidates.count))]
         guard let first = slice.first, let last = slice.last else {
             return [TimeSegment(start: window.lowerBound, end: window.lowerBound + targetDuration)]
@@ -346,25 +383,28 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
 
         let rawRange = TimeSegment(start: first.start, end: max(last.end, first.start + 15.0))
         let isAct1 = (actType == .hook)
-        let headPadding: Double = isAct1 ? 2.0 : 0.25
-        let tailPadding: Double = (actType == .catharsis) ? 1.2 : 0.45
+        let isAct4 = (actType == .catharsis)
+        let headPadding: Double = isAct1 ? 3.0 : (isAct4 ? 2.5 : 0.35)
+        let tailPadding: Double = isAct4 ? 4.5 : 0.6
+        let maxSceneDuration = targetDuration * 1.75
+
         let detector = SentenceBoundaryDetector(
             headPadding: headPadding,
             tailPadding: tailPadding,
-            minSegmentDuration: 15.0,
-            maxShortsDuration: targetDuration * 1.35
+            minSegmentDuration: isAct4 ? 5.0 : 15.0,
+            maxShortsDuration: maxSceneDuration
         )
 
         var refined = detector.refineSceneBoundary(
             range: rawRange,
-            maxAllowedDuration: targetDuration * 1.35,
+            maxAllowedDuration: maxSceneDuration,
             in: allSegments
         )
 
-        // Для финального катарсиса (Акт 4) добавляем 3.5с атмосферного видеоряда
+        // Для финального катарсиса (Акт 4) добавляем 4.5с атмосферного видеоряда
         // после завершения речи для кинематографического затухания в темноту
         if actType == .catharsis {
-            refined = TimeSegment(start: refined.start, end: refined.end + 3.5)
+            refined = TimeSegment(start: refined.start, end: refined.end + 4.5)
         }
 
         return [refined]

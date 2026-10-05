@@ -133,25 +133,25 @@ struct SentenceBoundaryTests {
         // Open conjunction
         let openConj = ThoughtCompletionScorer.evaluateConcludingPhrase("Его лучшая разводка заключалась в том, что...")
         #expect(!openConj.isCompleteThought)
-        #expect(openConj.scoreModifier <= -500.0)
+        #expect(openConj.scoreModifier <= -100_000.0)
 
         // Panic shout
         let panicShout = ThoughtCompletionScorer.evaluateConcludingPhrase("Дела плохие! Барабаны бьют!")
         #expect(!panicShout.isCompleteThought)
-        #expect(panicShout.scoreModifier <= -200.0)
+        #expect(panicShout.scoreModifier <= -100_000.0)
 
         // Question
         let question = ThoughtCompletionScorer.evaluateConcludingPhrase("И что они бьют?")
         #expect(!question.isCompleteThought)
-        #expect(question.scoreModifier <= -300.0)
+        #expect(question.scoreModifier <= -100_000.0)
 
         // Closed philosophical resolution
         let resolution = ThoughtCompletionScorer.evaluateConcludingPhrase("Он заставил тебя поверить, что он — это ты.")
         #expect(resolution.isCompleteThought)
-        #expect(resolution.scoreModifier >= 300.0)
+        #expect(resolution.scoreModifier >= 400.0)
     }
 
-    @Test("Act 4 selects complete philosophical catharsis over preceding shouting scene and applies 3.5s post-roll")
+    @Test("Act 4 selects complete philosophical catharsis over preceding shouting scene and applies 4.5s post-roll")
     func testAct4CatharsisSelection() async throws {
         let transcript = Transcript(
             segments: [
@@ -191,7 +191,70 @@ struct SentenceBoundaryTests {
 
         // Must pick the philosophical resolution monologue (~3500s), NOT the shouting scene (~3100s)
         #expect(finalSeg.start >= 3400.0)
-        // Must include at least 3.5s post-roll after 3540s speech (end >= 3543.5)
-        #expect(finalSeg.end >= 3543.0)
+        // Must include at least 4.5s post-roll after 3540s speech (end >= 3544.5)
+        #expect(finalSeg.end >= 3544.0)
+    }
+
+    @Test("Revolver case: Act 1 rejects interrogation shouting and starts with calm defeat monologue, Act 4 selects concise catharsis over Bojsya menya")
+    func testRevolverInterrogationVsCalmMonologueAndConciseCatharsis() async throws {
+        let transcript = Transcript(
+            segments: [
+                // 1. Interrogation scene before monologue (1118s - 1133s)
+                TranscriptSegment(start: 1118.0, end: 1119.5, text: "Отвечай! О чем вы, я не понимаю!", words: []),
+                TranscriptSegment(start: 1122.4, end: 1125.2, text: "У тебя пять секунд. Пять.", words: []),
+                TranscriptSegment(start: 1128.3, end: 1133.0, text: "Четыре. Прошу, не нужно. Нет!", words: []),
+                
+                // 2. Calm defeat monologue (1136.5s - 1165s) -> 3.5s pause after interrogation
+                TranscriptSegment(start: 1136.5, end: 1143.5, text: "Какой победитель думает о поражении? Но когда сталкиваешься с тем, с чем столкнулся я,", words: []),
+                TranscriptSegment(start: 1144.7, end: 1151.3, text: "новая беспощадная реальность заставляет понять простой факт, который все мы стараемся игнорировать.", words: []),
+                TranscriptSegment(start: 1153.0, end: 1164.8, text: "Победить невозможно. Единственная гарантия в этой игре — гарантия проигрыша.", words: []),
+
+                // 3. Middle acts
+                TranscriptSegment(start: 2400.0, end: 2460.0, text: "Мы должны бороться и выстоять против всех правил.", words: []),
+                TranscriptSegment(start: 3800.0, end: 3860.0, text: "Каждый шаг вперед приближает неизбежный слом.", words: []),
+
+                // 4. Shouting scene near end (5485s - 5498s)
+                TranscriptSegment(start: 5485.0, end: 5490.0, text: "Это он играл с нами! И с вами тоже!", words: []),
+                TranscriptSegment(start: 5491.0, end: 5498.2, text: "Бойся меня! Бойся меня! Заткнись!", words: []),
+
+                // 5. True concise catharsis monologue (6656s - 6663s, 6.6s long)
+                TranscriptSegment(start: 6656.6, end: 6660.9, text: "Его лучшая разводка заключалась в том, что он заставил тебя поверить,", words: []),
+                TranscriptSegment(start: 6661.6, end: 6663.2, text: "что он — это ты.", words: [])
+            ],
+            language: "ru"
+        )
+
+        let concept = ThematicConcept(
+            word: "Иллюзия",
+            tagline: "Твой главный враг — это ложь, которую ты сам себе рассказываешь",
+            philosophicalPremise: "Иллюзия контроля над хаосом — смертельная ловушка",
+            suggestedTitle: "Ты сам себя обманываешь. Философия ловушки из «Револьвера»",
+            accentColorHex: "#F5D020"
+        )
+
+        let director = LongformNarrativeDirector()
+        let arc = try await director.buildArc(
+            from: transcript,
+            concept: concept,
+            movieTitle: "Револьвер",
+            targetDuration: 360.0
+        )
+
+        // Act 1 check: must NOT start with "Отвечай" or "У тебя пять секунд"
+        let act1 = arc.acts[0]
+        guard let act1Seg = act1.segments.first else {
+            Issue.record("Act 1 has no segments")
+            return
+        }
+        #expect(act1Seg.start >= 1130.0) // Must start on calm monologue (1136.5s with headPadding ~1133.5s), NOT at 1118s!
+
+        // Act 4 check: must NOT be "Бойся меня!" (~5490s), MUST be "разводка... что он — это ты" (~6656s)
+        let act4 = arc.acts[3]
+        guard let act4Seg = act4.segments.last else {
+            Issue.record("Act 4 has no segments")
+            return
+        }
+        #expect(act4Seg.start >= 6600.0)
+        #expect(act4Seg.end >= 6663.2 + 4.5)
     }
 }

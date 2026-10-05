@@ -31,7 +31,7 @@ public struct ThoughtCompletionScorer: Sendable {
 
     /// Философские маркеры катарсиса, глубокого вывода или монолога-откровения
     private static let philosophicalResolutionMarkers = [
-        "он — это ты", "он это ты", "разводка", "иллюзия", "ложь", "правда",
+        "он — это ты", "он это ты", "мы — это ты", "мы это ты", "разводка", "иллюзия", "ложь", "правда",
         "поверить", "правило", "игра", "победил", "выбор", "смысл", "жизнь",
         "человек", "всегда", "никогда", "понял", "усвоил", "свободен", "разум",
         "враг", "контроль", "победа", "судьба", "время", "покойник", "убить",
@@ -45,7 +45,7 @@ public struct ThoughtCompletionScorer: Sendable {
     ) -> Evaluation {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            return Evaluation(scoreModifier: -500.0, isCompleteThought: false, reason: "Пустой текст")
+            return Evaluation(scoreModifier: -100_000.0, isCompleteThought: false, reason: "Пустой текст")
         }
 
         let lower = trimmed.lowercased()
@@ -55,7 +55,7 @@ public struct ThoughtCompletionScorer: Sendable {
             .filter { !$0.isEmpty }
         if let lastWord = words.last, openConjunctions.contains(lastWord) {
             return Evaluation(
-                scoreModifier: -800.0,
+                scoreModifier: isFinaleAct ? -100_000.0 : -800.0,
                 isCompleteThought: false,
                 reason: "Предложение обрывается на союзе '\(lastWord)'"
             )
@@ -67,7 +67,7 @@ public struct ThoughtCompletionScorer: Sendable {
 
         if stripped.hasSuffix(",") || stripped.hasSuffix(";") || stripped.hasSuffix("—") || stripped.hasSuffix("-") {
             return Evaluation(
-                scoreModifier: -800.0,
+                scoreModifier: isFinaleAct ? -100_000.0 : -800.0,
                 isCompleteThought: false,
                 reason: "Предложение обрывается запятой или тире"
             )
@@ -76,17 +76,17 @@ public struct ThoughtCompletionScorer: Sendable {
         // 3. Вопросительный знак в качестве финала эссе (незакрытый диалог)
         if stripped.hasSuffix("?") {
             return Evaluation(
-                scoreModifier: -450.0,
+                scoreModifier: isFinaleAct ? -100_000.0 : -450.0,
                 isCompleteThought: false,
                 reason: "Финал не должен заканчиваться повисшим вопросом"
             )
         }
 
-        // 4. Панические крики и реплики бытовых перепалок (например «Дела плохие!», «Заткнись!»)
+        // 4. Панические крики и реплики бытовых перепалок (например «Дела плохие!», «Заткнись!», «Бойся меня!»)
         for pw in panicRetortKeywords {
             if lower.contains(pw) {
                 return Evaluation(
-                    scoreModifier: isFinaleAct ? -700.0 : -200.0,
+                    scoreModifier: isFinaleAct ? -100_000.0 : -200.0,
                     isCompleteThought: false,
                     reason: "Панический выкрик или незаконченная ссора ('\(pw)')"
                 )
@@ -97,28 +97,34 @@ public struct ThoughtCompletionScorer: Sendable {
         var resolutionBonus: Double = 0.0
         for marker in philosophicalResolutionMarkers {
             if lower.contains(marker) {
-                resolutionBonus += 150.0
+                resolutionBonus += 300.0
             }
         }
 
-        // Ограничиваем бонус разумным максимумом
-        resolutionBonus = min(resolutionBonus, 400.0)
+        // 6. Проверка на восклицания без философского контекста
+        if isFinaleAct && stripped.hasSuffix("!") && resolutionBonus == 0.0 {
+            return Evaluation(
+                scoreModifier: -50_000.0,
+                isCompleteThought: false,
+                reason: "Финал не должен завершаться случайным выкриком"
+            )
+        }
 
-        // Завершенная мысль с точкой или многоточием
+        // Завершенная мысль с точкой, многоточием или сильным катарсисом
         let hasTerminal = stripped.hasSuffix(".") || stripped.hasSuffix("...") || stripped.hasSuffix("…") || stripped.hasSuffix("!")
         if hasTerminal {
             if words.count >= 4 {
-                resolutionBonus += 100.0 // Развернутая фраза
+                resolutionBonus += 150.0 // Развернутая философская фраза
             }
             return Evaluation(
-                scoreModifier: resolutionBonus + 100.0,
+                scoreModifier: resolutionBonus + 200.0,
                 isCompleteThought: true,
-                reason: "Завершенная мысль с точкой"
+                reason: "Завершенная мысль"
             )
         }
 
         return Evaluation(
-            scoreModifier: -300.0,
+            scoreModifier: isFinaleAct ? -100_000.0 : -300.0,
             isCompleteThought: false,
             reason: "Нет закрывающего знака препинания"
         )

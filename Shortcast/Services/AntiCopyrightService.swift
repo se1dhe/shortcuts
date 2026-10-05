@@ -10,6 +10,7 @@ import os.log
 public enum AntiCopyrightPreset: String, CaseIterable, Identifiable, Codable, Sendable {
     case off = "off"
     case subtle = "subtle"
+    case cinemaShield = "cinemaShield"
     case tikTokShield = "tikTokShield"
     case moderate = "moderate"
     case aggressive = "aggressive"
@@ -21,7 +22,8 @@ public enum AntiCopyrightPreset: String, CaseIterable, Identifiable, Codable, Se
         switch self {
         case .off: return "Отключено"
         case .subtle: return "Мягкая (Subtle)"
-        case .tikTokShield: return "TikTok / Reels Shield (Рекомендуется)"
+        case .cinemaShield: return "YouTube Cinema Shield (Рекомендуется для фильмов)"
+        case .tikTokShield: return "TikTok / Reels Shield"
         case .moderate: return "Стандартная (Moderate)"
         case .aggressive: return "Максимальная (Aggressive)"
         case .custom: return "Пользовательская (Custom)"
@@ -32,10 +34,11 @@ public enum AntiCopyrightPreset: String, CaseIterable, Identifiable, Codable, Se
         switch self {
         case .off: return .off
         case .subtle: return .subtle
+        case .cinemaShield: return .cinemaShield
         case .tikTokShield: return .tikTokShield
         case .moderate: return .moderate
         case .aggressive: return .aggressive
-        case .custom: return .tikTokShield
+        case .custom: return .cinemaShield
         }
     }
 }
@@ -134,6 +137,22 @@ public struct AntiCopyrightConfig: Codable, Sendable, Equatable, Hashable {
         audioPitchShiftCents: 8.0,
         enableAudioWarmthEQ: true,
         driftIntensity: 0.2,
+        stripMetadata: true
+    )
+
+    /// YouTube Cinema Shield: Оптимизировано специально для 16:9 кино-эссе и длинных видео на YouTube.
+    /// Сохраняет оригинальную геометрию (без зеркалирования, чтобы не переворачивать текст и актёров),
+    /// применяет 3.5% микро-зум, 35мм кино-зерно, сдвиг питча (+12¢) и эквализацию, очищая метаданные.
+    public static let cinemaShield = AntiCopyrightConfig(
+        enableMirror: false,
+        zoomScale: 1.035,
+        contrastDelta: 0.04,
+        saturationDelta: 0.03,
+        filmGrainIntensity: 0.20,
+        audioSpeedMultiplier: 1.0,
+        audioPitchShiftCents: 12.0,
+        enableAudioWarmthEQ: true,
+        driftIntensity: 0.25,
         stripMetadata: true
     )
 
@@ -748,6 +767,7 @@ public struct AntiCopyrightService: AntiCopyrightTransforming, Sendable {
     // MARK: - Standard Instances
 
     public static let subtle = AntiCopyrightService(config: .subtle)
+    public static let cinemaShield = AntiCopyrightService(config: .cinemaShield)
     public static let tikTokShield = AntiCopyrightService(config: .tikTokShield)
     public static let moderate = AntiCopyrightService(config: .moderate)
     public static let aggressive = AntiCopyrightService(config: .aggressive)

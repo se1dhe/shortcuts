@@ -16,25 +16,83 @@ final class LongformAudioMasteringService: LongformAudioMasteringProtocol, Senda
         sceneCutPoints: [Double] = [],
         totalDuration: Double,
         baseMusicVolume: Float = 0.28,
-        duckingEnabled: Bool = true
+        duckingEnabled: Bool = true,
+        dialogueFocusEnabled: Bool = true,
+        originalMusicDucking: Float = 0.82
     ) -> AVAudioMix {
         let audioMix = AVMutableAudioMix()
 
         // 1. Параметры дорожки речи
         let speechParams = AVMutableAudioMixInputParameters(track: speechTrack)
-        // В первые 2.5 секунды (Cold Open) речь фильма заглушена, затем плавно включается к 2.5с
-        speechParams.setVolume(0.0, at: .zero)
-        speechParams.setVolumeRamp(
-            fromStartVolume: 0.0,
-            toEndVolume: 1.0,
-            timeRange: CMTimeRange(
-                start: CMTime(seconds: 2.2, preferredTimescale: 600),
-                duration: CMTime(seconds: 0.3, preferredTimescale: 600)
-            )
-        )
+        speechParams.audioTimePitchAlgorithm = .spectral
 
         let sortedSpeech = speechIntervals.sorted { $0.start < $1.start }
         let lastSpeechEnd = sortedSpeech.last?.end ?? max(0.0, totalDuration - 3.0)
+
+        // Подавление оригинальной музыки фильма в паузах между фразами (Dialogue Focus)
+        let duckedSpeechVolume: Float = max(0.05, 1.0 - originalMusicDucking)
+
+        // В первые 2.5 секунды (Cold Open) речь фильма заглушена
+        speechParams.setVolume(0.0, at: .zero)
+
+        if dialogueFocusEnabled && !sortedSpeech.isEmpty {
+            // Если первая реплика начинается не сразу, держим оригинальную дорожку фильма приглушенной
+            let firstSpeechStart = sortedSpeech.first?.start ?? 2.5
+            let initialTargetVolume = (firstSpeechStart <= 2.8) ? 1.0 : duckedSpeechVolume
+            speechParams.setVolumeRamp(
+                fromStartVolume: 0.0,
+                toEndVolume: Float(initialTargetVolume),
+                timeRange: CMTimeRange(
+                    start: CMTime(seconds: 2.2, preferredTimescale: 600),
+                    duration: CMTime(seconds: 0.3, preferredTimescale: 600)
+                )
+            )
+
+            // Динамическое приглушение оригинальной музыки фильма в паузах между фразами
+            for (idx, interval) in sortedSpeech.enumerated() {
+                // Подъем до 100% громкости прямо перед началом реплики (lead-in 0.18с)
+                let rampUpStart = max(2.5, interval.start - 0.18)
+                let rampUpDur = min(0.15, interval.start - rampUpStart)
+                if rampUpDur > 0.02 && rampUpStart > 2.5 {
+                    speechParams.setVolumeRamp(
+                        fromStartVolume: duckedSpeechVolume,
+                        toEndVolume: 1.0,
+                        timeRange: CMTimeRange(
+                            start: CMTime(seconds: rampUpStart, preferredTimescale: 600),
+                            duration: CMTime(seconds: rampUpDur, preferredTimescale: 600)
+                        )
+                    )
+                }
+
+                // Спад до приглушенного уровня после реплики, если до следующей фразы есть пауза > 0.7с
+                let nextStart = (idx + 1 < sortedSpeech.count) ? sortedSpeech[idx + 1].start : totalDuration
+                let pause = nextStart - interval.end
+                if pause > 0.7 && interval.end < lastSpeechEnd {
+                    let rampDownStart = interval.end + 0.15
+                    let rampDownDur: Double = 0.22
+                    if (rampDownStart + rampDownDur) < (nextStart - 0.18) {
+                        speechParams.setVolumeRamp(
+                            fromStartVolume: 1.0,
+                            toEndVolume: duckedSpeechVolume,
+                            timeRange: CMTimeRange(
+                                start: CMTime(seconds: rampDownStart, preferredTimescale: 600),
+                                duration: CMTime(seconds: rampDownDur, preferredTimescale: 600)
+                            )
+                        )
+                    }
+                }
+            }
+        } else {
+            // Классический режим: подъем до 100% громкости к 2.5с
+            speechParams.setVolumeRamp(
+                fromStartVolume: 0.0,
+                toEndVolume: 1.0,
+                timeRange: CMTimeRange(
+                    start: CMTime(seconds: 2.2, preferredTimescale: 600),
+                    duration: CMTime(seconds: 0.3, preferredTimescale: 600)
+                )
+            )
+        }
 
         // Микро-кроссфейды на склейках сцен (de-click / устранение щелчков и перепадов шума)
         var lastSpeechRampEnd: Double = 2.5
@@ -47,7 +105,6 @@ final class LongformAudioMasteringService: LongformAudioMasteringProtocol, Senda
             let cutFadeInEnd = cut + fadeDuration
             guard cutFadeInEnd < lastSpeechEnd else { continue }
 
-            // Плавный спад громкости за 40 мс до склейки
             speechParams.setVolumeRamp(
                 fromStartVolume: 1.0,
                 toEndVolume: 0.0,
@@ -57,7 +114,6 @@ final class LongformAudioMasteringService: LongformAudioMasteringProtocol, Senda
                 )
             )
 
-            // Плавное нарастание громкости за 40 мс после склейки
             speechParams.setVolumeRamp(
                 fromStartVolume: 0.0,
                 toEndVolume: 1.0,

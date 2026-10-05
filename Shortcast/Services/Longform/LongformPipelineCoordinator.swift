@@ -1,9 +1,12 @@
 import AVFoundation
 import CoreMedia
 import Foundation
+import OSLog
 
 /// Реализация координатора сборки длинных видео Shortcast Cinema (SOLID)
 final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable {
+
+    private static let logger = Logger(subsystem: "app.shortcast", category: "LongformPipelineCoordinator")
 
     private let director: any LongformNarrativeDirecting
     private let audioMastering: any LongformAudioMasteringProtocol
@@ -170,7 +173,9 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
                     sceneCutPoints: sceneCutPoints,
                     totalDuration: totalDuration,
                     baseMusicVolume: audioSettings.musicVolume,
-                    duckingEnabled: audioSettings.duckingEnabled
+                    duckingEnabled: audioSettings.duckingEnabled,
+                    dialogueFocusEnabled: audioSettings.dialogueFocusEnabled,
+                    originalMusicDucking: audioSettings.originalMusicDucking
                 )
             }
         }
@@ -350,13 +355,18 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             exportDir = FileManager.default.temporaryDirectory.appendingPathComponent("LongformExports", isDirectory: true)
         }
         try? FileManager.default.createDirectory(at: exportDir, withIntermediateDirectories: true)
-        let outputURL = exportDir.appendingPathComponent("longform_\(concept.word.lowercased())_\(UUID().uuidString.prefix(6)).mp4")
+
+        let isAntiCopyrightActive = audioSettings.antiCopyrightEnabled && audioSettings.antiCopyrightPreset != .off
+        let cleanOutputURL = exportDir.appendingPathComponent("longform_\(concept.word.lowercased())_\(UUID().uuidString.prefix(6)).mp4")
+        let intermediateURL = isAntiCopyrightActive
+            ? exportDir.appendingPathComponent("raw_render_\(concept.word.lowercased())_\(UUID().uuidString.prefix(6)).mp4")
+            : cleanOutputURL
 
         guard let exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPreset1920x1080) else {
             throw NSError(domain: "LongformPipeline", code: -4, userInfo: [NSLocalizedDescriptionKey: "Не удалось создать AVAssetExportSession."])
         }
 
-        exportSession.outputURL = outputURL
+        exportSession.outputURL = intermediateURL
         exportSession.outputFileType = .mp4
         exportSession.videoComposition = videoComposition
         if let audioMix {
@@ -368,6 +378,26 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         if exportSession.status != .completed {
             let errorMsg = exportSession.error?.localizedDescription ?? "Неизвестная ошибка экспорта"
             throw NSError(domain: "LongformPipeline", code: -5, userInfo: [NSLocalizedDescriptionKey: "Экспорт не удался: \(errorMsg)"])
+        }
+
+        var finalVideoURL = cleanOutputURL
+        if isAntiCopyrightActive {
+            progressHandler?(0.90, "Применение защиты YouTube Shield (Anti-Copyright)...")
+            let antiCopyrightService = AntiCopyrightService(config: audioSettings.antiCopyrightPreset.config)
+            do {
+                let protectedURL = try await antiCopyrightService.process(
+                    videoURL: intermediateURL,
+                    outputURL: cleanOutputURL,
+                    workingDirectory: workingDirectory
+                )
+                finalVideoURL = protectedURL
+                if protectedURL != intermediateURL {
+                    try? FileManager.default.removeItem(at: intermediateURL)
+                }
+            } catch {
+                Self.logger.warning("AntiCopyright pass failed, fallback to raw render: \(error.localizedDescription)")
+                finalVideoURL = intermediateURL
+            }
         }
 
         // 6. Генерация кинематографической обложки YouTube Thumbnail (1920x1080)
@@ -392,7 +422,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         progressHandler?(1.0, "Готово!")
 
         return LongformBuildResult(
-            outputURL: outputURL,
+            outputURL: finalVideoURL,
             arc: arc,
             metadata: metadata,
             duration: totalDuration,

@@ -28,6 +28,10 @@ struct ThematicConceptSelectionSheet: View {
     @State private var ambientVolume: Double = 0.18
     @State private var previewController = AudioPreviewController()
 
+    // Антикопирайт и защита от YouTube Content ID
+    @State private var antiCopyrightEnabled: Bool = true
+    @State private var antiCopyrightPreset: AntiCopyrightPreset = .cinemaShield
+
     private let musicPresets: [(name: String, fileName: String)] = [
         ("prrodan: Foggy Night (Главная тема)", "Prrodan_Foggy_Night.m4a"),
         ("prrodan: Тёмная атмосфера (Dark Atmosphere)", "Prrodan_Dark_Atmosphere.m4a"),
@@ -577,6 +581,36 @@ struct ThematicConceptSelectionSheet: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.06)))
+
+                // 3. Защита от YouTube Content ID (YouTube Shield)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Toggle("Защита YouTube Shield (Anti-Copyright)", isOn: $antiCopyrightEnabled)
+                            .font(.subheadline.weight(.semibold))
+                            .toggleStyle(.switch)
+
+                        Spacer()
+
+                        if antiCopyrightEnabled {
+                            Picker("Пресет:", selection: $antiCopyrightPreset) {
+                                ForEach(AntiCopyrightPreset.allCases) { preset in
+                                    Text(preset.displayName).tag(preset)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .frame(maxWidth: 340)
+                        }
+                    }
+
+                    if antiCopyrightEnabled {
+                        Text("3.5% микро-зум, 35мм кинозерно, акустический сдвиг питча (+12¢) и очистка метаданных для защиты от Content ID и страйков.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.06)))
             }
             .padding(10)
             .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.05)))
@@ -605,7 +639,9 @@ struct ThematicConceptSelectionSheet: View {
                             duckingEnabled: duckingEnabled,
                             dialogueFocusEnabled: dialogueFocusEnabled,
                             originalMusicDucking: Float(originalMusicDucking),
-                            coldOpenEnabled: coldOpenEnabled
+                            coldOpenEnabled: coldOpenEnabled,
+                            antiCopyrightEnabled: antiCopyrightEnabled,
+                            antiCopyrightPreset: antiCopyrightPreset
                         )
                         onSelect(chosen, finalTitle, audioSettings)
                     }

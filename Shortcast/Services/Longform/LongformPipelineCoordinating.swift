@@ -23,7 +23,7 @@ struct LongformBuildResult: Sendable {
     }
 }
 
-/// Настройки аудиомастеринга и звукорежиссуры для длинного кино-эссе Shortcast Cinema
+/// Настройки аудиомастеринга, звукорежиссуры и защиты от Content ID для кино-эссе Shortcast Cinema
 struct LongformAudioSettings: Sendable, Equatable {
     var backgroundMusicURL: URL? = nil
     var musicVolume: Float = 0.18
@@ -31,6 +31,8 @@ struct LongformAudioSettings: Sendable, Equatable {
     var dialogueFocusEnabled: Bool = true
     var originalMusicDucking: Float = 0.82
     var coldOpenEnabled: Bool = true
+    var antiCopyrightEnabled: Bool = true
+    var antiCopyrightPreset: AntiCopyrightPreset = .cinemaShield
 
     init(
         backgroundMusicURL: URL? = nil,
@@ -38,7 +40,9 @@ struct LongformAudioSettings: Sendable, Equatable {
         duckingEnabled: Bool = true,
         dialogueFocusEnabled: Bool = true,
         originalMusicDucking: Float = 0.82,
-        coldOpenEnabled: Bool = true
+        coldOpenEnabled: Bool = true,
+        antiCopyrightEnabled: Bool = true,
+        antiCopyrightPreset: AntiCopyrightPreset = .cinemaShield
     ) {
         self.backgroundMusicURL = backgroundMusicURL
         self.musicVolume = musicVolume
@@ -46,6 +50,8 @@ struct LongformAudioSettings: Sendable, Equatable {
         self.dialogueFocusEnabled = dialogueFocusEnabled
         self.originalMusicDucking = originalMusicDucking
         self.coldOpenEnabled = coldOpenEnabled
+        self.antiCopyrightEnabled = antiCopyrightEnabled
+        self.antiCopyrightPreset = antiCopyrightPreset
     }
 }
 

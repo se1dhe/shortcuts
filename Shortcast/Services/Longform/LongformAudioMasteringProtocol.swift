@@ -2,7 +2,7 @@ import AVFoundation
 
 /// Протокол сведения непрерывного саундтрека и диалогов для длинного видео
 protocol LongformAudioMasteringProtocol: Sendable {
-    /// Формирует аудио-микс с динамическим сайдчейн-дакингом, кульминационным крещендо, микро-кроссфейдами на склейках и финальным затуханием в тишину (2.5с)
+    /// Формирует аудио-микс с динамическим сайдчейн-дакингом, подавлением оригинальной музыки фильма в паузах, кульминационным крещендо, микро-кроссфейдами на склейках и финальным затуханием в тишину (2.5с)
     func buildAudioMixParameters(
         composition: AVComposition,
         musicTrack: AVCompositionTrack,
@@ -11,7 +11,9 @@ protocol LongformAudioMasteringProtocol: Sendable {
         sceneCutPoints: [Double],
         totalDuration: Double,
         baseMusicVolume: Float,
-        duckingEnabled: Bool
+        duckingEnabled: Bool,
+        dialogueFocusEnabled: Bool,
+        originalMusicDucking: Float
     ) -> AVAudioMix
 }
 
@@ -34,7 +36,9 @@ extension LongformAudioMasteringProtocol {
             sceneCutPoints: sceneCutPoints,
             totalDuration: totalDuration,
             baseMusicVolume: baseMusicVolume,
-            duckingEnabled: duckingEnabled
+            duckingEnabled: duckingEnabled,
+            dialogueFocusEnabled: true,
+            originalMusicDucking: 0.82
         )
     }
 }

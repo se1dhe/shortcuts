@@ -237,6 +237,7 @@ struct AntiCopyrightEditor: View {
 
     private var statusBadgeText: String {
         switch clip.antiCopyrightPreset {
+        case .cinemaShield: return "YouTube Cinema Shield"
         case .tikTokShield: return "TikTok Shield: активен"
         case .subtle: return "Мягкая защита"
         case .moderate: return "Стандартная защита"

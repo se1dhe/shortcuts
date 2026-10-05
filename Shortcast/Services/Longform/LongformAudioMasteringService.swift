@@ -31,7 +31,7 @@ final class LongformAudioMasteringService: LongformAudioMasteringProtocol, Senda
         let lastSpeechEnd = sortedSpeech.last?.end ?? max(0.0, totalDuration - 3.0)
 
         // Подавление оригинальной музыки фильма в паузах между фразами (Dialogue Focus)
-        let duckedSpeechVolume: Float = max(0.05, 1.0 - originalMusicDucking)
+        let duckedSpeechVolume: Float = max(0.0, 1.0 - originalMusicDucking)
 
         // В первые 2.5 секунды (Cold Open) речь фильма заглушена
         speechParams.setVolume(0.0, at: .zero)

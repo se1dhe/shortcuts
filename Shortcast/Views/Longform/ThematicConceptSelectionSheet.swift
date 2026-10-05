@@ -476,12 +476,12 @@ struct ThematicConceptSelectionSheet: View {
                             Text("Подавление музыки:")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Slider(value: $originalMusicDucking, in: 0.40...0.95, step: 0.05)
+                            Slider(value: $originalMusicDucking, in: 0.40...1.00, step: 0.05)
                                 .frame(width: 85)
-                            Text("-\(Int(originalMusicDucking * 100))%")
+                            Text("-\(Int(round(originalMusicDucking * 100)))%")
                                 .font(.caption.monospacedDigit().weight(.bold))
                                 .foregroundStyle(.yellow)
-                                .frame(width: 44, alignment: .trailing)
+                                .frame(width: 50, alignment: .trailing)
                         }
                         .help("Уровень приглушения фоновой музыки и шумов оригинального фильма (по умолчанию -82%)")
                     }

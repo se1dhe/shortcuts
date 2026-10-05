@@ -648,7 +648,7 @@ struct ThematicConceptSelectionSheet: View {
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "film.fill")
-                        Text("Смонтировать кино-эссе (5–8 мин)")
+                        Text("Смонтировать кино-эссе (7–10 мин)")
                     }
                     .font(.headline)
                     .padding(.horizontal, 16)

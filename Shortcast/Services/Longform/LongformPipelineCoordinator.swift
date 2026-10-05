@@ -44,7 +44,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             from: transcript,
             concept: concept,
             movieTitle: movieTitle,
-            targetDuration: 380.0
+            targetDuration: 520.0
         )
 
         let segments = arc.segments

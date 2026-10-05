@@ -11,15 +11,15 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
     ) -> String {
         """
         Ты — главный режиссер монтажа глубоких кинематографических эссе Shortcast Cinema.
-        Твоя задача — из полного фильма "\(movieTitle)" смонтировать 4-актный ролик хронометражем \(Int(targetDuration)) секунд (5-8 минут) вокруг темы: "\(concept.word)".
+        Твоя задача — из полного фильма "\(movieTitle)" смонтировать 4-актный ролик хронометражем \(Int(targetDuration)) секунд (7-10 минут) вокруг темы: "\(concept.word)".
         
         Смысловой посыл: "\(concept.philosophicalPremise)"
 
         СТРОГАЯ 4-АКТНАЯ СТРУКТУРА:
-        1. Акт 1: "Хук и Тезис" (~40-50с). Сильнейший диалог или монолог, задающий главный конфликт.
-        2. Акт 2: "Падение и Испытание" (~110-140с). Разрушение стабильности, потеря, кризис, сомнения героя.
-        3. Акт 3: "Борьба и Упорство" (~120-150с). Пик напряжения, борьба вопреки всему, способность терпеть боль.
-        4. Акт 4: "Катарсис и Прорыв" (~70-100с). Финальное откровение, триумф духа или пронзительное экзистенциальное одиночество.
+        1. Акт 1: "Хук и Тезис" (~50-70с). Сильнейший диалог или монолог, задающий главный конфликт.
+        2. Акт 2: "Падение и Испытание" (~150-180с). Разрушение стабильности, потеря, кризис, сомнения героя.
+        3. Акт 3: "Борьба и Упорство" (~160-190с). Пик напряжения, борьба вопреки всему, способность терпеть боль.
+        4. Акт 4: "Катарсис и Прорыв" (~90-120с). Финальное откровение, триумф духа или пронзительное экзистенциальное одиночество.
         """
     }
 
@@ -27,7 +27,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         from transcript: Transcript,
         concept: ThematicConcept,
         movieTitle: String,
-        targetDuration: Double = 380.0
+        targetDuration: Double = 520.0
     ) async throws -> LongformNarrativeArc {
         let clampedTarget = min(max(targetDuration, 300.0), 600.0)
         let segments = transcript.segments
@@ -165,7 +165,8 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         usedRanges: [TimeSegment] = [],
         targetDuration: Double,
         concept: ThematicConcept,
-        actType: LongformActType
+        actType: LongformActType,
+        allowChaining: Bool = true
     ) -> [TimeSegment] {
         let candidates = allSegments.filter {
             $0.start >= max(window.lowerBound, minStartTime) && $0.start <= window.upperBound
@@ -193,7 +194,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             var calmIntroBonus = 0.0
             var panicPenalty = 0.0
 
-            let maxSceneGap: Double = (actType == .hook) ? 2.2 : 2.5
+            let maxSceneGap: Double = (actType == .hook) ? 3.4 : 4.5
 
             while j < candidates.count && currDur < targetDuration {
                 let seg = candidates[j]
@@ -436,7 +437,37 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             in: allSegments
         )
 
-        return [refined]
+        var resultSegments = [refined]
+
+        // Для Актов 2 и 3: если главная сцена короче 65% от целевого хронометража (например, 70с из 170с),
+        // дополняем ее второй смысловой сценой из того же окна сюжета без наложения для выхода на хронометраж 7-10 минут
+        if allowChaining && (actType == .downfall || actType == .struggle) && refined.duration < (targetDuration * 0.65) {
+            let remainingBudget = targetDuration - refined.duration
+            let secondaryMinStartTime = refined.end + 6.0
+            var extendedUsed = usedRanges
+            extendedUsed.append(refined)
+
+            let secondaryCandidates = allSegments.filter {
+                $0.start >= max(window.lowerBound, secondaryMinStartTime) && $0.start <= window.upperBound
+            }
+            if !secondaryCandidates.isEmpty {
+                let secondarySegments = selectCohesiveSegments(
+                    from: allSegments,
+                    in: window,
+                    minStartTime: secondaryMinStartTime,
+                    usedRanges: extendedUsed,
+                    targetDuration: remainingBudget,
+                    concept: concept,
+                    actType: actType,
+                    allowChaining: false
+                )
+                if let secFirst = secondarySegments.first, secFirst.duration >= 18.0 {
+                    resultSegments.append(secFirst)
+                }
+            }
+        }
+
+        return resultSegments
     }
 
     /// Публичный метод для юнит-тестирования и внешнего выравнивания границ сцен

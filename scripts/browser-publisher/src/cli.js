@@ -43,6 +43,7 @@ async function main() {
 
       jobData = {
         videoPath: getArg('--video'),
+        thumbnailPath: getArg('--thumbnail'),
         platforms: (getArg('--platforms') || 'tiktok,instagram,youtube').split(',').map((s) => s.trim().toLowerCase()),
         title: getArg('--title') || 'Shorts',
         caption: getArg('--caption') || '',
@@ -65,7 +66,8 @@ async function main() {
       const content = (jobData.platformContent && jobData.platformContent[platform]) || {
         title: jobData.title,
         caption: jobData.caption,
-        hashtags: jobData.hashtags
+        hashtags: jobData.hashtags,
+        thumbnailPath: jobData.thumbnailPath,
       };
 
       try {
@@ -87,6 +89,7 @@ async function main() {
         } else if (platform === 'youtube') {
           await uploadToYouTube(page, {
             videoPath: jobData.videoPath,
+            thumbnailPath: content.thumbnailPath || jobData.thumbnailPath,
             title: content.title || jobData.title,
             caption: content.caption,
             hashtags: content.hashtags,

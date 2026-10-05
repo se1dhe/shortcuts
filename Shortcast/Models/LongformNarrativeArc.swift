@@ -35,7 +35,7 @@ struct LongformAct: Codable, Identifiable, Equatable, Sendable {
     }
 }
 
-/// 4-актная сквозная арка для длинного видео (хронометраж 300–480 сек)
+/// 4-актная сквозная арка для длинного видео (хронометраж 420–600 сек / 7–10 мин)
 struct LongformNarrativeArc: Codable, Identifiable, Equatable, Sendable {
     var id: String
     var movieTitle: String

@@ -103,6 +103,26 @@ struct LongformYouTubePublishSheet: View {
                                 .textFieldStyle(.roundedBorder)
                         }
 
+                        if let thumbURL = result.thumbnailURL, let nsImage = NSImage(contentsOf: thumbURL) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("Обложка для YouTube Studio (1920×1080)")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Label("Готова к загрузке", systemImage: "checkmark.circle.fill")
+                                        .font(.caption2)
+                                        .foregroundStyle(.green)
+                                }
+                                Image(nsImage: nsImage)
+                                    .resizable()
+                                    .aspectRatio(16/9, contentMode: .fit)
+                                    .frame(maxHeight: 140)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                            }
+                        }
+
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Описание (с таймкодами и цитатами)")
                                 .font(.caption.weight(.semibold))
@@ -243,6 +263,7 @@ struct LongformYouTubePublishSheet: View {
 
         let job = BrowserUploadJob(
             videoURL: result.outputURL,
+            thumbnailURL: result.thumbnailURL,
             platforms: [.youtube],
             title: editedTitle,
             caption: editedDescription,

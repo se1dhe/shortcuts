@@ -5,11 +5,25 @@ struct PlatformUploadContent: Sendable, Codable, Equatable {
     var title: String?
     var caption: String
     var hashtags: [String]
+    var thumbnailPath: String?
+
+    init(
+        title: String? = nil,
+        caption: String,
+        hashtags: [String] = [],
+        thumbnailPath: String? = nil
+    ) {
+        self.title = title
+        self.caption = caption
+        self.hashtags = hashtags
+        self.thumbnailPath = thumbnailPath
+    }
 }
 
 /// Defines a browser automation upload task across platforms.
 struct BrowserUploadJob: Sendable, Codable, Equatable {
     var videoPath: String
+    var thumbnailPath: String?
     var platforms: [String]
     var platformContent: [String: PlatformUploadContent]?
     var title: String
@@ -20,6 +34,7 @@ struct BrowserUploadJob: Sendable, Codable, Equatable {
 
     init(
         videoURL: URL,
+        thumbnailURL: URL? = nil,
         platforms: Set<SocialPlatform>,
         platformContent: [String: PlatformUploadContent]? = nil,
         title: String,
@@ -29,6 +44,7 @@ struct BrowserUploadJob: Sendable, Codable, Equatable {
         headless: Bool = true
     ) {
         self.videoPath = videoURL.path
+        self.thumbnailPath = thumbnailURL?.path
         self.platforms = platforms.map(\.rawValue)
         self.platformContent = platformContent
         self.title = title

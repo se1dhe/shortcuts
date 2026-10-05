@@ -694,14 +694,63 @@ final class WorkspaceModel {
         if let stored = storedTranscript {
             self.storedTranscript = Transcript(segments: updatedSegments, language: stored.language)
         }
+        startLongformRebuild(
+            concept: existingResult.arc.concept,
+            existingArc: existingResult.arc,
+            settings: settings,
+            initialStep: "Перерендер видео с обновленными субтитрами...",
+            errorPrefix: "Ошибка перерендера кино-эссе"
+        )
+    }
+
+    /// Полностью пересобирает режиссуру и монтаж на ту же тему: новая нарезка актов, те же фильм и концепт.
+    func regenerateLongformFromScratch(
+        concept: ThematicConcept,
+        movieTitle: String,
+        settings: AppSettings
+    ) {
+        pipelineTask?.cancel()
+        Self.log("regenerateLongformFromScratch: concept=\(concept.word) movie=\(movieTitle)")
+        confirmLongformConceptInternal(
+            concept,
+            confirmedMovieTitle: movieTitle,
+            audioSettings: stagedAudioSettings ?? LongformAudioSettings(),
+            settings: settings
+        )
+    }
+
+    /// Перерендер кино-эссе с обрезанными актами: титры, склейки и музыка пересчитываются по новой длительности.
+    func rebuildLongformWithModifiedArc(
+        modifiedArc: LongformNarrativeArc,
+        existingResult: LongformBuildResult,
+        settings: AppSettings
+    ) {
+        self.stagedArc = modifiedArc
+        Self.log("rebuildLongformWithModifiedArc: acts=\(modifiedArc.acts.count) duration=\(modifiedArc.totalDuration)")
+        startLongformRebuild(
+            concept: existingResult.arc.concept,
+            existingArc: modifiedArc,
+            settings: settings,
+            initialStep: "Перерендер монтажа с обрезанными актами...",
+            errorPrefix: "Ошибка перерендера монтажа"
+        )
+    }
+
+    private func startLongformRebuild(
+        concept: ThematicConcept,
+        existingArc: LongformNarrativeArc,
+        settings: AppSettings,
+        initialStep: String,
+        errorPrefix: String
+    ) {
         guard let currentJob = job, let transcript = storedTranscript else { return }
+        pipelineTask?.cancel()
 
         let finalMovieTitle = detectedMovie?.title ?? (currentJob.effectiveTitle.isEmpty ? "Фильм" : currentJob.effectiveTitle)
-        let concept = existingResult.arc.concept
         let audioSettings = stagedAudioSettings ?? LongformAudioSettings()
         let workDir = settings.workingDirectory ?? currentJob.url.deletingLastPathComponent()
 
-        phase = .buildingLongform(fraction: 0.10, step: "Перерендер видео с обновленными субтитрами...")
+        phase = .buildingLongform(fraction: 0.10, step: initialStep)
 
         pipelineTask = Task {
             do {
@@ -712,7 +761,7 @@ final class WorkspaceModel {
                     transcript: transcript,
                     concept: concept,
                     audioSettings: audioSettings,
-                    existingArc: existingResult.arc,
+                    existingArc: existingArc,
                     workingDirectory: workDir
                 ) { [weak self] frac, step in
                     Task { @MainActor in
@@ -727,7 +776,8 @@ final class WorkspaceModel {
                 }
                 self.phase = .longformResults
             } catch {
-                self.errorMessage = "Ошибка перерендера кино-эссе: \(error.localizedDescription)"
+                if Task.isCancelled { return }
+                self.errorMessage = "\(errorPrefix): \(error.localizedDescription)"
                 self.phase = .longformResults
             }
         }

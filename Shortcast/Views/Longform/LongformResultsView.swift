@@ -22,6 +22,7 @@ struct LongformResultsView: View {
 
     @State private var showYouTubePublishSheet = false
     @State private var showSubtitleEditor = false
+    @State private var showActEditor = false
     @State private var isPostingToTelegram = false
     @State private var telegramPostSuccess = false
     @State private var telegramError: String? = nil
@@ -67,6 +68,18 @@ struct LongformResultsView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(.yellow)
                         .help("Исправить неточности в субтитрах и перерендерить видео с тем же монтажом")
+
+                        Button {
+                            showActEditor = true
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "film.stack")
+                                Text("Монтажный стол")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.purple)
+                        .help("Обрезать начало и конец актов — титры и музыка подстроятся автоматически")
 
                         Button {
                             NSWorkspace.shared.activateFileViewerSelecting([result.outputURL])
@@ -258,6 +271,23 @@ struct LongformResultsView: View {
                     .tint(.yellow)
                     .help("Выбрать или ввести другую тему без повторного анализа фильма")
 
+                    Button {
+                        workspace.regenerateLongformFromScratch(
+                            concept: result.arc.concept,
+                            movieTitle: movieTitle,
+                            settings: settings
+                        )
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                            Text("Пересобрать с нуля")
+                                .fontWeight(.semibold)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                    .help("Полностью пересобрать монтаж и нарратив на ту же тему")
+
                     Button(role: .destructive) {
                         onStartNewMovie()
                     } label: {
@@ -312,6 +342,28 @@ struct LongformResultsView: View {
                     }
                 )
                 .frame(minWidth: 1000, minHeight: 680)
+            }
+        }
+        .sheet(isPresented: $showActEditor) {
+            if let transcript = workspace.storedTranscript {
+                LongformActEditorView(
+                    arc: result.arc,
+                    concept: result.arc.concept,
+                    movieTitle: movieTitle,
+                    transcriptSegments: transcript.segments,
+                    sourceURL: workspace.job?.url,
+                    onApply: { modifiedArc in
+                        showActEditor = false
+                        workspace.rebuildLongformWithModifiedArc(
+                            modifiedArc: modifiedArc,
+                            existingResult: result,
+                            settings: settings
+                        )
+                    },
+                    onCancel: {
+                        showActEditor = false
+                    }
+                )
             }
         }
         .onAppear {

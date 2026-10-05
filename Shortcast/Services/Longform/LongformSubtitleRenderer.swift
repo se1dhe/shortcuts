@@ -151,7 +151,41 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
 
     // MARK: - 2. Плавные синхронные субтитры реплик под концептом
 
-    // MARK: - 2. Плавные синхронные субтитры реплик под концептом
+    /// Разбивает текст на экранные строки в соответствии с кино-ритмом Shortcast Cinema
+    public static func formatScreenLines(text: String, maxChars: Int = 34, maxWords: Int = 4) -> [String] {
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return [] }
+
+        let rawLines = clean.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        var resultLines: [String] = []
+
+        for rawLine in rawLines {
+            let words = rawLine.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            if words.count <= maxWords && rawLine.count <= maxChars {
+                resultLines.append(rawLine.uppercased())
+                continue
+            }
+
+            var currentChunk: [String] = []
+            var currentLen = 0
+
+            for word in words {
+                if !currentChunk.isEmpty && (currentChunk.count >= maxWords || (currentLen + word.count + 1) > maxChars) {
+                    resultLines.append(currentChunk.joined(separator: " ").uppercased())
+                    currentChunk = [word]
+                    currentLen = word.count
+                } else {
+                    currentChunk.append(word)
+                    currentLen += (currentChunk.count == 1 ? word.count : (word.count + 1))
+                }
+            }
+            if !currentChunk.isEmpty {
+                resultLines.append(currentChunk.joined(separator: " ").uppercased())
+            }
+        }
+
+        return resultLines
+    }
 
     private func chunkTimedPhrases(_ phrases: [TimedSubtitlePhrase]) -> [TimedSubtitlePhrase] {
         var result: [TimedSubtitlePhrase] = []

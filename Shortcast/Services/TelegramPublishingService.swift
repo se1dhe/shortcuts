@@ -153,44 +153,43 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
 
         let cleanChannel = channel.hasPrefix("@") ? channel : "@\(channel)"
 
-        var text = "🎬 «\(movieTitle)»"
-        if let year = movie?.year, !year.isEmpty {
-            text += " (\(year))"
-        }
-        text += " — Кино-эссе\n\n"
-        text += "🔥 Лейтмотив: «\(result.arc.concept.word.uppercased())»\n"
-        text += "💡 «\(result.arc.concept.tagline)»\n\n"
-        text += "📖 \(result.arc.concept.philosophicalPremise)\n\n"
+        let safeMovieTitle = movieTitle.telegramHTMLEscaped
+        let safeConceptWord = result.arc.concept.word.uppercased().telegramHTMLEscaped
+        let safeTagline = result.arc.concept.tagline.telegramHTMLEscaped
+        let safeEssayTitle = result.metadata.title.telegramHTMLEscaped
+        let safePremise = result.arc.concept.philosophicalPremise.telegramHTMLEscaped
 
+        let yearText = (movie?.year.isEmpty == false) ? " (\(movie!.year.telegramHTMLEscaped))" : ""
+        let header = "🎬 <b>«\(safeMovieTitle)»</b>\(yearText) — Кино-эссе\n\n🔥 Лейтмотив: <b>«\(safeConceptWord)»</b>\n💡 <i>«\(safeTagline)»</i>\n\n"
+
+        var linkPart = "\n\n"
         if let yt = youtubeURL, !yt.isEmpty {
-            text += "▶️ Смотреть на YouTube:\n\(yt)\n\n"
+            linkPart += "▶️ Смотреть на YouTube:\n<a href=\"\(yt)\">«\(safeEssayTitle)»</a>\n\n"
         } else {
-            text += "▶️ Премьера на YouTube:\n«\(result.metadata.title)»\n\n"
+            linkPart += "▶️ Премьера на YouTube:\n«\(safeEssayTitle)»\n\n"
+        }
+        if let imdb = movie?.imdbRating, !imdb.isEmpty {
+            linkPart += "⭐ Рейтинг IMDb: \(imdb.telegramHTMLEscaped)\n"
+        }
+        linkPart += "🍿 Канал: \(cleanChannel)"
+
+        // Лимит подписи в Telegram Bot API для sendPhoto: 1024 символа
+        let budget = max(50, 960 - header.count - linkPart.count)
+        let trimmedPremise: String
+        if safePremise.count > budget {
+            trimmedPremise = String(safePremise.prefix(budget)) + "..."
+        } else {
+            trimmedPremise = safePremise
         }
 
-        if let imdb = movie?.imdbRating, !imdb.isEmpty {
-            text += "⭐ Рейтинг IMDb: \(imdb)\n"
-        }
-        text += "🍿 Канал: \(cleanChannel)"
+        let fullHTMLCaption = header + "📖 " + trimmedPremise + linkPart
 
         // Если обложка существует, отправляем пост с авторской 16:9 обложкой (лимит подписи Telegram 1024 символа)
         if let thumbURL = result.thumbnailURL, FileManager.default.fileExists(atPath: thumbURL.path) {
-            var photoCaption = text
-            if photoCaption.count > 1024 {
-                let yearText = (movie?.year.isEmpty == false) ? " (\(movie!.year))" : ""
-                let header = "🎬 «\(movieTitle)»\(yearText) — Кино-эссе\n\n🔥 Лейтмотив: «\(result.arc.concept.word.uppercased())»\n💡 «\(result.arc.concept.tagline)»\n\n"
-                let linkPart = "\n\n" + (youtubeURL.map { "▶️ Смотреть на YouTube:\n\($0)\n\n" } ?? "") + "🍿 Канал: \(cleanChannel)"
-                let available = max(0, 1020 - header.count - linkPart.count)
-                let premise = String(result.arc.concept.philosophicalPremise.prefix(available))
-                photoCaption = header + "📖 " + premise + (premise.count < result.arc.concept.philosophicalPremise.count ? "..." : "") + linkPart
-                if photoCaption.count > 1024 {
-                    photoCaption = String(photoCaption.prefix(1020)) + "..."
-                }
-            }
             do {
                 return try await sendPhotoMultipart(
                     photoURL: thumbURL,
-                    caption: photoCaption,
+                    caption: fullHTMLCaption,
                     botToken: token,
                     channelId: cleanChannel
                 )
@@ -203,13 +202,9 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
         if FileManager.default.fileExists(atPath: result.outputURL.path) {
             let fileSize = (try? FileManager.default.attributesOfItem(atPath: result.outputURL.path)[.size] as? NSNumber)?.int64Value ?? 0
             if fileSize > 0 && fileSize <= 48 * 1024 * 1024 {
-                var videoCaption = text
-                if videoCaption.count > 1024 {
-                    videoCaption = String(videoCaption.prefix(1020)) + "..."
-                }
                 if let msgId = try? await sendVideoMultipart(
                     videoURL: result.outputURL,
-                    caption: videoCaption,
+                    caption: fullHTMLCaption,
                     botToken: token,
                     channelId: cleanChannel
                 ) {
@@ -218,12 +213,10 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
             }
         }
 
-        if text.count > 4096 {
-            text = String(text.prefix(4090)) + "..."
-        }
+        let plainOrTruncatedText = (fullHTMLCaption.count > 4096) ? String(fullHTMLCaption.prefix(4090)) + "..." : fullHTMLCaption
 
         return try await sendMessageJSON(
-            text: text,
+            text: plainOrTruncatedText,
             botToken: token,
             channelId: cleanChannel
         )
@@ -242,7 +235,8 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
 
         let payload: [String: Any] = [
             "chat_id": channelId,
-            "text": text
+            "text": text,
+            "parse_mode": "HTML"
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
@@ -268,6 +262,11 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
         appendString("--\(boundary)\r\n")
         appendString("Content-Disposition: form-data; name=\"chat_id\"\r\n\r\n")
         appendString("\(channelId)\r\n")
+
+        // parse_mode: HTML
+        appendString("--\(boundary)\r\n")
+        appendString("Content-Disposition: form-data; name=\"parse_mode\"\r\n\r\n")
+        appendString("HTML\r\n")
 
         if !caption.isEmpty {
             appendString("--\(boundary)\r\n")
@@ -319,6 +318,11 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
         writeString("Content-Disposition: form-data; name=\"chat_id\"\r\n\r\n")
         writeString("\(channelId)\r\n")
 
+        // parse_mode field
+        writeString("--\(boundary)\r\n")
+        writeString("Content-Disposition: form-data; name=\"parse_mode\"\r\n\r\n")
+        writeString("HTML\r\n")
+
         // caption field
         if !caption.isEmpty {
             writeString("--\(boundary)\r\n")
@@ -363,5 +367,13 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
     private func parseErrorDescription(from data: Data) -> String? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         return json["description"] as? String
+    }
+}
+
+private extension String {
+    var telegramHTMLEscaped: String {
+        self.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
     }
 }

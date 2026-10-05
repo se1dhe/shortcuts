@@ -264,7 +264,7 @@ struct ContentView: View {
                 concepts: workspace.discoveredConcepts,
                 aiReasoning: workspace.thematicReasoning,
                 onSelect: { concept, confirmedTitle, audioSettings in
-                    workspace.confirmLongformConcept(
+                    workspace.openLongformSubtitleEditor(
                         concept,
                         confirmedMovieTitle: confirmedTitle,
                         audioSettings: audioSettings,
@@ -280,6 +280,34 @@ struct ContentView: View {
                     }
                 }
             )
+        case .editingLongformSubtitles:
+            if let stagedConcept = workspace.stagedConcept,
+               let stagedArc = workspace.stagedArc,
+               let transcript = workspace.storedTranscript {
+                LongformSubtitleEditorView(
+                    arc: stagedArc,
+                    concept: stagedConcept,
+                    movieTitle: workspace.stagedConfirmedMovieTitle ?? workspace.detectedMovie?.title ?? "Фильм",
+                    allSegments: transcript.segments,
+                    onConfirm: { updatedSegments in
+                        workspace.confirmLongformSubtitlesAndBuild(
+                            updatedSegments: updatedSegments,
+                            settings: settings
+                        )
+                    },
+                    onBack: {
+                        workspace.returnToConceptSelection()
+                    }
+                )
+            } else {
+                VStack(spacing: 12) {
+                    Text("Данные субтитров не найдены")
+                        .font(.headline)
+                    Button("Назад") {
+                        workspace.returnToConceptSelection()
+                    }
+                }
+            }
         case .buildingLongform(let fraction, let step):
             VStack(spacing: 20) {
                 ProgressView(value: fraction) {

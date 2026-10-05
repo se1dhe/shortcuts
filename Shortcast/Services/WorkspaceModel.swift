@@ -72,6 +72,7 @@ final class WorkspaceModel {
         case shortsResults
         // Longform flow:
         case selectingLongformConcept
+        case editingLongformSubtitles
         case buildingLongform(fraction: Double, step: String)
         case longformResults
     }
@@ -96,6 +97,11 @@ final class WorkspaceModel {
     var thematicReasoning: String?
     /// Выбранная тема для ролика
     var selectedConcept: ThematicConcept?
+    /// Промежуточные параметры эссе для редактора субтитров
+    var stagedConcept: ThematicConcept?
+    var stagedConfirmedMovieTitle: String?
+    var stagedAudioSettings: LongformAudioSettings?
+    var stagedArc: LongformNarrativeArc?
     /// Результат генерации длинного ролика
     var longformResult: LongformBuildResult?
     /// Прогресс рендеринга длинного видео
@@ -590,6 +596,68 @@ final class WorkspaceModel {
             errorMessage = "Ошибка подготовки длинного видео: \(error.localizedDescription)"
             phase = .empty
         }
+    }
+
+    /// Переход в окно редактирования субтитров из Whisper перед финальным монтажом кино-эссе
+    func openLongformSubtitleEditor(
+        _ concept: ThematicConcept,
+        confirmedMovieTitle: String? = nil,
+        audioSettings: LongformAudioSettings = LongformAudioSettings(),
+        settings: AppSettings
+    ) {
+        guard let transcript = storedTranscript else { return }
+        self.stagedConcept = concept
+        self.stagedConfirmedMovieTitle = confirmedMovieTitle
+        self.stagedAudioSettings = audioSettings
+
+        let candidate = (confirmedMovieTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalMovieTitle: String
+        if !candidate.isEmpty && !MovieMetadataService.isGarbageTitle(candidate) {
+            finalMovieTitle = candidate
+        } else if let detected = detectedMovie?.title, !MovieMetadataService.isGarbageTitle(detected) {
+            finalMovieTitle = detected
+        } else if let jobTitle = job?.effectiveTitle, !jobTitle.isEmpty && !MovieMetadataService.isGarbageTitle(jobTitle) {
+            finalMovieTitle = jobTitle
+        } else {
+            finalMovieTitle = "Фильм"
+        }
+
+        Task {
+            do {
+                let narrativeDirector = LongformNarrativeDirector()
+                let arc = try await narrativeDirector.buildArc(
+                    from: transcript,
+                    concept: concept,
+                    movieTitle: finalMovieTitle
+                )
+                self.stagedArc = arc
+                self.phase = .editingLongformSubtitles
+            } catch {
+                self.errorMessage = "Ошибка построения арки: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Возврат из редактора субтитров обратно к выбору темы
+    func returnToConceptSelection() {
+        self.phase = .selectingLongformConcept
+    }
+
+    /// Подтверждение отредактированных субтитров и запуск пайплайна генерации
+    func confirmLongformSubtitlesAndBuild(
+        updatedSegments: [TranscriptSegment],
+        settings: AppSettings
+    ) {
+        if let stored = storedTranscript {
+            self.storedTranscript = Transcript(segments: updatedSegments, language: stored.language)
+        }
+        guard let concept = stagedConcept, let audioSettings = stagedAudioSettings else { return }
+        confirmLongformConceptInternal(
+            concept,
+            confirmedMovieTitle: stagedConfirmedMovieTitle,
+            audioSettings: audioSettings,
+            settings: settings
+        )
     }
 
     func confirmLongformConcept(

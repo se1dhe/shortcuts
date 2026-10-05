@@ -99,8 +99,8 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         usedRanges.append(contentsOf: act3Segs)
         lastActEnd = act3Segs.map(\.end).max() ?? lastActEnd
 
-        let act4Min = max(lastActEnd + 2.0, isFullMovie ? (totalMovieDuration * 0.78) : (totalMovieDuration * 0.80))
-        let act4Max = max(act4Min + durAct4 * 1.5, totalMovieDuration)
+        let act4Min = max(lastActEnd + 2.0, isFullMovie ? (totalMovieDuration * 0.70) : (totalMovieDuration * 0.75))
+        let act4Max = max(act4Min + durAct4 * 1.5, totalMovieDuration + 10.0)
         let act4Window: ClosedRange<Double> = act4Min ... act4Max
         let act4Segs = selectCohesiveSegments(
             from: segments,
@@ -168,7 +168,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         actType: LongformActType
     ) -> [TimeSegment] {
         let candidates = allSegments.filter {
-            $0.start >= max(window.lowerBound, minStartTime) && $0.end <= window.upperBound
+            $0.start >= max(window.lowerBound, minStartTime) && $0.start <= window.upperBound
         }
         guard !candidates.isEmpty else {
             let start = max(window.lowerBound, minStartTime)
@@ -195,6 +195,13 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
 
             while j < candidates.count && currDur < targetDuration {
                 let seg = candidates[j]
+                if j > i {
+                    let sceneGap = seg.start - candidates[j - 1].end
+                    if sceneGap > 5.5 {
+                        // Сцена закончилась, далее идет другой эпизод фильма
+                        break
+                    }
+                }
                 currDur = seg.end - candidates[i].start
                 let words = seg.words.count > 0 ? seg.words.count : seg.text.split(whereSeparator: { $0.isWhitespace }).count
                 wordCount += words
@@ -262,12 +269,20 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
 
             // Захватываем завершение предложения (знак препинания или пауза), чтобы не обрубать слова
             var lookahead = j
-            while lookahead < candidates.count && (candidates[lookahead].end - candidates[i].start) < (targetDuration * 1.30) {
-                if SentenceBoundaryDetector.hasTerminalPunctuation(candidates[lookahead - 1].text) {
+            while lookahead < candidates.count && (candidates[lookahead].end - candidates[i].start) < (targetDuration * 1.35) {
+                if lookahead > i {
+                    let sceneGap = candidates[lookahead].start - candidates[lookahead - 1].end
+                    if sceneGap > 5.5 {
+                        break
+                    }
+                }
+                let lastCandText = candidates[lookahead - 1].text
+                let eval = ThoughtCompletionScorer.evaluateConcludingPhrase(lastCandText, isFinaleAct: actType == .catharsis)
+                if eval.isCompleteThought && SentenceBoundaryDetector.hasTerminalPunctuation(lastCandText) {
                     break
                 }
                 let pause = candidates[lookahead].start - candidates[lookahead - 1].end
-                if pause >= 0.85 { break }
+                if pause >= 0.85 && eval.isCompleteThought { break }
                 lookahead += 1
             }
             j = lookahead
@@ -298,6 +313,14 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                 densityScore = (speechDensity >= 1.0 ? 12.0 : -6.0)
             }
 
+            // Оценка завершенности мысли финальной сцены (Акт IV / Катарсис)
+            let concludingText = candidates[j - 1].text
+            let thoughtEval = ThoughtCompletionScorer.evaluateConcludingPhrase(
+                concludingText,
+                isFinaleAct: actType == .catharsis
+            )
+            let catharsisCompletionScore = (actType == .catharsis) ? thoughtEval.scoreModifier : 0.0
+
             // Итоговый скор: максимальный вес отдается репликам по выбранной теме
             let score = (Double(thematicMatchPoints) * 50.0)
                 + (Double(dramaticBeatCount) * 14.0)
@@ -305,6 +328,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                 + densityScore
                 + calmIntroBonus
                 - panicPenalty
+                + catharsisCompletionScore
                 - (Double(fillerCount) * 6.0)
                 + (durationFillRatio * 15.0)
 
@@ -323,7 +347,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         let rawRange = TimeSegment(start: first.start, end: max(last.end, first.start + 15.0))
         let isAct1 = (actType == .hook)
         let headPadding: Double = isAct1 ? 2.0 : 0.25
-        let tailPadding: Double = (actType == .catharsis) ? 1.0 : 0.45
+        let tailPadding: Double = (actType == .catharsis) ? 1.2 : 0.45
         let detector = SentenceBoundaryDetector(
             headPadding: headPadding,
             tailPadding: tailPadding,
@@ -337,10 +361,10 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             in: allSegments
         )
 
-        // Для финального катарсиса (Акт 4) добавляем 2.8с атмосферного видеоряда
+        // Для финального катарсиса (Акт 4) добавляем 3.5с атмосферного видеоряда
         // после завершения речи для кинематографического затухания в темноту
         if actType == .catharsis {
-            refined = TimeSegment(start: refined.start, end: refined.end + 2.8)
+            refined = TimeSegment(start: refined.start, end: refined.end + 3.5)
         }
 
         return [refined]

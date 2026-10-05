@@ -408,75 +408,122 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             let actStartTimeline = currentTimelineOffset
             currentTimelineOffset += actDuration
 
-            // Карточки для последующих актов (начиная со второго: Акт II, III, IV), чтобы не перекрывать вступительный интро-слоган
+            // Титры для последующих актов (начиная со второго: Акт II, III, IV), чтобы не перекрывать вступительный интро-слоган
             guard index > 0, actStartTimeline < totalDuration else { continue }
 
             let roman = (index < romanNumerals.count) ? romanNumerals[index] : "\(index + 1)"
-            let actBadgeText = "АКТ \(roman)"
-            let actTitleText = act.title.uppercased()
+            let actPartText = "— ЧАСТЬ \(roman) —"
+            let cleanedTitle = act.title.trimmingCharacters(in: CharacterSet(charactersIn: "«»\" ")).uppercased()
+            let actTitleText = "«\(cleanedTitle)»"
 
-            // Сборка составного кинематографического текста
-            let badgeFont = SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: 16.0, fallback: .heavy)
-            let titleFont = SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: 22.0, fallback: .heavy)
+            // 1. Надстрочник части (золотой акцентный, разрядка 5.0, Russo One 18pt)
+            let partFont = SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: 18.0, fallback: .heavy)
+            let paragraphCenter = NSMutableParagraphStyle()
+            paragraphCenter.alignment = .center
 
-            let badgeAttrs: [NSAttributedString.Key: Any] = [
-                .font: badgeFont,
+            let partShadow = NSShadow()
+            partShadow.shadowColor = NSColor.black.withAlphaComponent(0.92)
+            partShadow.shadowBlurRadius = 8.0
+            partShadow.shadowOffset = CGSize(width: 0, height: -2.0)
+
+            let partAttrs: [NSAttributedString.Key: Any] = [
+                .font: partFont,
                 .foregroundColor: accentColor,
-                .kern: 3.0
+                .paragraphStyle: paragraphCenter,
+                .shadow: partShadow,
+                .kern: 5.0
             ]
-            let dotAttrs: [NSAttributedString.Key: Any] = [
-                .font: titleFont,
-                .foregroundColor: NSColor.white.withAlphaComponent(0.4),
-                .kern: 2.0
-            ]
+            let partAttributed = NSAttributedString(string: actPartText, attributes: partAttrs)
+            let partSize = partAttributed.size()
+
+            // 2. Название главы (монументальный белый Russo One 34pt, разрядка 3.5, глубокая кино-тень)
+            let titleFont = SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: 34.0, fallback: .heavy)
+            let titleShadow = NSShadow()
+            titleShadow.shadowColor = NSColor.black.withAlphaComponent(0.98)
+            titleShadow.shadowBlurRadius = 16.0
+            titleShadow.shadowOffset = CGSize(width: 0, height: -3.0)
+
             let titleAttrs: [NSAttributedString.Key: Any] = [
                 .font: titleFont,
                 .foregroundColor: NSColor.white,
-                .kern: 2.0
+                .strokeColor: NSColor.black,
+                .strokeWidth: -2.0,
+                .paragraphStyle: paragraphCenter,
+                .shadow: titleShadow,
+                .kern: 3.5
             ]
+            let titleAttributed = NSAttributedString(string: actTitleText, attributes: titleAttrs)
+            let titleBounding = titleAttributed.boundingRect(
+                with: CGSize(width: W * 0.85, height: 200.0),
+                options: [.usesLineFragmentOrigin, .usesFontLeading]
+            )
+            let titleSize = CGSize(width: ceil(titleBounding.width) + 16.0, height: ceil(titleBounding.height) + 8.0)
 
-            let fullAttributed = NSMutableAttributedString()
-            fullAttributed.append(NSAttributedString(string: actBadgeText, attributes: badgeAttrs))
-            fullAttributed.append(NSAttributedString(string: "   •   ", attributes: dotAttrs))
-            fullAttributed.append(NSAttributedString(string: actTitleText, attributes: titleAttrs))
+            // Контейнер без рамок и без плашек (чистая кино-типографика)
+            let containerW = max(partSize.width, titleSize.width) + 40.0
+            let lineWidth: CGFloat = 120.0
+            let lineHeight: CGFloat = 2.5
+            let spacingPartToTitle: CGFloat = 6.0
+            let spacingTitleToLine: CGFloat = 12.0
+            let totalContentH = partSize.height + spacingPartToTitle + titleSize.height + spacingTitleToLine + lineHeight
 
-            let textSize = fullAttributed.size()
-            let paddingH: CGFloat = 36.0
-            let paddingV: CGFloat = 16.0
-            let cardW = textSize.width + paddingH * 2.0
-            let cardH = textSize.height + paddingV * 2.0
+            let containerX = (W - containerW) / 2.0
+            let containerY = H * 0.77 // В верхней трети экрана
 
-            // Размещаем в верхней трети экрана (не перекрывая центральный концепт и субтитры)
-            let cardX = (W - cardW) / 2.0
-            let cardY = H * 0.78
+            let containerLayer = CALayer()
+            containerLayer.frame = CGRect(x: containerX, y: containerY, width: containerW, height: totalContentH)
+            containerLayer.opacity = 0.0
 
-            let cardLayer = CALayer()
-            cardLayer.frame = CGRect(x: cardX, y: cardY, width: cardW, height: cardH)
-            cardLayer.backgroundColor = CGColor(red: 0.06, green: 0.06, blue: 0.08, alpha: 0.88)
-            cardLayer.cornerRadius = 14.0
-            cardLayer.borderWidth = 1.0
-            cardLayer.borderColor = accentColor.withAlphaComponent(0.40).cgColor
-            cardLayer.shadowColor = CGColor(gray: 0, alpha: 1.0)
-            cardLayer.shadowOpacity = 0.85
-            cardLayer.shadowRadius = 14.0
-            cardLayer.shadowOffset = CGSize(width: 0, height: -3)
-            cardLayer.opacity = 0.0
+            // Слой надстрочника
+            let partLayer = CALayer()
+            partLayer.frame = CGRect(
+                x: (containerW - partSize.width) / 2.0,
+                y: totalContentH - partSize.height,
+                width: partSize.width,
+                height: partSize.height
+            )
+            partLayer.contentsScale = 2.0
+            partLayer.contents = renderAttributedText(partAttributed, size: partSize)
+            containerLayer.addSublayer(partLayer)
 
-            let textLayer = CALayer()
-            textLayer.frame = CGRect(x: paddingH, y: paddingV, width: textSize.width, height: textSize.height)
-            textLayer.contentsScale = 2.0
-            textLayer.contents = renderAttributedText(fullAttributed, size: textSize)
-            cardLayer.addSublayer(textLayer)
+            // Слой названия главы
+            let titleLayerY = partLayer.frame.minY - spacingPartToTitle - titleSize.height
+            let titleLayer = CALayer()
+            titleLayer.frame = CGRect(
+                x: (containerW - titleSize.width) / 2.0,
+                y: titleLayerY,
+                width: titleSize.width,
+                height: titleSize.height
+            )
+            titleLayer.contentsScale = 2.0
+            titleLayer.contents = renderAttributedText(titleAttributed, size: titleSize)
+            containerLayer.addSublayer(titleLayer)
 
-            // Анимация показа карточки: длительность 2.5 секунды (0.35с fade-in, 1.8с hold, 0.35с fade-out)
+            // Золотая акцентная линия под названием главы
+            let lineLayerY = titleLayer.frame.minY - spacingTitleToLine - lineHeight
+            let lineLayer = CALayer()
+            lineLayer.frame = CGRect(
+                x: (containerW - lineWidth) / 2.0,
+                y: lineLayerY,
+                width: lineWidth,
+                height: lineHeight
+            )
+            lineLayer.backgroundColor = accentColor.cgColor
+            lineLayer.cornerRadius = lineHeight / 2.0
+            lineLayer.shadowColor = CGColor(gray: 0, alpha: 0.9)
+            lineLayer.shadowRadius = 6.0
+            lineLayer.shadowOffset = CGSize(width: 0, height: -1.0)
+            containerLayer.addSublayer(lineLayer)
+
+            // Анимация показа: 3.0 секунды (0.4с fade-in, 2.2с hold, 0.4с fade-out)
             let tStart = actStartTimeline
-            let cardDuration = 2.5
+            let cardDuration = 3.0
             let tEnd = min(totalDuration, tStart + cardDuration)
             guard tEnd > tStart else { continue }
 
             let k0 = max(0.0, (tStart - 0.01) / t)
-            let k1 = min(1.0, (tStart + 0.35) / t)
-            let k2 = max(k1, (tEnd - 0.35) / t)
+            let k1 = min(1.0, (tStart + 0.40) / t)
+            let k2 = max(k1, (tEnd - 0.40) / t)
             let k3 = min(1.0, tEnd / t)
 
             let anim = CAKeyframeAnimation(keyPath: "opacity")
@@ -493,9 +540,9 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             anim.beginTime = AVCoreAnimationBeginTimeAtZero
             anim.fillMode = .both
             anim.isRemovedOnCompletion = false
-            cardLayer.add(anim, forKey: "actCard_\(index)")
+            containerLayer.add(anim, forKey: "actTypography_\(index)")
 
-            root.addSublayer(cardLayer)
+            root.addSublayer(containerLayer)
         }
 
         return root

@@ -107,12 +107,13 @@ enum MediaExtractor {
             targetAudioMap = selectedTrack != nil ? "0:\(selectedTrack!.id)" : "0:a:0?"
         }
 
-        // Dialogue Focus: для 5.1/7.1 выделяем чистый центральный канал речи (c2 / FC) на 100%,
-        // а фоновую музыку фильма (c0, c1, c4, c5) приглушаем на 80-85%, освобождая место под саундтрек
+        // Dialogue Isolation: для 5.1/7.1 выделяем 100% чистый центральный канал речи (c2 / FC),
+        // полностью исключая каналы фронтальной и тыловой музыки (c0, c1, c4, c5),
+        // плюс применяем dialoguenhance для кристальной изоляции голоса под наш саундтрек.
         let isMultiChannel = (selectedTrack?.channels ?? 2) >= 6
         let audioFilter = isMultiChannel
-            ? "pan=stereo|c0=c2+0.18*c0+0.1*c4|c1=c2+0.18*c1+0.1*c5,aresample=async=1:first_pts=0"
-            : "pan=stereo|c0=0.7*c0+0.3*c1|c1=0.3*c0+0.7*c1,aresample=async=1:first_pts=0"
+            ? "pan=stereo|c0=c2|c1=c2,dialoguenhance,aresample=async=1:first_pts=0"
+            : "pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1,dialoguenhance,aresample=async=1:first_pts=0"
 
         // 2. СВЕРХБЫСТРЫЙ ПАСС: Ремуксинг без перекодирования (-c:v copy).
         // Если видеопоток уже H.264 или HEVC, перепаковка MKV в MP4 занимает 5-10 секунд вместо 20 минут.

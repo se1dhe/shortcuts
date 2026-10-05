@@ -43,7 +43,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         let W = renderSize.width
         let H = renderSize.height
 
-        // 1. Центральное якорное слово концепта (титул Cold Open 0.0с–3.8с, плавно растворяется в начале фильма)
+        // 1. Центральное якорное слово концепта (висит весь фильм, плавно растворяется в финале)
         let (conceptLayer, conceptY, _) = buildCentralConceptLayer(
             renderSize: renderSize,
             concept: concept,
@@ -51,7 +51,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         )
         rootLayer.addSublayer(conceptLayer)
 
-        // 2. Плавные синхронные субтитры реплик персонажей в кинематографической нижней трети (Lower Third)
+        // 2. Плавные синхронные субтитры реплик персонажей прямо под концептом
         let subtitlePhrasesLayer = buildSynchronizedSubtitlesLayer(
             renderSize: renderSize,
             concept: concept,
@@ -118,7 +118,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         let layerW = textSize.width + 48.0
         let layerH = textSize.height + 24.0
 
-        // Строго по центру экрана в Cold Open
+        // Строго по центру экрана
         let conceptX = (W - layerW) / 2.0
         let conceptY = (H - layerH) / 2.0
 
@@ -127,18 +127,17 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         layer.contentsScale = 2.0
         layer.contents = renderAttributedText(conceptStr, size: layer.frame.size)
 
-        // Плавный Cold Open Fade-In (0.0 -> 0.8с), удержание до 3.0с и мягкое растворение к 3.8с
+        // Плавный Cold Open Fade-In (0.0 -> 0.8с) и затухание в последние 2.5 секунды
+        let outroStartTime = max(0.0, totalDuration - 2.5)
         let kFadeIn = min(0.8 / t, 0.08)
-        let kFadeOutStart = min(3.0 / t, 0.20)
-        let kFadeOutEnd = min(3.8 / t, 0.25)
+        let kOutroStart = max(kFadeIn + 0.01, outroStartTime / t)
 
         let anim = CAKeyframeAnimation(keyPath: "opacity")
-        anim.values = [0.0, 1.0, 1.0, 0.0, 0.0]
+        anim.values = [0.0, 1.0, 1.0, 0.0]
         anim.keyTimes = [
             NSNumber(value: 0.0),
             NSNumber(value: kFadeIn),
-            NSNumber(value: kFadeOutStart),
-            NSNumber(value: kFadeOutEnd),
+            NSNumber(value: kOutroStart),
             NSNumber(value: 1.0)
         ]
         anim.duration = t
@@ -254,9 +253,9 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             let subW = min(W * 0.85, max(120.0, ceil(boundingRect.width) + 36.0))
             let subH = max(36.0, ceil(boundingRect.height) + 16.0)
 
-            // Размещаем в кинематографической нижней трети (Lower Third) над леттербоксом
+            // Размещаем прямо под концептом (вниз от conceptY с безопасным отступом)
             let subX = (W - subW) / 2.0
-            let subY = max(H * 0.12, 130.0)
+            let subY = conceptY - subH - 18.0
 
             let phraseLayer = CALayer()
             phraseLayer.frame = CGRect(x: subX, y: subY, width: subW, height: subH)

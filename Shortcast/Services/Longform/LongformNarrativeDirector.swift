@@ -29,7 +29,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         movieTitle: String,
         targetDuration: Double = 380.0
     ) async throws -> LongformNarrativeArc {
-        let clampedTarget = min(max(targetDuration, 300.0), 480.0)
+        let clampedTarget = min(max(targetDuration, 300.0), 600.0)
         let segments = transcript.segments
 
         guard !segments.isEmpty else {
@@ -278,7 +278,38 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                     }
                 }
 
-                // 4. Штраф за пустые короткие междометия
+                // 4. Для Акта 3 (Борьба): отсев обрывков мыслей и союзов на старте
+                if actType == .struggle {
+                    let firstText = candidates[i].text.lowercased()
+                    let conjunctionOpeners = ["а ты", "что ты", "и ты", "но", "а где", "то есть", "дальше", "почему", "жертва"]
+                    for co in conjunctionOpeners {
+                        if firstText.hasPrefix(co) {
+                            panicPenalty += 500.0
+                        }
+                    }
+                    let struggleExpositionWords = ["голос", "слышишь", "враг", "борьб", "упорств", "друг", "правило", "контрол"]
+                    for sew in struggleExpositionWords {
+                        if firstText.contains(sew) {
+                            calmIntroBonus += 40.0
+                        }
+                    }
+                }
+
+                // 5. Для Акта 4 (Катарсис): бонус за ключевые философские цитаты-откровения фильма
+                if actType == .catharsis {
+                    let revelationKeywords = [
+                        "он — это ты", "он это ты", "разводк", "лучшая разводка",
+                        "заставил тебя поверить", "шахматн", "правила игры", "враг внутри",
+                        "поверить, что он", "поверить что он", "победа над собой"
+                    ]
+                    for rk in revelationKeywords {
+                        if lowerText.contains(rk) {
+                            thematicMatchPoints += 25
+                        }
+                    }
+                }
+
+                // 6. Штраф за пустые короткие междометия
                 if words <= 2 && thematicMatchPoints == 0 {
                     fillerCount += 1
                 }
@@ -381,31 +412,29 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             return [TimeSegment(start: window.lowerBound, end: window.lowerBound + targetDuration)]
         }
 
-        let rawRange = TimeSegment(start: first.start, end: max(last.end, first.start + 15.0))
         let isAct1 = (actType == .hook)
+        let isAct3 = (actType == .struggle)
         let isAct4 = (actType == .catharsis)
-        let headPadding: Double = isAct1 ? 3.0 : (isAct4 ? 2.5 : 0.35)
-        let tailPadding: Double = isAct4 ? 4.5 : 0.6
+        let minSegmentDuration = isAct4 ? 5.0 : 15.0
+        let rawRange = TimeSegment(start: first.start, end: max(last.end, first.start + minSegmentDuration))
+        let headPadding: Double = isAct1 ? 3.0 : (isAct3 ? 1.2 : (isAct4 ? 1.5 : 0.5))
+        // Хвостовой паддинг строго 0.35с для естественного затухания реплики без захвата следующих сцен фильма.
+        // Финальный хвост послевкусия (черный экран и затухающая музыка) добавляется на этапе AVComposition.
+        let tailPadding: Double = 0.35
         let maxSceneDuration = targetDuration * 1.75
 
         let detector = SentenceBoundaryDetector(
             headPadding: headPadding,
             tailPadding: tailPadding,
-            minSegmentDuration: isAct4 ? 5.0 : 15.0,
+            minSegmentDuration: minSegmentDuration,
             maxShortsDuration: maxSceneDuration
         )
 
-        var refined = detector.refineSceneBoundary(
+        let refined = detector.refineSceneBoundary(
             range: rawRange,
             maxAllowedDuration: maxSceneDuration,
             in: allSegments
         )
-
-        // Для финального катарсиса (Акт 4) добавляем 4.5с атмосферного видеоряда
-        // после завершения речи для кинематографического затухания в темноту
-        if actType == .catharsis {
-            refined = TimeSegment(start: refined.start, end: refined.end + 4.5)
-        }
 
         return [refined]
     }

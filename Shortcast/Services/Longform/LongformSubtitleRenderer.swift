@@ -32,6 +32,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         concept: ThematicConcept,
         timedPhrases: [TimedSubtitlePhrase],
         acts: [LongformAct] = [],
+        actStartTimes: [Double] = [],
         totalDuration: Double = 0.0
     ) async -> CALayer {
         let rootLayer = CALayer()
@@ -42,7 +43,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         let W = renderSize.width
         let H = renderSize.height
 
-        // 1. Центральное якорное слово концепта (висит весь фильм, плавно растворяется в финале)
+        // 1. Центральное якорное слово концепта (титул Cold Open 0.0с–3.8с, плавно растворяется в начале фильма)
         let (conceptLayer, conceptY, _) = buildCentralConceptLayer(
             renderSize: renderSize,
             concept: concept,
@@ -50,7 +51,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         )
         rootLayer.addSublayer(conceptLayer)
 
-        // 2. Плавные синхронные субтитры реплик персонажей прямо под концептом
+        // 2. Плавные синхронные субтитры реплик персонажей в кинематографической нижней трети (Lower Third)
         let subtitlePhrasesLayer = buildSynchronizedSubtitlesLayer(
             renderSize: renderSize,
             concept: concept,
@@ -60,7 +61,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         )
         rootLayer.addSublayer(subtitlePhrasesLayer)
 
-        // 3. Вступительная золотая линия и философский слоган (0.0с – 3.2с)
+        // 3. Вступительная золотая линия и философский слоган (0.0с – 4.2с)
         let introTaglineLayer = buildIntroTaglineLayer(
             renderSize: renderSize,
             concept: concept,
@@ -74,6 +75,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             renderSize: renderSize,
             concept: concept,
             acts: acts,
+            actStartTimes: actStartTimes,
             totalDuration: calculatedTotalDuration
         )
         rootLayer.addSublayer(actCardsLayer)
@@ -116,7 +118,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         let layerW = textSize.width + 48.0
         let layerH = textSize.height + 24.0
 
-        // Строго по центру экрана
+        // Строго по центру экрана в Cold Open
         let conceptX = (W - layerW) / 2.0
         let conceptY = (H - layerH) / 2.0
 
@@ -125,17 +127,18 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         layer.contentsScale = 2.0
         layer.contents = renderAttributedText(conceptStr, size: layer.frame.size)
 
-        // Плавный Cold Open Fade-In (0.0 -> 0.8с) и затухание в последние 2.5 секунды
-        let outroStartTime = max(0.0, totalDuration - 2.5)
+        // Плавный Cold Open Fade-In (0.0 -> 0.8с), удержание до 3.0с и мягкое растворение к 3.8с
         let kFadeIn = min(0.8 / t, 0.08)
-        let kOutroStart = max(kFadeIn + 0.01, outroStartTime / t)
+        let kFadeOutStart = min(3.0 / t, 0.20)
+        let kFadeOutEnd = min(3.8 / t, 0.25)
 
         let anim = CAKeyframeAnimation(keyPath: "opacity")
-        anim.values = [0.0, 1.0, 1.0, 0.0]
+        anim.values = [0.0, 1.0, 1.0, 0.0, 0.0]
         anim.keyTimes = [
             NSNumber(value: 0.0),
             NSNumber(value: kFadeIn),
-            NSNumber(value: kOutroStart),
+            NSNumber(value: kFadeOutStart),
+            NSNumber(value: kFadeOutEnd),
             NSNumber(value: 1.0)
         ]
         anim.duration = t
@@ -210,6 +213,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         container.frame = CGRect(origin: .zero, size: renderSize)
 
         let W = renderSize.width
+        let H = renderSize.height
         let t = max(totalDuration, 1.0)
 
         let subFont = SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: 26.0, fallback: .heavy)
@@ -250,9 +254,9 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             let subW = min(W * 0.85, max(120.0, ceil(boundingRect.width) + 36.0))
             let subH = max(36.0, ceil(boundingRect.height) + 16.0)
 
-            // Размещаем прямо под концептом (вниз от conceptY с безопасным отступом)
+            // Размещаем в кинематографической нижней трети (Lower Third) над леттербоксом
             let subX = (W - subW) / 2.0
-            let subY = conceptY - subH - 18.0
+            let subY = max(H * 0.12, 130.0)
 
             let phraseLayer = CALayer()
             phraseLayer.frame = CGRect(x: subX, y: subY, width: subW, height: subH)
@@ -390,6 +394,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         renderSize: CGSize,
         concept: ThematicConcept,
         acts: [LongformAct],
+        actStartTimes: [Double] = [],
         totalDuration: Double
     ) -> CALayer {
         let root = CALayer()
@@ -405,7 +410,9 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
 
         for (index, act) in acts.enumerated() {
             let actDuration = act.duration
-            let actStartTimeline = currentTimelineOffset
+            let actStartTimeline = (index < actStartTimes.count && actStartTimes[index] > 0)
+                ? actStartTimes[index]
+                : currentTimelineOffset
             currentTimelineOffset += actDuration
 
             // Титры для последующих актов (начиная со второго: Акт II, III, IV), чтобы не перекрывать вступительный интро-слоган

@@ -74,42 +74,57 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         var insertTime = CMTime(seconds: introPadding, preferredTimescale: 600)
         var timedPhrases: [TimedSubtitlePhrase] = []
         var sceneCutPoints: [Double] = [introPadding]
+        var actStartTimes: [Double] = []
+        let interActGap: Double = 0.8 // Мягкая кинематографическая пауза (дыхание) между актами
 
-        // Вставляем нарезанные сцены фильма
-        for (index, segment) in segments.enumerated() {
-            let startCM = CMTime(seconds: segment.start, preferredTimescale: 600)
-            let durationCM = CMTime(seconds: segment.duration, preferredTimescale: 600)
-            let timeRange = CMTimeRange(start: startCM, duration: durationCM)
-
-            if index > 0 {
-                sceneCutPoints.append(insertTime.seconds)
+        // Вставляем нарезанные сцены фильма по актам с кинематографическим разделением
+        for (actIndex, act) in arc.acts.enumerated() {
+            if actIndex > 0 {
+                // Добавляем меж-актовую паузу (черный экран, где звучит только фоновая музыка)
+                insertTime = CMTimeAdd(insertTime, CMTime(seconds: interActGap, preferredTimescale: 600))
+            }
+            let actStartSec = insertTime.seconds
+            actStartTimes.append(actStartSec)
+            if actIndex > 0 {
+                sceneCutPoints.append(actStartSec)
             }
 
-            try compVideoTrack.insertTimeRange(timeRange, of: sourceVideoTrack, at: insertTime)
+            for segment in act.segments {
+                let startCM = CMTime(seconds: segment.start, preferredTimescale: 600)
+                let durationCM = CMTime(seconds: segment.duration, preferredTimescale: 600)
+                let timeRange = CMTimeRange(start: startCM, duration: durationCM)
 
-            if let sourceAudioTrack {
-                try compSpeechTrack.insertTimeRange(timeRange, of: sourceAudioTrack, at: insertTime)
-            }
+                try compVideoTrack.insertTimeRange(timeRange, of: sourceVideoTrack, at: insertTime)
 
-            let insertedStart = insertTime.seconds
-            let insertedEnd = insertedStart + segment.duration
-
-            // Сопоставляем фразы из транскрипта с новым таймлайном
-            let matchingSegments = transcript.segments.filter {
-                $0.end > segment.start && $0.start < segment.end
-            }
-            for s in matchingSegments {
-                let phraseStart = max(insertedStart, insertedStart + (s.start - segment.start))
-                let phraseEnd = min(insertedEnd, insertedStart + (s.end - segment.start))
-                if phraseEnd > phraseStart {
-                    timedPhrases.append(TimedSubtitlePhrase(start: phraseStart, end: phraseEnd, text: s.text))
+                if let sourceAudioTrack {
+                    try compSpeechTrack.insertTimeRange(timeRange, of: sourceAudioTrack, at: insertTime)
                 }
-            }
 
-            insertTime = CMTimeAdd(insertTime, durationCM)
+                let insertedStart = insertTime.seconds
+                let insertedEnd = insertedStart + segment.duration
+
+                // Сопоставляем фразы из транскрипта с новым таймлайном
+                let matchingSegments = transcript.segments.filter {
+                    $0.end > segment.start && $0.start < segment.end
+                }
+                for s in matchingSegments {
+                    let phraseStart = max(insertedStart, insertedStart + (s.start - segment.start))
+                    let phraseEnd = min(insertedEnd, insertedStart + (s.end - segment.start))
+                    if phraseEnd > phraseStart {
+                        timedPhrases.append(TimedSubtitlePhrase(start: phraseStart, end: phraseEnd, text: s.text))
+                    }
+                }
+
+                insertTime = CMTimeAdd(insertTime, durationCM)
+            }
         }
 
-        let totalDuration = insertTime.seconds
+        // Кинематографический хвост послевкусия (Outro Tail): 4.0 секунды черного экрана
+        // после завершения речи, во время которых фоновая музыка солирует и плавно затухает
+        let speechFinishTime = insertTime.seconds
+        let outroPadding: Double = 4.0
+        let totalDuration = speechFinishTime + outroPadding
+        let totalDurationCM = CMTime(seconds: totalDuration, preferredTimescale: 600)
 
         // Формируем интервалы реальной речи из Whisper для сайдчейн-дакинга музыки
         let speechIntervals: [TimeSegment] = timedPhrases.map { TimeSegment(start: $0.start, end: $0.end) }
@@ -139,8 +154,8 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
                 let musicDuration = try await musicAsset.load(.duration)
 
                 var musicInsertTime = CMTime.zero
-                while musicInsertTime < insertTime {
-                    let remaining = CMTimeSubtract(insertTime, musicInsertTime)
+                while musicInsertTime < totalDurationCM {
+                    let remaining = CMTimeSubtract(totalDurationCM, musicInsertTime)
                     let chunk = CMTimeMinimum(remaining, musicDuration)
                     let range = CMTimeRange(start: .zero, duration: chunk)
                     try compMusicTrack.insertTimeRange(range, of: sourceMusicTrack, at: musicInsertTime)
@@ -171,7 +186,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         videoComposition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
 
         let instruction = AVMutableVideoCompositionInstruction()
-        instruction.timeRange = CMTimeRange(start: .zero, duration: insertTime)
+        instruction.timeRange = CMTimeRange(start: .zero, duration: totalDurationCM)
         instruction.backgroundColor = CGColor(gray: 0.0, alpha: 1.0)
 
         let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compVideoTrack)
@@ -210,6 +225,42 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             )
         }
 
+        // Мягкие затемнения (Dip to Black) на переходах между главами
+        for cut in sceneCutPoints where cut > introPadding + 1.0 && cut < speechFinishTime - 1.0 {
+            let fadeOutDuration: Double = 0.35
+            let fadeInDuration: Double = 0.45
+            let fadeOutStart = max(introPadding + 0.5, cut - interActGap - fadeOutDuration)
+
+            layerInstruction.setOpacityRamp(
+                fromStartOpacity: 1.0,
+                toEndOpacity: 0.0,
+                timeRange: CMTimeRange(
+                    start: CMTime(seconds: fadeOutStart, preferredTimescale: 600),
+                    duration: CMTime(seconds: fadeOutDuration, preferredTimescale: 600)
+                )
+            )
+            layerInstruction.setOpacityRamp(
+                fromStartOpacity: 0.0,
+                toEndOpacity: 1.0,
+                timeRange: CMTimeRange(
+                    start: CMTime(seconds: cut, preferredTimescale: 600),
+                    duration: CMTime(seconds: fadeInDuration, preferredTimescale: 600)
+                )
+            )
+        }
+
+        // Финальное кинематографическое затухание в темноту (Outro Fade to Black)
+        let finalFadeStart = max(introPadding + 2.0, speechFinishTime - 1.2)
+        layerInstruction.setOpacityRamp(
+            fromStartOpacity: 1.0,
+            toEndOpacity: 0.0,
+            timeRange: CMTimeRange(
+                start: CMTime(seconds: finalFadeStart, preferredTimescale: 600),
+                duration: CMTime(seconds: 1.2, preferredTimescale: 600)
+            )
+        )
+        layerInstruction.setOpacity(0.0, at: CMTime(seconds: speechFinishTime, preferredTimescale: 600))
+
         instruction.layerInstructions = [layerInstruction]
         videoComposition.instructions = [instruction]
 
@@ -219,6 +270,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             concept: concept,
             timedPhrases: timedPhrases,
             acts: arc.acts,
+            actStartTimes: actStartTimes,
             totalDuration: totalDuration
         )
 

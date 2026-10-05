@@ -191,8 +191,8 @@ struct SentenceBoundaryTests {
 
         // Must pick the philosophical resolution monologue (~3500s), NOT the shouting scene (~3100s)
         #expect(finalSeg.start >= 3400.0)
-        // Must include at least 4.5s post-roll after 3540s speech (end >= 3544.5)
-        #expect(finalSeg.end >= 3544.0)
+        // Must end cleanly at the conclusion of speech (~3540s), without capturing subsequent scenes
+        #expect(finalSeg.end >= 3540.0 && finalSeg.end < 3543.0)
     }
 
     @Test("Revolver case: Act 1 rejects interrogation shouting and starts with calm defeat monologue, Act 4 selects concise catharsis over Bojsya menya")
@@ -255,6 +255,6 @@ struct SentenceBoundaryTests {
             return
         }
         #expect(act4Seg.start >= 6600.0)
-        #expect(act4Seg.end >= 6663.2 + 4.5)
+        #expect(act4Seg.end >= 6663.2 && act4Seg.end < 6665.0)
     }
 }

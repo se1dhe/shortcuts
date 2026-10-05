@@ -26,6 +26,7 @@ protocol LongformSubtitleRenderingProtocol: Sendable {
         concept: ThematicConcept,
         timedPhrases: [TimedSubtitlePhrase],
         acts: [LongformAct],
+        actStartTimes: [Double],
         totalDuration: Double
     ) async -> CALayer
 
@@ -41,6 +42,23 @@ extension LongformSubtitleRenderingProtocol {
     func makeOverlayLayer(
         renderSize: CGSize,
         concept: ThematicConcept,
+        timedPhrases: [TimedSubtitlePhrase],
+        acts: [LongformAct],
+        totalDuration: Double
+    ) async -> CALayer {
+        await makeOverlayLayer(
+            renderSize: renderSize,
+            concept: concept,
+            timedPhrases: timedPhrases,
+            acts: acts,
+            actStartTimes: [],
+            totalDuration: totalDuration
+        )
+    }
+
+    func makeOverlayLayer(
+        renderSize: CGSize,
+        concept: ThematicConcept,
         timedPhrases: [TimedSubtitlePhrase]
     ) async -> CALayer {
         await makeOverlayLayer(
@@ -48,6 +66,7 @@ extension LongformSubtitleRenderingProtocol {
             concept: concept,
             timedPhrases: timedPhrases,
             acts: [],
+            actStartTimes: [],
             totalDuration: timedPhrases.last?.end ?? 300.0
         )
     }

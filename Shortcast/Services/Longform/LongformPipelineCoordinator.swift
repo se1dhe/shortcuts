@@ -77,22 +77,42 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         var insertTime = CMTime(seconds: introPadding, preferredTimescale: 600)
         var timedPhrases: [TimedSubtitlePhrase] = []
         var sceneCutPoints: [Double] = [introPadding]
+        var cutTransitions: [LongformCutTransition] = []
         var actStartTimes: [Double] = []
         let interActGap: Double = 0.8 // Мягкая кинематографическая пауза (дыхание) между актами
+        let intraActGap: Double = 0.5 // Мягкая кинематографическая пауза между сценами внутри акта
 
         // Вставляем нарезанные сцены фильма по актам с кинематографическим разделением
         for (actIndex, act) in arc.acts.enumerated() {
             if actIndex > 0 {
+                let prevEnd = insertTime.seconds
                 // Добавляем меж-актовую паузу (черный экран, где звучит только фоновая музыка)
                 insertTime = CMTimeAdd(insertTime, CMTime(seconds: interActGap, preferredTimescale: 600))
+                let nextStart = insertTime.seconds
+                cutTransitions.append(LongformCutTransition(
+                    sceneEndTime: prevEnd,
+                    nextSceneStartTime: nextStart,
+                    isInterAct: true
+                ))
+                sceneCutPoints.append(nextStart)
             }
             let actStartSec = insertTime.seconds
             actStartTimes.append(actStartSec)
-            if actIndex > 0 {
-                sceneCutPoints.append(actStartSec)
-            }
 
-            for segment in act.segments {
+            for (segIndex, segment) in act.segments.enumerated() {
+                if segIndex > 0 {
+                    let prevEnd = insertTime.seconds
+                    // Пауза между сценами внутри одного акта (мягкий переход)
+                    insertTime = CMTimeAdd(insertTime, CMTime(seconds: intraActGap, preferredTimescale: 600))
+                    let nextStart = insertTime.seconds
+                    cutTransitions.append(LongformCutTransition(
+                        sceneEndTime: prevEnd,
+                        nextSceneStartTime: nextStart,
+                        isInterAct: false
+                    ))
+                    sceneCutPoints.append(nextStart)
+                }
+
                 let startCM = CMTime(seconds: segment.start, preferredTimescale: 600)
                 let durationCM = CMTime(seconds: segment.duration, preferredTimescale: 600)
                 let timeRange = CMTimeRange(start: startCM, duration: durationCM)
@@ -171,6 +191,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
                     speechTrack: compSpeechTrack,
                     speechIntervals: speechIntervals,
                     sceneCutPoints: sceneCutPoints,
+                    cutTransitions: cutTransitions,
                     totalDuration: totalDuration,
                     baseMusicVolume: audioSettings.musicVolume,
                     duckingEnabled: audioSettings.duckingEnabled,
@@ -230,11 +251,11 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             )
         }
 
-        // Мягкие затемнения (Dip to Black) на переходах между главами
-        for cut in sceneCutPoints where cut > introPadding + 1.0 && cut < speechFinishTime - 1.0 {
-            let fadeOutDuration: Double = 0.35
-            let fadeInDuration: Double = 0.45
-            let fadeOutStart = max(introPadding + 0.5, cut - interActGap - fadeOutDuration)
+        // Мягкие кинематографические затемнения (Dip to Black) на всех склейках сцен и актов
+        for cut in cutTransitions {
+            let fadeOutDuration: Double = cut.isInterAct ? 0.35 : 0.28
+            let fadeInDuration: Double = cut.isInterAct ? 0.45 : 0.32
+            let fadeOutStart = max(introPadding + 0.5, cut.sceneEndTime - fadeOutDuration)
 
             layerInstruction.setOpacityRamp(
                 fromStartOpacity: 1.0,
@@ -248,7 +269,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
                 fromStartOpacity: 0.0,
                 toEndOpacity: 1.0,
                 timeRange: CMTimeRange(
-                    start: CMTime(seconds: cut, preferredTimescale: 600),
+                    start: CMTime(seconds: cut.nextSceneStartTime, preferredTimescale: 600),
                     duration: CMTime(seconds: fadeInDuration, preferredTimescale: 600)
                 )
             )

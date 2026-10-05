@@ -8,6 +8,7 @@ protocol TelegramPublishingProtocol: Sendable {
         result: LongformBuildResult,
         movieTitle: String,
         movie: MovieIdentity?,
+        youtubeURL: String?,
         botToken: String,
         channelId: String
     ) async throws -> Int
@@ -140,6 +141,7 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
         result: LongformBuildResult,
         movieTitle: String,
         movie: MovieIdentity?,
+        youtubeURL: String? = nil,
         botToken: String,
         channelId: String
     ) async throws -> Int {
@@ -159,12 +161,62 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
         text += "🔥 Лейтмотив: «\(result.arc.concept.word.uppercased())»\n"
         text += "💡 «\(result.arc.concept.tagline)»\n\n"
         text += "📖 \(result.arc.concept.philosophicalPremise)\n\n"
-        text += "▶️ Премьера на YouTube:\n«\(result.metadata.title)»\n\n"
-        
+
+        if let yt = youtubeURL, !yt.isEmpty {
+            text += "▶️ Смотреть на YouTube:\n\(yt)\n\n"
+        } else {
+            text += "▶️ Премьера на YouTube:\n«\(result.metadata.title)»\n\n"
+        }
+
         if let imdb = movie?.imdbRating, !imdb.isEmpty {
             text += "⭐ Рейтинг IMDb: \(imdb)\n"
         }
         text += "🍿 Канал: \(cleanChannel)"
+
+        // Если обложка существует, отправляем пост с авторской 16:9 обложкой (лимит подписи Telegram 1024 символа)
+        if let thumbURL = result.thumbnailURL, FileManager.default.fileExists(atPath: thumbURL.path) {
+            var photoCaption = text
+            if photoCaption.count > 1024 {
+                let yearText = (movie?.year.isEmpty == false) ? " (\(movie!.year))" : ""
+                let header = "🎬 «\(movieTitle)»\(yearText) — Кино-эссе\n\n🔥 Лейтмотив: «\(result.arc.concept.word.uppercased())»\n💡 «\(result.arc.concept.tagline)»\n\n"
+                let linkPart = "\n\n" + (youtubeURL.map { "▶️ Смотреть на YouTube:\n\($0)\n\n" } ?? "") + "🍿 Канал: \(cleanChannel)"
+                let available = max(0, 1020 - header.count - linkPart.count)
+                let premise = String(result.arc.concept.philosophicalPremise.prefix(available))
+                photoCaption = header + "📖 " + premise + (premise.count < result.arc.concept.philosophicalPremise.count ? "..." : "") + linkPart
+                if photoCaption.count > 1024 {
+                    photoCaption = String(photoCaption.prefix(1020)) + "..."
+                }
+            }
+            do {
+                return try await sendPhotoMultipart(
+                    photoURL: thumbURL,
+                    caption: photoCaption,
+                    botToken: token,
+                    channelId: cleanChannel
+                )
+            } catch {
+                // Если отправка фото вернула ошибку, переходим к резервной отправке видео/текста
+            }
+        }
+
+        // Если видеофайл помещается в лимит Telegram Bot API (<= 48 MB), отправляем сам видеофайл
+        if FileManager.default.fileExists(atPath: result.outputURL.path) {
+            let fileSize = (try? FileManager.default.attributesOfItem(atPath: result.outputURL.path)[.size] as? NSNumber)?.int64Value ?? 0
+            if fileSize > 0 && fileSize <= 48 * 1024 * 1024 {
+                var videoCaption = text
+                if videoCaption.count > 1024 {
+                    videoCaption = String(videoCaption.prefix(1020)) + "..."
+                }
+                if let msgId = try? await sendVideoMultipart(
+                    videoURL: result.outputURL,
+                    caption: videoCaption,
+                    botToken: token,
+                    channelId: cleanChannel
+                ) {
+                    return msgId
+                }
+            }
+        }
 
         if text.count > 4096 {
             text = String(text.prefix(4090)) + "..."
@@ -194,6 +246,45 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
+        let (data, resp) = try await session.data(for: request)
+        return try parseMessageID(from: data, response: resp)
+    }
+
+    private func sendPhotoMultipart(photoURL: URL, caption: String, botToken: String, channelId: String) async throws -> Int {
+        guard let url = URL(string: "https://api.telegram.org/bot\(botToken)/sendPhoto") else {
+            throw TelegramPublishError.invalidURL
+        }
+
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        var body = Data()
+        func appendString(_ str: String) {
+            if let d = str.data(using: .utf8) { body.append(d) }
+        }
+
+        appendString("--\(boundary)\r\n")
+        appendString("Content-Disposition: form-data; name=\"chat_id\"\r\n\r\n")
+        appendString("\(channelId)\r\n")
+
+        if !caption.isEmpty {
+            appendString("--\(boundary)\r\n")
+            appendString("Content-Disposition: form-data; name=\"caption\"\r\n\r\n")
+            appendString("\(caption)\r\n")
+        }
+
+        let photoData = try Data(contentsOf: photoURL)
+        let filename = photoURL.lastPathComponent
+        appendString("--\(boundary)\r\n")
+        appendString("Content-Disposition: form-data; name=\"photo\"; filename=\"\(filename)\"\r\n")
+        appendString("Content-Type: image/jpeg\r\n\r\n")
+        body.append(photoData)
+        appendString("\r\n")
+        appendString("--\(boundary)--\r\n")
+
+        request.httpBody = body
         let (data, resp) = try await session.data(for: request)
         return try parseMessageID(from: data, response: resp)
     }

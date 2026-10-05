@@ -151,9 +151,9 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         )
     }
 
-    private func overlapsAny(range: TimeSegment, in used: [TimeSegment]) -> Bool {
+    private func overlapsAny(range: TimeSegment, in used: [TimeSegment], safetyBuffer: Double = 25.0) -> Bool {
         used.contains { existing in
-            max(existing.start, range.start) < min(existing.end, range.end)
+            max(existing.start - safetyBuffer, range.start) < min(existing.end + safetyBuffer, range.end)
         }
     }
 
@@ -172,6 +172,9 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             $0.start >= max(window.lowerBound, minStartTime) && $0.start <= window.upperBound
         }
         guard !candidates.isEmpty else {
+            if !allowChaining {
+                return []
+            }
             let start = max(window.lowerBound, minStartTime)
             return [TimeSegment(start: start, end: start + targetDuration)]
         }
@@ -404,12 +407,18 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         }
 
         guard bestStartIdx >= 0 else {
+            if !allowChaining {
+                return []
+            }
             let start = max(window.lowerBound, minStartTime)
             return [TimeSegment(start: start, end: start + targetDuration)]
         }
 
         let slice = candidates[bestStartIdx..<(min(bestStartIdx + max(bestLength, 1), candidates.count))]
         guard let first = slice.first, let last = slice.last else {
+            if !allowChaining {
+                return []
+            }
             return [TimeSegment(start: window.lowerBound, end: window.lowerBound + targetDuration)]
         }
 
@@ -419,9 +428,9 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         let minSegmentDuration = isAct4 ? 5.0 : 15.0
         let rawRange = TimeSegment(start: first.start, end: max(last.end, first.start + minSegmentDuration))
         let headPadding: Double = isAct1 ? 3.0 : (isAct3 ? 1.2 : (isAct4 ? 1.5 : 0.5))
-        // Хвостовой паддинг строго 0.35с для естественного затухания реплики без захвата следующих сцен фильма.
-        // Финальный хвост послевкусия (черный экран и затухающая музыка) добавляется на этапе AVComposition.
-        let tailPadding: Double = 0.35
+        // Хвостовой паддинг 0.85с для естественного затухания реплики, эха и реверберации
+        // перед плавным кинематографическим затемнением на склейке (устраняет эффект обрыва слов)
+        let tailPadding: Double = 0.85
         let maxSceneDuration = targetDuration * 1.75
 
         let detector = SentenceBoundaryDetector(
@@ -440,10 +449,11 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         var resultSegments = [refined]
 
         // Для Актов 2 и 3: если главная сцена короче 65% от целевого хронометража (например, 70с из 170с),
-        // дополняем ее второй смысловой сценой из того же окна сюжета без наложения для выхода на хронометраж 7-10 минут
+        // дополняем ее второй смысловой сценой из того же окна сюжета без наложения для выхода на хронометраж 7-10 минут.
+        // Минимальная дистанция 90 секунд исключает взятие реплик из той же самой сцены фильма.
         if allowChaining && (actType == .downfall || actType == .struggle) && refined.duration < (targetDuration * 0.65) {
             let remainingBudget = targetDuration - refined.duration
-            let secondaryMinStartTime = refined.end + 6.0
+            let secondaryMinStartTime = refined.end + 90.0
             var extendedUsed = usedRanges
             extendedUsed.append(refined)
 
@@ -461,7 +471,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                     actType: actType,
                     allowChaining: false
                 )
-                if let secFirst = secondarySegments.first, secFirst.duration >= 18.0 {
+                if let secFirst = secondarySegments.first, secFirst.duration >= 18.0, !overlapsAny(range: secFirst, in: extendedUsed) {
                     resultSegments.append(secFirst)
                 }
             }

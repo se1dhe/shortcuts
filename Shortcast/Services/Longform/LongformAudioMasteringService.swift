@@ -14,6 +14,7 @@ final class LongformAudioMasteringService: LongformAudioMasteringProtocol, Senda
         speechTrack: AVCompositionTrack,
         speechIntervals: [TimeSegment],
         sceneCutPoints: [Double] = [],
+        cutTransitions: [LongformCutTransition] = [],
         totalDuration: Double,
         baseMusicVolume: Float = 0.28,
         duckingEnabled: Bool = true,
@@ -107,31 +108,71 @@ final class LongformAudioMasteringService: LongformAudioMasteringProtocol, Senda
             )
         }
 
-        // Микро-кроссфейды на склейках сцен (только если точка склейки свободна и не пересекается)
-        let validCutPoints = sceneCutPoints.sorted().filter { $0 > (lastSpeechRampEnd + 0.1) && $0 < min(totalDuration - 0.5, lastSpeechEnd) }
-        for cut in validCutPoints {
-            let fadeDuration: Double = 0.04
-            let cutFadeOutStart = cut - fadeDuration
-            guard cutFadeOutStart >= lastSpeechRampEnd + 0.01 else { continue }
-            let cutFadeInEnd = cut + fadeDuration
-            guard cutFadeInEnd < lastSpeechEnd else { continue }
+        // Мягкие кинематографические переходы и затухания речи на склейках сцен
+        if !cutTransitions.isEmpty {
+            let sortedTransitions = cutTransitions.sorted { $0.sceneEndTime < $1.sceneEndTime }
+            for cut in sortedTransitions {
+                guard cut.sceneEndTime > (lastSpeechRampEnd + 0.05) && cut.nextSceneStartTime < (totalDuration - 0.2) else { continue }
 
-            safeSetVolumeRamp(
-                params: speechParams,
-                from: 1.0,
-                to: 0.0,
-                start: cutFadeOutStart,
-                duration: fadeDuration,
-                lastRampEnd: &lastSpeechRampEnd
-            )
-            safeSetVolumeRamp(
-                params: speechParams,
-                from: 0.0,
-                to: 1.0,
-                start: cut,
-                duration: fadeDuration,
-                lastRampEnd: &lastSpeechRampEnd
-            )
+                let fadeOutDur: Double = 0.20
+                let fadeOutStart = max(lastSpeechRampEnd + 0.01, cut.sceneEndTime - fadeOutDur)
+                let actualFadeOutDur = cut.sceneEndTime - fadeOutStart
+                if actualFadeOutDur >= 0.04 {
+                    safeSetVolumeRamp(
+                        params: speechParams,
+                        from: 1.0,
+                        to: 0.0,
+                        start: fadeOutStart,
+                        duration: actualFadeOutDur,
+                        lastRampEnd: &lastSpeechRampEnd
+                    )
+                }
+
+                // В паузе между сценами (черный экран) речь полностью заглушена
+                speechParams.setVolume(0.0, at: CMTime(seconds: cut.sceneEndTime, preferredTimescale: 600))
+                lastSpeechRampEnd = max(lastSpeechRampEnd, cut.sceneEndTime)
+
+                // Плавное нарастание речи в начале новой сцены
+                let fadeInDur: Double = 0.20
+                let fadeInStart = max(lastSpeechRampEnd + 0.01, cut.nextSceneStartTime)
+                if fadeInStart + fadeInDur < min(totalDuration - 0.2, lastSpeechEnd) {
+                    safeSetVolumeRamp(
+                        params: speechParams,
+                        from: 0.0,
+                        to: 1.0,
+                        start: fadeInStart,
+                        duration: fadeInDur,
+                        lastRampEnd: &lastSpeechRampEnd
+                    )
+                }
+            }
+        } else {
+            // Резервный режим для одиночных точек склеек
+            let validCutPoints = sceneCutPoints.sorted().filter { $0 > (lastSpeechRampEnd + 0.1) && $0 < min(totalDuration - 0.5, lastSpeechEnd) }
+            for cut in validCutPoints {
+                let fadeDuration: Double = 0.05
+                let cutFadeOutStart = cut - fadeDuration
+                guard cutFadeOutStart >= lastSpeechRampEnd + 0.01 else { continue }
+                let cutFadeInEnd = cut + fadeDuration
+                guard cutFadeInEnd < lastSpeechEnd else { continue }
+
+                safeSetVolumeRamp(
+                    params: speechParams,
+                    from: 1.0,
+                    to: 0.0,
+                    start: cutFadeOutStart,
+                    duration: fadeDuration,
+                    lastRampEnd: &lastSpeechRampEnd
+                )
+                safeSetVolumeRamp(
+                    params: speechParams,
+                    from: 0.0,
+                    to: 1.0,
+                    start: cut,
+                    duration: fadeDuration,
+                    lastRampEnd: &lastSpeechRampEnd
+                )
+            }
         }
 
         // Затухание дорожки речи: после последней фразы плавно уходит в ноль

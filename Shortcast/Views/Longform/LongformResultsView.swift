@@ -275,7 +275,7 @@ struct LongformResultsView: View {
             .frame(width: 400)
         }
         .sheet(isPresented: $showYouTubePublishSheet) {
-            LongformYouTubePublishSheet(result: result, movieTitle: movieTitle)
+            LongformYouTubePublishSheet(result: result, movieTitle: movieTitle, movie: workspace.detectedMovie)
         }
         .onAppear {
             player = AVPlayer(url: result.outputURL)

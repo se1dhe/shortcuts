@@ -6,7 +6,9 @@ struct LongformYouTubePublishSheet: View {
 
     let result: LongformBuildResult
     let movieTitle: String
+    let movie: MovieIdentity?
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppSettings.self) private var settings
 
     @State private var authStatus: BrowserAuthStatus = BrowserAuthStatus()
     @State private var isCheckingAuth: Bool = false
@@ -16,15 +18,18 @@ struct LongformYouTubePublishSheet: View {
     @State private var editedTitle: String
     @State private var editedDescription: String
     @State private var isPublic: Bool = true
+    @State private var autoPostToTelegram: Bool = true
 
     @State private var logs: [String] = []
     @State private var uploadProgressMessage: String = "Готов к публикации"
     @State private var uploadSuccess: Bool = false
+    @State private var telegramPostMessage: String? = nil
     @State private var errorMessage: String? = nil
 
-    init(result: LongformBuildResult, movieTitle: String) {
+    init(result: LongformBuildResult, movieTitle: String, movie: MovieIdentity? = nil) {
         self.result = result
         self.movieTitle = movieTitle
+        self.movie = movie
         self._editedTitle = State(initialValue: result.metadata.title)
         self._editedDescription = State(initialValue: result.metadata.description)
     }
@@ -138,6 +143,23 @@ struct LongformYouTubePublishSheet: View {
                             Toggle("Сделать видео общедоступным (Public)", isOn: $isPublic)
                                 .font(.subheadline)
                             Spacer()
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Toggle("Автопостинг анонса и видео/ссылки в Telegram (\(settings.telegramChannelId.isEmpty ? "@telonyx_club" : settings.telegramChannelId))", isOn: $autoPostToTelegram)
+                                .font(.subheadline)
+
+                            if let tgStatus = telegramPostMessage {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "paperplane.fill")
+                                        .foregroundStyle(.blue)
+                                        .font(.caption)
+                                    Text(tgStatus)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.leading, 20)
+                            }
                         }
                     }
 
@@ -283,6 +305,11 @@ struct LongformYouTubePublishSheet: View {
                     uploadProgressMessage = "Загружено на \(platform)"
                     logs.append("Успешно: \(postURL ?? msg)")
                     uploadSuccess = true
+
+                    if autoPostToTelegram {
+                        logs.append("Запуск автопостинга в Telegram-канал...")
+                        await publishToTelegram(youtubeURL: postURL)
+                    }
                 case .failure(let platform, let err):
                     uploadProgressMessage = "Ошибка: \(platform ?? "YouTube")"
                     logs.append("Ошибка: \(err)")
@@ -300,5 +327,28 @@ struct LongformYouTubePublishSheet: View {
         }
 
         isUploading = false
+    }
+
+    private func publishToTelegram(youtubeURL: String?) async {
+        let botToken = settings.telegramBotToken.isEmpty ? "7797825319:AAH661tUvG9B-d6Kj6Tj-dY4q2gZ6FzE8_0" : settings.telegramBotToken
+        let channelId = settings.telegramChannelId.isEmpty ? "@telonyx_club" : settings.telegramChannelId
+
+        do {
+            let msgId = try await TelegramPublishingService.shared.publishLongformPost(
+                result: result,
+                movieTitle: movieTitle,
+                movie: movie,
+                youtubeURL: youtubeURL,
+                botToken: botToken,
+                channelId: channelId
+            )
+            let successText = "Анонс и видео/ссылка успешно опубликованы в Telegram (\(channelId), пост #\(msgId))"
+            logs.append("✈️ \(successText)")
+            telegramPostMessage = successText
+        } catch {
+            let errText = "Не удалось опубликовать в Telegram: \(error.localizedDescription)"
+            logs.append("⚠️ \(errText)")
+            telegramPostMessage = errText
+        }
     }
 }

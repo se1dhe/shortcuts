@@ -508,6 +508,17 @@ final class AppSettings {
         static let processedMovieClipIDs = "shortcast.processedMovieClipIDs"
         static let processedVideoHistory = "shortcast.processedVideoHistory"
         static let customMusicDirectoryBookmark = "shortcast.customMusicDirectoryBookmark"
+        // Longform Cinema Audio & Shield Settings
+        static let longformColdOpen = "shortcast.longform.coldOpenEnabled"
+        static let longformDialogueFocus = "shortcast.longform.dialogueFocusEnabled"
+        static let longformMusicDucking = "shortcast.longform.originalMusicDucking"
+        static let longformAmbientMusic = "shortcast.longform.ambientMusicEnabled"
+        static let longformDucking = "shortcast.longform.duckingEnabled"
+        static let longformPresetIndex = "shortcast.longform.selectedPresetIndex"
+        static let longformCustomAudioPath = "shortcast.longform.customAudioPath"
+        static let longformAmbientVolume = "shortcast.longform.ambientVolume"
+        static let longformAntiCopyright = "shortcast.longform.antiCopyrightEnabled"
+        static let longformAntiCopyrightPreset = "shortcast.longform.antiCopyrightPreset"
         /// Old Keychain account, read once to migrate into UserDefaults.
         static let legacyApiKey = "upload-post-api-key"
     }

@@ -17,20 +17,30 @@ struct ThematicConceptSelectionSheet: View {
     @State private var showCustomInput: Bool = false
     @State private var isRegenerating: Bool = false
 
-    // Аудиомастеринг и звукорежиссура Shortcast Cinema
-    @State private var dialogueFocusEnabled: Bool = true
-    @State private var originalMusicDucking: Double = 0.82
-    @State private var coldOpenEnabled: Bool = true
-    @State private var ambientMusicEnabled: Bool = true
-    @State private var duckingEnabled: Bool = true
-    @State private var selectedPresetIndex: Int = 0
-    @State private var customAudioURL: URL? = nil
-    @State private var ambientVolume: Double = 0.18
+    // Аудиомастеринг и звукорежиссура Shortcast Cinema (автоматически сохраняются в UserDefaults)
+    @AppStorage("shortcast.longform.dialogueFocusEnabled") private var dialogueFocusEnabled: Bool = true
+    @AppStorage("shortcast.longform.originalMusicDucking") private var originalMusicDucking: Double = 1.00
+    @AppStorage("shortcast.longform.coldOpenEnabled") private var coldOpenEnabled: Bool = true
+    @AppStorage("shortcast.longform.ambientMusicEnabled") private var ambientMusicEnabled: Bool = true
+    @AppStorage("shortcast.longform.duckingEnabled") private var duckingEnabled: Bool = true
+    @AppStorage("shortcast.longform.selectedPresetIndex") private var selectedPresetIndex: Int = 0
+    @AppStorage("shortcast.longform.customAudioPath") private var customAudioPath: String = ""
+    @AppStorage("shortcast.longform.ambientVolume") private var ambientVolume: Double = 0.18
     @State private var previewController = AudioPreviewController()
 
-    // Антикопирайт и защита от YouTube Content ID
-    @State private var antiCopyrightEnabled: Bool = true
-    @State private var antiCopyrightPreset: AntiCopyrightPreset = .cinemaShield
+    // Антикопирайт и защита от YouTube Content ID (автоматически сохраняются в UserDefaults)
+    @AppStorage("shortcast.longform.antiCopyrightEnabled") private var antiCopyrightEnabled: Bool = true
+    @AppStorage("shortcast.longform.antiCopyrightPreset") private var antiCopyrightPreset: AntiCopyrightPreset = .cinemaShield
+
+    private var customAudioURL: URL? {
+        get {
+            guard !customAudioPath.isEmpty, FileManager.default.fileExists(atPath: customAudioPath) else { return nil }
+            return URL(fileURLWithPath: customAudioPath)
+        }
+        nonmutating set {
+            customAudioPath = newValue?.path ?? ""
+        }
+    }
 
     private let musicPresets: [(name: String, fileName: String)] = [
         ("prrodan: Foggy Night (Главная тема)", "Prrodan_Foggy_Night.m4a"),
@@ -93,7 +103,9 @@ struct ThematicConceptSelectionSheet: View {
         if let customAudioURL {
             return customAudioURL
         }
-        let fileName = musicPresets[selectedPresetIndex].fileName
+        guard !musicPresets.isEmpty else { return nil }
+        let safeIndex = min(max(0, selectedPresetIndex), musicPresets.count - 1)
+        let fileName = musicPresets[safeIndex].fileName
         return resolveMusicFile(fileName: fileName)
     }
 
@@ -568,9 +580,9 @@ struct ThematicConceptSelectionSheet: View {
                                 Image(systemName: "speaker.wave.1.fill")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                                Slider(value: $ambientVolume, in: 0.05...0.40)
+                                Slider(value: $ambientVolume, in: 0.01...0.60)
                                     .frame(width: 80)
-                                Text("\(Int(ambientVolume * 100))%")
+                                Text("\(Int(round(ambientVolume * 100)))%")
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(.secondary)
                                     .frame(width: 34, alignment: .trailing)
@@ -668,7 +680,7 @@ struct ThematicConceptSelectionSheet: View {
                 previewController.play(url: url, volume: Float(ambientVolume))
             }
         }
-        .onChange(of: customAudioURL) { _, _ in
+        .onChange(of: customAudioPath) { _, _ in
             if previewController.isPlaying, let url = resolvedMusicURL {
                 previewController.play(url: url, volume: Float(ambientVolume))
             }

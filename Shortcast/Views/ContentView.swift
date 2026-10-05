@@ -263,13 +263,11 @@ struct ContentView: View {
                 movieTitle: workspace.detectedMovie?.title ?? workspace.job?.effectiveTitle ?? "Фильм",
                 concepts: workspace.discoveredConcepts,
                 aiReasoning: workspace.thematicReasoning,
-                onSelect: { concept, confirmedTitle, musicURL, musicVolume, duckingEnabled in
+                onSelect: { concept, confirmedTitle, audioSettings in
                     workspace.confirmLongformConcept(
                         concept,
                         confirmedMovieTitle: confirmedTitle,
-                        backgroundMusicURL: musicURL,
-                        musicVolume: musicVolume,
-                        duckingEnabled: duckingEnabled,
+                        audioSettings: audioSettings,
                         settings: settings
                     )
                 },

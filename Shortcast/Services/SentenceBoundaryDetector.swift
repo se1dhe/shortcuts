@@ -219,7 +219,9 @@ struct SentenceBoundaryDetector: SentenceBoundaryDetecting {
 
         // 1. If timestamp is enclosed in a sentence: snap to its start
         if let enclosing = sentences.first(where: { timestamp >= $0.start && timestamp <= $0.end }) {
-            return max(0.0, enclosing.start - headPadding)
+            let prevEnd = sentences.filter { $0.end < enclosing.start }.map(\.end).max() ?? 0.0
+            let desired = max(0.0, enclosing.start - headPadding)
+            return max(desired, prevEnd > 0 ? (prevEnd + 0.15) : 0.0)
         }
 
         // 2. If timestamp is before all sentences: snap to the first sentence start
@@ -237,7 +239,9 @@ struct SentenceBoundaryDetector: SentenceBoundaryDetecting {
             abs(timestamp - $0.start) < abs(timestamp - $1.start)
         })
         if let closest = closest {
-            return max(0.0, closest.start - headPadding)
+            let prevEnd = sentences.filter { $0.end < closest.start }.map(\.end).max() ?? 0.0
+            let desired = max(0.0, closest.start - headPadding)
+            return max(desired, prevEnd > 0 ? (prevEnd + 0.15) : 0.0)
         }
 
         return max(0.0, timestamp - headPadding)

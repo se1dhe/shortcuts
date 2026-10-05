@@ -10,7 +10,7 @@ struct MusicLibraryView: View {
     @State private var player: AVPlayer?
     @State private var selectedFilter: String = "Все"
     
-    private let filters = ["Все", "drama", "suspense", "action", "comedy", "sigma", "cinematic"]
+    private let filters = ["Все", "prrodan", "cinematic", "drama", "suspense", "sigma"]
     
     var body: some View {
         VStack(spacing: 0) {

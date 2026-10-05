@@ -61,8 +61,26 @@ enum MediaExtractor {
             throw MediaExtractorError.inputConversionFailed(error.localizedDescription)
         }
 
-        let outputURL = inputDirectory
-            .appendingPathComponent("shortcast-normalized-\(UUID().uuidString).mp4")
+        let sourceSize = (try? sourceURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        let baseCleanName = sourceURL.deletingPathExtension().lastPathComponent
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .joined(separator: "_")
+        let streamSuffix = selectedAudioStreamIndex.map { "_a\($0)" } ?? ""
+        let deterministicName = "shortcast-normalized-\(baseCleanName.prefix(40))-\(sourceSize)\(streamSuffix).mp4"
+        let outputURL = inputDirectory.appendingPathComponent(deterministicName)
+
+        // 1. Быстрая проверка дискового кэша: если нормализованный MP4 уже существует и читаем, используем мгновенно
+        if FileManager.default.fileExists(atPath: outputURL.path) {
+            let existingSize = (try? outputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            if existingSize > 1024 * 1024 {
+                let asset = AVURLAsset(url: outputURL)
+                if (try? await asset.loadTracks(withMediaType: .video).first) != nil {
+                    return outputURL
+                }
+            }
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
         let ffmpeg: URL
         do {
             ffmpeg = try await BinaryDownloadService.ensureAvailable(.ffmpeg, workingDirectory: workingDirectory)
@@ -71,19 +89,65 @@ enum MediaExtractor {
                 "FFmpeg is required for \(sourceURL.pathExtension.uppercased()) import: \(shortError(error))")
         }
 
+        let ffprobe: URL
+        do {
+            ffprobe = try await BinaryDownloadService.ensureAvailable(.ffprobe, workingDirectory: workingDirectory)
+        } catch {
+            throw MediaExtractorError.inputConversionFailed("FFprobe is required: \(shortError(error))")
+        }
+
+        let inspectedTracks = await inspectAudioTracks(sourceURL: sourceURL, ffprobe: ffprobe)
+        let selectedTrack: AudioTrackInfo?
         let targetAudioMap: String
         if let chosen = selectedAudioStreamIndex {
             targetAudioMap = "0:\(chosen)"
+            selectedTrack = inspectedTracks.first(where: { $0.id == chosen })
         } else {
-            let ffprobe: URL
-            do {
-                ffprobe = try await BinaryDownloadService.ensureAvailable(.ffprobe, workingDirectory: workingDirectory)
-            } catch {
-                throw MediaExtractorError.inputConversionFailed("FFprobe is required: \(shortError(error))")
-            }
-            targetAudioMap = await determineBestAudioTrack(sourceURL: sourceURL, ffprobe: ffprobe)
+            selectedTrack = pickRecommendedAudioTrack(from: inspectedTracks)
+            targetAudioMap = selectedTrack != nil ? "0:\(selectedTrack!.id)" : "0:a:0?"
         }
 
+        // Dialogue Focus: для 5.1/7.1 выделяем чистый центральный канал речи (c2 / FC) на 100%,
+        // а фоновую музыку фильма (c0, c1, c4, c5) приглушаем на 80-85%, освобождая место под саундтрек
+        let isMultiChannel = (selectedTrack?.channels ?? 2) >= 6
+        let audioFilter = isMultiChannel
+            ? "pan=stereo|c0=c2+0.18*c0+0.1*c4|c1=c2+0.18*c1+0.1*c5,aresample=async=1:first_pts=0"
+            : "pan=stereo|c0=0.7*c0+0.3*c1|c1=0.3*c0+0.7*c1,aresample=async=1:first_pts=0"
+
+        // 2. СВЕРХБЫСТРЫЙ ПАСС: Ремуксинг без перекодирования (-c:v copy).
+        // Если видеопоток уже H.264 или HEVC, перепаковка MKV в MP4 занимает 5-10 секунд вместо 20 минут.
+        let remuxArguments = [
+            "-hide_banner", "-y",
+            "-i", sourceURL.path,
+            "-map", "0:v:0",
+            "-map", targetAudioMap,
+            "-map_metadata", "-1",
+            "-map_chapters", "-1",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-profile:a", "aac_low",
+            "-ar", "48000",
+            "-ac", "2",
+            "-af", audioFilter,
+            "-avoid_negative_ts", "make_zero",
+            "-movflags", "+faststart",
+            outputURL.path
+        ]
+
+        if let _ = try? await ProcessRunner.shared.run(executableURL: ffmpeg, arguments: remuxArguments) {
+            let asset = AVURLAsset(url: outputURL)
+            let vTracks = (try? await asset.loadTracks(withMediaType: .video)) ?? []
+            let aTracks = (try? await asset.loadTracks(withMediaType: .audio)) ?? []
+            let fileSize = (try? outputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+
+            if !vTracks.isEmpty && !aTracks.isEmpty && fileSize > 1024 * 1024 {
+                return outputURL
+            }
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
+        // 3. FALLBACK ПАСС: Полное перекодирование для нестандартных кодеков (VP9, AV1 и т.д.)
         let commonArguments = [
             "-hide_banner", "-y",
             "-i", sourceURL.path,
@@ -97,7 +161,7 @@ enum MediaExtractor {
             "-profile:a", "aac_low",
             "-ar", "48000",
             "-ac", "2",
-            "-af", "aresample=async=1:first_pts=0",
+            "-af", audioFilter,
             "-avoid_negative_ts", "make_zero",
             "-movflags", "+faststart"
         ]

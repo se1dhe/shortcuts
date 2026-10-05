@@ -110,11 +110,25 @@ public final class BackgroundMusicService: BackgroundMusicSelecting, Sendable {
             }
         }
         
+        // Сортировка: Foggy Night на первом месте, затем саундтреки prrodan, затем остальные
+        results.sort { t1, t2 in
+            let isFoggy1 = t1.url.lastPathComponent.lowercased().contains("foggy_night")
+            let isFoggy2 = t2.url.lastPathComponent.lowercased().contains("foggy_night")
+            if isFoggy1 != isFoggy2 { return isFoggy1 }
+
+            let isPrrodan1 = t1.moodTag == "prrodan" || t1.url.lastPathComponent.lowercased().contains("prrodan")
+            let isPrrodan2 = t2.moodTag == "prrodan" || t2.url.lastPathComponent.lowercased().contains("prrodan")
+            if isPrrodan1 != isPrrodan2 { return isPrrodan1 }
+
+            return t1.name < t2.name
+        }
+
         return results
     }
     
     private func deriveMood(from filename: String) -> String {
         let lower = filename.lowercased()
+        if lower.contains("prrodan") { return "prrodan" }
         if lower.contains("drama") || lower.contains("sad") || lower.contains("emotional") { return "drama" }
         if lower.contains("suspense") || lower.contains("dark") || lower.contains("tension") { return "suspense" }
         if lower.contains("epic") || lower.contains("action") || lower.contains("battle") { return "action" }

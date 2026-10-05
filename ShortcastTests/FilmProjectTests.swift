@@ -79,4 +79,28 @@ struct FilmProjectTests {
 
         try? FileManager.default.removeItem(at: tempDir)
     }
+
+    @Test("FilmProjectService loads project even if sourceMovieURL was deleted or file moved")
+    func testMovedFileLoad() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let service = FilmProjectService(storageDirectory: tempDir)
+
+        let oldURL = URL(fileURLWithPath: "/old/temp/input/Revolver.mkv")
+        let project = FilmProject(
+            sourceMovieURL: oldURL,
+            movieFileName: "Revolver",
+            movieTitle: "Револьвер",
+            durationSeconds: 6700.0,
+            fileSizeBytes: 8589934592
+        )
+        try await service.saveProject(project)
+
+        // Incoming file is at completely different path
+        let newURL = URL(fileURLWithPath: "/Users/se1dhe/Movies/Revolver.mkv")
+        let loaded = try await service.loadProject(for: newURL)
+        #expect(loaded != nil)
+        #expect(loaded?.movieTitle == "Револьвер")
+
+        try? FileManager.default.removeItem(at: tempDir)
+    }
 }

@@ -61,4 +61,70 @@ struct SentenceBoundaryTests {
         // Tail boundary must extend beyond the end of speech by tailPadding (0.45s)
         #expect(refined.upperBound >= 125.4)
     }
+
+    @Test("Act 1 selects calm prologue monologue over later shouting scene and applies head room pre-roll")
+    func testAct1PrologueCalmMonologueSelection() async throws {
+        let transcript = Transcript(
+            segments: [
+                // Calm early exposition monologue in prologue (01:20)
+                TranscriptSegment(start: 80.0, end: 95.0, text: "За последние семь лет я твердо усвоил одну вещь: в любой игре всегда есть соперник.", words: []),
+                TranscriptSegment(start: 96.0, end: 110.0, text: "Вся хитрость - вовремя осознать, что ты стал вторым, и сделаться первым.", words: []),
+                TranscriptSegment(start: 112.0, end: 125.0, text: "Правило простое: защищай свои инвестиции и думай наперед.", words: []),
+                
+                // Aggressive shouting scene later in the movie (18:30)
+                TranscriptSegment(start: 1110.0, end: 1115.0, text: "О чем вы, я не понимаю! У тебя пять секунд! Отвечай быстро!", words: []),
+                TranscriptSegment(start: 1116.0, end: 1120.0, text: "Пять! Четыре! Я убью тебя прямо здесь!", words: []),
+
+                // Downfall, struggle, catharsis segments
+                TranscriptSegment(start: 1600.0, end: 1640.0, text: "Это была роковая ошибка. Я потерял все деньги и контроль.", words: []),
+                TranscriptSegment(start: 2400.0, end: 2450.0, text: "Мы должны бороться и выстоять против всех правил.", words: []),
+                TranscriptSegment(start: 3200.0, end: 3245.0, text: "Теперь я свободен от иллюзии и понимаю правду.", words: [])
+            ],
+            language: "ru"
+        )
+
+        let concept = ThematicConcept(
+            word: "Иллюзия",
+            tagline: "Почему твой разум обманывает тебя",
+            philosophicalPremise: "Твой главный враг прячется там, где ты меньше всего ждешь",
+            suggestedTitle: "Этот фильм уничтожит твою гордость",
+            accentColorHex: "#DDA0DD"
+        )
+
+        let director = LongformNarrativeDirector()
+        let arc = try await director.buildArc(
+            from: transcript,
+            concept: concept,
+            movieTitle: "Револьвер",
+            targetDuration: 360.0
+        )
+
+        let act1 = arc.acts[0]
+        #expect(act1.type == LongformActType.hook)
+        guard let firstSeg = act1.segments.first else {
+            Issue.record("Act 1 has no segments")
+            return
+        }
+
+        // Must pick the calm monologue in the prologue (~80s), NOT the interrogation (~1110s)
+        #expect(firstSeg.start < 300.0)
+        // Must apply atmospheric head room pre-roll (start should be ~78s, exactly 2s before 80.0s speech)
+        #expect(firstSeg.start <= 78.5)
+    }
+
+    @Test("SentenceBoundaryDetector pre-roll does not overlap preceding sentences")
+    func testPreRollDoesNotOverlapPrecedingSentence() {
+        let segments = [
+            TranscriptSegment(start: 10.0, end: 14.0, text: "Первая фраза закончилась.", words: []),
+            TranscriptSegment(start: 15.0, end: 20.0, text: "Вторая фраза начинается здесь.", words: [])
+        ]
+
+        let detector = SentenceBoundaryDetector(headPadding: 2.0)
+        // Snap to start of second sentence (starts at 15.0)
+        // Desired with 2.0s headPadding would be 13.0s, but first sentence ends at 14.0s!
+        // Must safely clamp to >= 14.15s to not cut into sentence 1.
+        let snapped = detector.snapToSentenceStart(timestamp: 16.0, in: segments)
+        #expect(snapped >= 14.1)
+        #expect(snapped < 15.0)
+    }
 }

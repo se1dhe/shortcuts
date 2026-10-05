@@ -6,7 +6,7 @@ struct ThematicConceptSelectionSheet: View {
     let initialMovieTitle: String
     let concepts: [ThematicConcept]
     let aiReasoning: String?
-    let onSelect: (ThematicConcept, String, URL?, Float, Bool) -> Void
+    let onSelect: (ThematicConcept, String, LongformAudioSettings) -> Void
     let onCancel: () -> Void
     let onRegenerate: (() -> Void)?
 
@@ -17,7 +17,10 @@ struct ThematicConceptSelectionSheet: View {
     @State private var showCustomInput: Bool = false
     @State private var isRegenerating: Bool = false
 
-    // Музыкальное сопровождение (Ambient / Cinematic Dark)
+    // Аудиомастеринг и звукорежиссура Shortcast Cinema
+    @State private var dialogueFocusEnabled: Bool = true
+    @State private var originalMusicDucking: Double = 0.82
+    @State private var coldOpenEnabled: Bool = true
     @State private var ambientMusicEnabled: Bool = true
     @State private var duckingEnabled: Bool = true
     @State private var selectedPresetIndex: Int = 0
@@ -26,17 +29,22 @@ struct ThematicConceptSelectionSheet: View {
     @State private var previewController = AudioPreviewController()
 
     private let musicPresets: [(name: String, fileName: String)] = [
-        ("Тёмный эмбиент (Dark Monologue)", "Sigma_Monologue_Dark.m4a"),
+        ("prrodan: Foggy Night (Главная тема)", "Prrodan_Foggy_Night.m4a"),
+        ("prrodan: Тёмная атмосфера (Dark Atmosphere)", "Prrodan_Dark_Atmosphere.m4a"),
+        ("prrodan: Внутренняя стойкость (Resilience)", "Prrodan_Cinematic_Resilience.m4a"),
+        ("prrodan: Экзистенциальное эхо (Existential Echo)", "Prrodan_Existential_Echo.m4a"),
+        ("prrodan: Опасный разум (Dangerous Mind)", "Prrodan_Dangerous_Mind.m4a"),
+        ("prrodan: Несломленный дух (Unbroken Spirit)", "Prrodan_Unbroken_Spirit.m4a"),
+        ("Тёмный кинематографичный монолог (Monologue)", "Sigma_Monologue_Dark.m4a"),
         ("Напряжение и саспенс (Suspense)", "Tension_Dark_Suspense.m4a"),
-        ("Драматическая тема (Emotional)", "Dramatic_Emotional_Theme.m4a"),
-        ("Эпичный экшн-пульс (Pulse)", "Epic_Action_Pulse.m4a")
+        ("Драматическая тема (Emotional)", "Dramatic_Emotional_Theme.m4a")
     ]
 
     init(
         movieTitle: String,
         concepts: [ThematicConcept],
         aiReasoning: String? = nil,
-        onSelect: @escaping (ThematicConcept, String, URL?, Float, Bool) -> Void,
+        onSelect: @escaping (ThematicConcept, String, LongformAudioSettings) -> Void,
         onCancel: @escaping () -> Void,
         onRegenerate: (() -> Void)? = nil
     ) {
@@ -406,100 +414,172 @@ struct ThematicConceptSelectionSheet: View {
                 }
                 .padding(.horizontal, 6)
             }
-            .frame(maxHeight: 330)
+            .frame(maxHeight: 285)
 
             Divider()
 
-            // Блок фоновой музыки (Ambient Soundtrack)
+            // Блок аудиомастеринга и звукорежиссуры Shortcast Cinema
             VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Toggle("Фоновая музыка (Cinematic Dark Ambient)", isOn: $ambientMusicEnabled)
-                        .font(.subheadline.weight(.semibold))
-                        .toggleStyle(.switch)
+                HStack(alignment: .center) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "waveform.badge.magnifyingglass")
+                            .font(.headline)
+                            .foregroundStyle(.yellow)
+                        Text("Звукорежиссура и аудиомастеринг")
+                            .font(.headline)
+                    }
 
                     Spacer()
 
-                    if ambientMusicEnabled {
-                        Toggle("Приглушать под речью (Sidechain Ducking)", isOn: $duckingEnabled)
-                            .font(.caption.weight(.medium))
-                            .toggleStyle(.checkbox)
+                    // Чекбокс кинематографического Cold Open
+                    Toggle(isOn: $coldOpenEnabled) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "film.stack")
+                            Text("Cold Open (2.5с интро)")
+                        }
+                        .font(.caption.weight(.medium))
                     }
+                    .toggleStyle(.checkbox)
+                    .help("Плавное кинематографическое вступление в затемнении перед первым кадром фильма")
                 }
 
-                if ambientMusicEnabled {
-                    HStack(spacing: 12) {
-                        Picker("Саундтрек:", selection: $selectedPresetIndex) {
-                            ForEach(0..<musicPresets.count, id: \.self) { idx in
-                                Text(musicPresets[idx].name).tag(idx)
+                // 1. Секция диалогов фильма: Dialogue Focus (Center Channel Extraction)
+                HStack(spacing: 14) {
+                    Toggle(isOn: $dialogueFocusEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text("Фокус на диалогах (Dialogue Focus)")
+                                    .font(.subheadline.weight(.semibold))
+                                Text("5.1 / СТЕРЕО")
+                                    .font(.system(size: 9, weight: .black))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.yellow.opacity(0.2))
+                                    .foregroundStyle(.yellow)
+                                    .clipShape(Capsule())
                             }
+                            Text("Приглушать оригинальную музыку фильма, сохраняя чёткие голоса актеров дубляжа")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: 300)
-                        .disabled(customAudioURL != nil)
+                    }
+                    .toggleStyle(.switch)
 
-                        Button {
-                            let openPanel = NSOpenPanel()
-                            openPanel.canChooseFiles = true
-                            openPanel.canChooseDirectories = false
-                            openPanel.allowsMultipleSelection = false
-                            openPanel.allowedContentTypes = [.audio, .mp3, .wav]
-                            openPanel.message = "Выберите аудиодорожку (mp3, wav, m4a)"
-                            if openPanel.runModal() == .OK, let url = openPanel.url {
-                                customAudioURL = url
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: customAudioURL != nil ? "checkmark.circle.fill" : "music.note.list")
-                                Text(customAudioURL != nil ? customAudioURL!.lastPathComponent : "Свой файл…")
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(customAudioURL != nil ? .yellow : .secondary)
+                    Spacer()
 
-                        if customAudioURL != nil {
-                            Button {
-                                customAudioURL = nil
-                            } label: {
-                                Image(systemName: "xmark.circle")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain)
+                    if dialogueFocusEnabled {
+                        HStack(spacing: 8) {
+                            Text("Подавление музыки:")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Slider(value: $originalMusicDucking, in: 0.40...0.95, step: 0.05)
+                                .frame(width: 85)
+                            Text("-\(Int(originalMusicDucking * 100))%")
+                                .font(.caption.monospacedDigit().weight(.bold))
+                                .foregroundStyle(.yellow)
+                                .frame(width: 44, alignment: .trailing)
                         }
+                        .help("Уровень приглушения фоновой музыки и шумов оригинального фильма (по умолчанию -82%)")
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.06)))
 
-                        // Кнопка предпрослушивания саундтрека
-                        Button {
-                            previewController.toggle(url: resolvedMusicURL, volume: Float(ambientVolume))
-                        } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: previewController.isPlaying ? "pause.fill" : "play.fill")
-                                Text(previewController.isPlaying ? "Пауза" : "Слушать")
-                            }
-                            .font(.subheadline.weight(.medium))
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(previewController.isPlaying ? .yellow : .secondary)
-                        .disabled(resolvedMusicURL == nil)
-                        .help(previewController.isPlaying ? "Приостановить предпрослушивание саундтрека" : "Предпрослушать выбранный саундтрек")
+                // 2. Секция фоновой музыки: Cinematic Dark Ambient
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Toggle("Фоновая музыка (Cinematic Dark Ambient)", isOn: $ambientMusicEnabled)
+                            .font(.subheadline.weight(.semibold))
+                            .toggleStyle(.switch)
 
                         Spacer()
 
-                        // Регулятор громкости саундтрека
-                        HStack(spacing: 8) {
-                            Image(systemName: "speaker.wave.1.fill")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Slider(value: $ambientVolume, in: 0.05...0.40)
-                                .frame(width: 85)
-                            Text("\(Int(ambientVolume * 100))%")
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .frame(width: 34, alignment: .trailing)
+                        if ambientMusicEnabled {
+                            Toggle("Приглушать под речью (Sidechain Ducking)", isOn: $duckingEnabled)
+                                .font(.caption.weight(.medium))
+                                .toggleStyle(.checkbox)
+                                .help("Автоматически снижать громкость саундтрека во время реплик персонажей")
+                        }
+                    }
+
+                    if ambientMusicEnabled {
+                        HStack(spacing: 12) {
+                            Picker("Саундтрек:", selection: $selectedPresetIndex) {
+                                ForEach(0..<musicPresets.count, id: \.self) { idx in
+                                    Text(musicPresets[idx].name).tag(idx)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .frame(maxWidth: 320)
+                            .disabled(customAudioURL != nil)
+
+                            Button {
+                                let openPanel = NSOpenPanel()
+                                openPanel.canChooseFiles = true
+                                openPanel.canChooseDirectories = false
+                                openPanel.allowsMultipleSelection = false
+                                openPanel.allowedContentTypes = [.audio, .mp3, .wav]
+                                openPanel.message = "Выберите аудиодорожку (mp3, wav, m4a)"
+                                if openPanel.runModal() == .OK, let url = openPanel.url {
+                                    customAudioURL = url
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: customAudioURL != nil ? "checkmark.circle.fill" : "music.note.list")
+                                    Text(customAudioURL != nil ? customAudioURL!.lastPathComponent : "Свой файл…")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(customAudioURL != nil ? .yellow : .secondary)
+
+                            if customAudioURL != nil {
+                                Button {
+                                    customAudioURL = nil
+                                } label: {
+                                    Image(systemName: "xmark.circle")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+
+                            // Кнопка предпрослушивания саундтрека
+                            Button {
+                                previewController.toggle(url: resolvedMusicURL, volume: Float(ambientVolume))
+                            } label: {
+                                HStack(spacing: 5) {
+                                    Image(systemName: previewController.isPlaying ? "pause.fill" : "play.fill")
+                                    Text(previewController.isPlaying ? "Пауза" : "Слушать")
+                                }
+                                .font(.subheadline.weight(.medium))
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(previewController.isPlaying ? .yellow : .secondary)
+                            .disabled(resolvedMusicURL == nil)
+
+                            Spacer()
+
+                            // Регулятор громкости саундтрека
+                            HStack(spacing: 8) {
+                                Image(systemName: "speaker.wave.1.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Slider(value: $ambientVolume, in: 0.05...0.40)
+                                    .frame(width: 80)
+                                Text("\(Int(ambientVolume * 100))%")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 34, alignment: .trailing)
+                            }
                         }
                     }
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.06)))
             }
-            .padding(12)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.06)))
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.05)))
 
             Divider()
 
@@ -519,7 +599,15 @@ struct ThematicConceptSelectionSheet: View {
                         let finalTitle = editedMovieTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             ? initialMovieTitle
                             : editedMovieTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-                        onSelect(chosen, finalTitle, resolvedMusicURL, Float(ambientVolume), duckingEnabled)
+                        let audioSettings = LongformAudioSettings(
+                            backgroundMusicURL: ambientMusicEnabled ? resolvedMusicURL : nil,
+                            musicVolume: Float(ambientVolume),
+                            duckingEnabled: duckingEnabled,
+                            dialogueFocusEnabled: dialogueFocusEnabled,
+                            originalMusicDucking: Float(originalMusicDucking),
+                            coldOpenEnabled: coldOpenEnabled
+                        )
+                        onSelect(chosen, finalTitle, audioSettings)
                     }
                 } label: {
                     HStack(spacing: 8) {

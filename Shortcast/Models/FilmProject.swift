@@ -13,6 +13,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
     var movieTitle: String
     var movieYear: String?
     var durationSeconds: Double
+    var fileSizeBytes: Int64?
 
     /// Метаданные TMDB (постер, синопсис, жанры)
     var tmdbMetadata: MovieIdentity?
@@ -48,6 +49,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
         movieTitle: String,
         movieYear: String? = nil,
         durationSeconds: Double = 0,
+        fileSizeBytes: Int64? = nil,
         tmdbMetadata: MovieIdentity? = nil,
         transcript: Transcript? = nil,
         scenes: [DetectedScene] = [],
@@ -65,6 +67,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
         self.movieTitle = movieTitle
         self.movieYear = movieYear
         self.durationSeconds = durationSeconds
+        self.fileSizeBytes = fileSizeBytes
         self.tmdbMetadata = tmdbMetadata
         self.transcript = transcript
         self.scenes = scenes
@@ -78,7 +81,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, sourceMovieURL, movieFileName, movieTitle, movieYear, durationSeconds
+        case id, sourceMovieURL, movieFileName, movieTitle, movieYear, durationSeconds, fileSizeBytes
         case tmdbMetadata, transcript, scenes, discoveredConcepts, thematicAnalysis, selectedConcept
         case candidates, createdAt, updatedAt
     }
@@ -91,6 +94,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
         movieTitle = try container.decode(String.self, forKey: .movieTitle)
         movieYear = try container.decodeIfPresent(String.self, forKey: .movieYear)
         durationSeconds = try container.decode(Double.self, forKey: .durationSeconds)
+        fileSizeBytes = try container.decodeIfPresent(Int64.self, forKey: .fileSizeBytes)
         tmdbMetadata = try container.decodeIfPresent(MovieIdentity.self, forKey: .tmdbMetadata)
         transcript = try container.decodeIfPresent(Transcript.self, forKey: .transcript)
         scenes = try container.decode([DetectedScene].self, forKey: .scenes)
@@ -111,6 +115,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
         try container.encode(movieTitle, forKey: .movieTitle)
         try container.encodeIfPresent(movieYear, forKey: .movieYear)
         try container.encode(durationSeconds, forKey: .durationSeconds)
+        try container.encodeIfPresent(fileSizeBytes, forKey: .fileSizeBytes)
         try container.encodeIfPresent(tmdbMetadata, forKey: .tmdbMetadata)
         try container.encodeIfPresent(transcript, forKey: .transcript)
         try container.encode(scenes, forKey: .scenes)

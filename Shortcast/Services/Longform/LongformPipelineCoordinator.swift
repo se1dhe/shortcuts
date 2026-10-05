@@ -8,15 +8,21 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
     private let director: any LongformNarrativeDirecting
     private let audioMastering: any LongformAudioMasteringProtocol
     private let subtitleRenderer: any LongformSubtitleRenderingProtocol
+    private let thumbnailGenerator: any LongformThumbnailGeneratingProtocol
+    private let audioLooper: any SeamlessAudioLooping
 
     init(
         director: any LongformNarrativeDirecting = LongformNarrativeDirector(),
         audioMastering: any LongformAudioMasteringProtocol = LongformAudioMasteringService(),
-        subtitleRenderer: any LongformSubtitleRenderingProtocol = LongformSubtitleRenderer()
+        subtitleRenderer: any LongformSubtitleRenderingProtocol = LongformSubtitleRenderer(),
+        thumbnailGenerator: any LongformThumbnailGeneratingProtocol = LongformThumbnailGenerator(),
+        audioLooper: any SeamlessAudioLooping = SeamlessAudioLoopService.shared
     ) {
         self.director = director
         self.audioMastering = audioMastering
         self.subtitleRenderer = subtitleRenderer
+        self.thumbnailGenerator = thumbnailGenerator
+        self.audioLooper = audioLooper
     }
 
     func buildLongformVideo(
@@ -24,9 +30,8 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         movieTitle: String,
         transcript: Transcript,
         concept: ThematicConcept,
-        backgroundMusicURL: URL? = nil,
-        musicVolume: Float = 0.28,
-        duckingEnabled: Bool = true,
+        audioSettings: LongformAudioSettings,
+        workingDirectory: URL? = nil,
         progressHandler: (@Sendable (Double, String) -> Void)? = nil
     ) async throws -> LongformBuildResult {
 
@@ -64,15 +69,21 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
 
         let sourceAudioTrack = sourceAudioTracks.first
 
-        var insertTime = CMTime.zero
-        var speechIntervals: [TimeSegment] = []
+        // 2. Кинематографический Cold Open (нарастание саундтрека в затемнении)
+        let introPadding: Double = audioSettings.coldOpenEnabled ? 2.5 : 0.0
+        var insertTime = CMTime(seconds: introPadding, preferredTimescale: 600)
         var timedPhrases: [TimedSubtitlePhrase] = []
+        var sceneCutPoints: [Double] = [introPadding]
 
         // Вставляем нарезанные сцены фильма
-        for segment in segments {
+        for (index, segment) in segments.enumerated() {
             let startCM = CMTime(seconds: segment.start, preferredTimescale: 600)
             let durationCM = CMTime(seconds: segment.duration, preferredTimescale: 600)
             let timeRange = CMTimeRange(start: startCM, duration: durationCM)
+
+            if index > 0 {
+                sceneCutPoints.append(insertTime.seconds)
+            }
 
             try compVideoTrack.insertTimeRange(timeRange, of: sourceVideoTrack, at: insertTime)
 
@@ -82,7 +93,6 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
 
             let insertedStart = insertTime.seconds
             let insertedEnd = insertedStart + segment.duration
-            speechIntervals.append(TimeSegment(start: insertedStart, end: insertedEnd))
 
             // Сопоставляем фразы из транскрипта с новым таймлайном
             let matchingSegments = transcript.segments.filter {
@@ -101,14 +111,30 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
 
         let totalDuration = insertTime.seconds
 
-        // 3. Подключение фонового саундтрека
+        // Формируем интервалы реальной речи из Whisper для сайдчейн-дакинга музыки
+        let speechIntervals: [TimeSegment] = timedPhrases.map { TimeSegment(start: $0.start, end: $0.end) }
+
+        // 3. Подключение фонового саундтрека с бесшовным мягким зацикливанием
         progressHandler?(0.50, "Мастеринг непрерывного саундтрека...")
         var audioMix: AVAudioMix? = nil
 
-        let musicURL: URL? = backgroundMusicURL
-        if let musicURL,
+        let musicURL: URL? = audioSettings.backgroundMusicURL
+        if let rawMusicURL = musicURL,
            let compMusicTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
-            let musicAsset = AVURLAsset(url: musicURL)
+            
+            // Если видео длиннее саундтрека, бесшовно зацикливаем его с мягким психоакустическим кроссфейдом
+            let effectiveMusicURL: URL
+            if totalDuration > 0 {
+                effectiveMusicURL = (try? await audioLooper.createSeamlessLoop(
+                    sourceURL: rawMusicURL,
+                    targetDuration: totalDuration + 5.0,
+                    crossfadeDuration: 4.0
+                )) ?? rawMusicURL
+            } else {
+                effectiveMusicURL = rawMusicURL
+            }
+
+            let musicAsset = AVURLAsset(url: effectiveMusicURL)
             if let sourceMusicTrack = (try? await musicAsset.loadTracks(withMediaType: .audio))?.first {
                 let musicDuration = try await musicAsset.load(.duration)
 
@@ -126,9 +152,10 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
                     musicTrack: compMusicTrack,
                     speechTrack: compSpeechTrack,
                     speechIntervals: speechIntervals,
+                    sceneCutPoints: sceneCutPoints,
                     totalDuration: totalDuration,
-                    baseMusicVolume: musicVolume,
-                    duckingEnabled: duckingEnabled
+                    baseMusicVolume: audioSettings.musicVolume,
+                    duckingEnabled: audioSettings.duckingEnabled
                 )
             }
         }
@@ -139,17 +166,21 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = renderSize
         videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+        videoComposition.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
+        videoComposition.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
+        videoComposition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
 
         let instruction = AVMutableVideoCompositionInstruction()
         instruction.timeRange = CMTimeRange(start: .zero, duration: insertTime)
+        instruction.backgroundColor = CGColor(gray: 0.0, alpha: 1.0)
 
         let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compVideoTrack)
         
-        // Масштабируем и центрируем видео под 1920x1080 16:9
+        // Кинематографический леттербоксинг (aspect-fit) под 1920x1080 16:9 без обрезания краев 2.35:1
         let naturalSize = try await sourceVideoTrack.load(.naturalSize)
         let scaleX = renderSize.width / max(naturalSize.width, 1.0)
         let scaleY = renderSize.height / max(naturalSize.height, 1.0)
-        let scale = max(scaleX, scaleY)
+        let scale = min(scaleX, scaleY)
         
         var transform = CGAffineTransform(scaleX: scale, y: scale)
         let tx = (renderSize.width - naturalSize.width * scale) / 2.0
@@ -157,22 +188,32 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         transform = transform.concatenating(CGAffineTransform(translationX: tx, y: ty))
         layerInstruction.setTransform(transform, at: .zero)
 
-        // Плавное затухание видео в черный цвет (Fade to Black) в последние 2.5 секунды
-        if totalDuration > 3.0 {
-            let fadeDuration = 2.5
-            let fadeStartTime = CMTime(seconds: totalDuration - fadeDuration, preferredTimescale: 600)
-            let fadeDurationTime = CMTime(seconds: fadeDuration, preferredTimescale: 600)
+        // Плавный выход первого кадра фильма из затемнения (Cold Open Fade-In)
+        if introPadding > 0 {
+            layerInstruction.setOpacity(0.0, at: .zero)
             layerInstruction.setOpacityRamp(
-                fromStartOpacity: 1.0,
-                toEndOpacity: 0.0,
-                timeRange: CMTimeRange(start: fadeStartTime, duration: fadeDurationTime)
+                fromStartOpacity: 0.0,
+                toEndOpacity: 1.0,
+                timeRange: CMTimeRange(
+                    start: CMTime(seconds: introPadding, preferredTimescale: 600),
+                    duration: CMTime(seconds: 1.5, preferredTimescale: 600)
+                )
+            )
+        } else {
+            layerInstruction.setOpacityRamp(
+                fromStartOpacity: 0.0,
+                toEndOpacity: 1.0,
+                timeRange: CMTimeRange(
+                    start: .zero,
+                    duration: CMTime(seconds: 1.2, preferredTimescale: 600)
+                )
             )
         }
 
         instruction.layerInstructions = [layerInstruction]
         videoComposition.instructions = [instruction]
 
-        // Накладываем оверлей Shortcast Cinema (титульная карточка темы, кинетические субтитры 1-2 слова, маркеры актов)
+        // Накладываем оверлей Shortcast Cinema (титульная карточка темы, ритмичные субтитры, карточки актов)
         let overlayLayer = await subtitleRenderer.makeOverlayLayer(
             renderSize: renderSize,
             concept: concept,
@@ -181,22 +222,81 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             totalDuration: totalDuration
         )
 
+        // Подложка глубокого чёрного цвета (YUV Black Fix — предотвращает появление зелёных полос)
+        let blackBackgroundLayer = CALayer()
+        blackBackgroundLayer.frame = CGRect(origin: .zero, size: renderSize)
+        blackBackgroundLayer.backgroundColor = CGColor(gray: 0.0, alpha: 1.0)
+        blackBackgroundLayer.isOpaque = true
+
         let videoLayer = CALayer()
         videoLayer.frame = CGRect(origin: .zero, size: renderSize)
+        videoLayer.backgroundColor = CGColor(gray: 0.0, alpha: 1.0)
+        videoLayer.isOpaque = true
 
         let outputParentLayer = CALayer()
         outputParentLayer.frame = CGRect(origin: .zero, size: renderSize)
+        outputParentLayer.backgroundColor = CGColor(gray: 0.0, alpha: 1.0)
+        outputParentLayer.isOpaque = true
+
+        outputParentLayer.addSublayer(blackBackgroundLayer)
         outputParentLayer.addSublayer(videoLayer)
+
+        // Кинематографические матовые черные полосы леттербоксинга (Hardware Matte Letterbox Fix)
+        // Физически перекрывают верх и низ кадра чистым матовым черным цветом (YUV 16,128,128)
+        if ty > 0.5 {
+            let bottomBar = CALayer()
+            bottomBar.frame = CGRect(x: 0, y: 0, width: renderSize.width, height: ceil(ty) + 2.0)
+            bottomBar.backgroundColor = CGColor(gray: 0.0, alpha: 1.0)
+            bottomBar.isOpaque = true
+            outputParentLayer.addSublayer(bottomBar)
+
+            let topBar = CALayer()
+            topBar.frame = CGRect(x: 0, y: floor(renderSize.height - ty) - 2.0, width: renderSize.width, height: ceil(ty) + 4.0)
+            topBar.backgroundColor = CGColor(gray: 0.0, alpha: 1.0)
+            topBar.isOpaque = true
+            outputParentLayer.addSublayer(topBar)
+        }
+
         outputParentLayer.addSublayer(overlayLayer)
+
+        // Плавное растворение в глубокий черный экран в финале (Cinematic Outro Fade to Black)
+        // Рендерится через CoreAnimation поверх всех слоев, гарантируя 100% отсутствие зеленых YUV-полос
+        if totalDuration > 4.0 {
+            let fadeDuration = 2.5
+            let fadeStartTime = totalDuration - fadeDuration
+            let fadeOutLayer = CALayer()
+            fadeOutLayer.frame = CGRect(origin: .zero, size: renderSize)
+            fadeOutLayer.backgroundColor = CGColor(gray: 0.0, alpha: 1.0)
+            fadeOutLayer.opacity = 0.0
+
+            let anim = CAKeyframeAnimation(keyPath: "opacity")
+            anim.values = [0.0, 0.0, 1.0]
+            anim.keyTimes = [
+                0.0,
+                NSNumber(value: fadeStartTime / totalDuration),
+                1.0
+            ]
+            anim.duration = totalDuration
+            anim.beginTime = AVCoreAnimationBeginTimeAtZero
+            anim.fillMode = .both
+            anim.isRemovedOnCompletion = false
+            fadeOutLayer.add(anim, forKey: "fadeToBlackAnimation")
+            outputParentLayer.addSublayer(fadeOutLayer)
+        }
 
         videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
             postProcessingAsVideoLayer: videoLayer,
             in: outputParentLayer
         )
 
-        // 5. Экспорт в файл
+        // 5. Экспорт в файл (строго в папку Exports рабочего каталога проекта)
         progressHandler?(0.85, "Экспорт видео в 1080p...")
-        let exportDir = FileManager.default.temporaryDirectory.appendingPathComponent("LongformExports", isDirectory: true)
+        let exportDir: URL
+        if let workingDirectory {
+            exportDir = workingDirectory.appendingPathComponent("Exports", isDirectory: true)
+        } else {
+            exportDir = FileManager.default.temporaryDirectory.appendingPathComponent("LongformExports", isDirectory: true)
+        }
         try? FileManager.default.createDirectory(at: exportDir, withIntermediateDirectories: true)
         let outputURL = exportDir.appendingPathComponent("longform_\(concept.word.lowercased())_\(UUID().uuidString.prefix(6)).mp4")
 
@@ -218,7 +318,18 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             throw NSError(domain: "LongformPipeline", code: -5, userInfo: [NSLocalizedDescriptionKey: "Экспорт не удался: \(errorMsg)"])
         }
 
-        // 6. Формирование вирусных метаданных
+        // 6. Генерация кинематографической обложки YouTube Thumbnail (1920x1080)
+        progressHandler?(0.95, "Создание обложки YouTube 1080p...")
+        let thumbOutputURL = exportDir.appendingPathComponent("thumbnail_\(concept.word.lowercased())_\(UUID().uuidString.prefix(6)).jpg")
+        let thumbnailURL = try? await thumbnailGenerator.generateThumbnail(
+            sourceAsset: sourceAsset,
+            segments: segments,
+            concept: concept,
+            movieTitle: movieTitle,
+            outputURL: thumbOutputURL
+        )
+
+        // 7. Формирование вирусных метаданных
         progressHandler?(0.98, "Генерация упаковки YouTube...")
         let metadata = LongformMetadataGenerator.generate(
             movieTitle: movieTitle,
@@ -232,7 +343,8 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             outputURL: outputURL,
             arc: arc,
             metadata: metadata,
-            duration: totalDuration
+            duration: totalDuration,
+            thumbnailURL: thumbnailURL
         )
     }
 }

@@ -175,6 +175,11 @@ struct LongformResultsView: View {
 
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 14) {
+                        // 0. Кинематографическая обложка (YouTube Thumbnail 1920x1080 в стиле @prrodan)
+                        if let thumbURL = result.thumbnailURL, let nsImage = NSImage(contentsOf: thumbURL) {
+                            thumbnailCard(image: nsImage, fileURL: thumbURL)
+                        }
+
                         // 1. Заголовок
                         metadataCard(
                             title: "Заголовок видео",
@@ -301,6 +306,48 @@ struct LongformResultsView: View {
         } catch {
             telegramError = error.localizedDescription
         }
+    }
+
+    private func thumbnailCard(image: NSImage, fileURL: URL) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Обложка YouTube (1920×1080)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+                } label: {
+                    Label("В Finder", systemImage: "folder")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.yellow)
+
+                Button {
+                    NSWorkspace.shared.open(fileURL)
+                } label: {
+                    Label("Открыть", systemImage: "arrow.up.forward.app")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.yellow)
+            }
+
+            Image(nsImage: image)
+                .resizable()
+                .aspectRatio(16/9, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.4), radius: 6, y: 2)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.06)))
     }
 
     private func metadataCard(

@@ -41,16 +41,54 @@ final class FilmProjectService: FilmProjectServicing, Sendable {
     }
 
     func loadProject(for movieURL: URL) async throws -> FilmProject? {
-        let key = keyFor(movieURL: movieURL)
+        let incomingBaseName = movieURL.deletingPathExtension().lastPathComponent
+        let incomingFullName = movieURL.lastPathComponent
+        let incomingSize = (try? movieURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
+
         let projects = try await listRecentProjects()
+
         return projects.first { p in
-            p.sourceMovieURL == movieURL || keyFor(movieURL: p.sourceMovieURL) == key
+            // 1. Прямое совпадение URL
+            if p.sourceMovieURL == movieURL {
+                return true
+            }
+
+            // 2. Совпадение по имени файла (с расширением или без)
+            let pBaseName = p.sourceMovieURL.deletingPathExtension().lastPathComponent
+            let pFullName = p.sourceMovieURL.lastPathComponent
+            let nameMatches = (incomingBaseName == pBaseName ||
+                               incomingFullName == pFullName ||
+                               incomingBaseName == p.movieFileName ||
+                               incomingFullName == p.movieFileName)
+
+            guard nameMatches else { return false }
+
+            // Если у проекта сохранен точный размер файла — сверяем
+            if let savedSize = p.fileSizeBytes, savedSize > 0 && incomingSize > 0 {
+                return savedSize == incomingSize
+            }
+
+            // Fallback для старых проектов без fileSizeBytes
+            let legacySavedSize = (try? p.sourceMovieURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
+            if legacySavedSize > 0 && incomingSize > 0 {
+                return legacySavedSize == incomingSize
+            }
+
+            // Если размер недоступен, но имя файла уникально совпадает
+            return true
         }
     }
 
     func saveProject(_ project: FilmProject) async throws {
         var updated = project
         updated.updatedAt = Date()
+
+        if updated.fileSizeBytes == nil || updated.fileSizeBytes == 0 {
+            if let size = (try? updated.sourceMovieURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) {
+                updated.fileSizeBytes = Int64(size)
+            }
+        }
+
         let url = fileURL(for: updated.id)
 
         let encoder = JSONEncoder()

@@ -359,17 +359,17 @@ final class WorkspaceModel {
                     self.detectedMovie = m
                 }
             }
-            if let ta = existingProject.thematicAnalysis, self.detectedMovie != nil {
+            if let ta = existingProject.thematicAnalysis {
                 self.thematicAnalysis = ta
                 self.thematicReasoning = ta.aiReasoning
                 self.discoveredConcepts = ta.allConcepts
                 if self.selectedConcept == nil {
                     self.selectedConcept = ta.primaryConcept
                 }
-            } else if !existingProject.discoveredConcepts.isEmpty && self.detectedMovie != nil {
+            } else if !existingProject.discoveredConcepts.isEmpty {
                 self.discoveredConcepts = existingProject.discoveredConcepts
             }
-            if let sc = existingProject.selectedConcept, self.detectedMovie != nil {
+            if let sc = existingProject.selectedConcept {
                 self.selectedConcept = sc
             }
             if let lr = existingProject.longformResult { self.longformResult = lr }
@@ -379,7 +379,8 @@ final class WorkspaceModel {
                 sourceMovieURL: sandboxFriendlyURL,
                 movieFileName: originalBaseName,
                 movieTitle: effectiveSourceMetadata?.title ?? originalBaseName,
-                durationSeconds: newJob.durationSeconds
+                durationSeconds: newJob.durationSeconds,
+                fileSizeBytes: (try? sandboxFriendlyURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) }
             )
             self.currentProject = project
             try? await filmProjectService.saveProject(project)
@@ -419,6 +420,31 @@ final class WorkspaceModel {
         self.variants = []
         self.pipelineError = nil
         self.longformResult = nil
+
+        // МГНОВЕННЫЙ СТАРТ: если проект уже имеет транскрипт Whisper и сгенерированные концепты,
+        // открываем экран выбора концепта мгновенно (0.01 сек), без повторного Whisper и Gemma!
+        if let existingAnalysis = self.thematicAnalysis ?? self.currentProject?.thematicAnalysis,
+           let cachedTranscript = self.storedTranscript ?? self.currentProject?.transcript {
+            self.storedTranscript = cachedTranscript
+            self.thematicAnalysis = existingAnalysis
+            self.thematicReasoning = existingAnalysis.aiReasoning
+            self.discoveredConcepts = existingAnalysis.allConcepts
+            if self.selectedConcept == nil {
+                self.selectedConcept = self.currentProject?.selectedConcept ?? existingAnalysis.primaryConcept
+            }
+            if let movie = self.detectedMovie ?? self.currentProject?.tmdbMetadata {
+                self.detectedMovie = movie
+                progressTracker.updateMovieDetection(
+                    title: movie.title,
+                    year: movie.year,
+                    imdb: movie.imdbRating,
+                    rottenTomatoes: movie.rottenTomatoesScore)
+            }
+            Self.log("Instantly loaded cached thematic analysis for '\(newJob.effectiveTitle)': primary concept '\(existingAnalysis.primaryConcept.word)'")
+            self.phase = .selectingLongformConcept
+            return
+        }
+
         self.selectedConcept = nil
         self.phase = .transcribing
         self.progressTracker.reset(totalVideoDuration: newJob.durationSeconds)
@@ -569,9 +595,32 @@ final class WorkspaceModel {
     func confirmLongformConcept(
         _ concept: ThematicConcept,
         confirmedMovieTitle: String? = nil,
+        audioSettings: LongformAudioSettings = LongformAudioSettings(),
+        settings: AppSettings
+    ) {
+        confirmLongformConceptInternal(concept, confirmedMovieTitle: confirmedMovieTitle, audioSettings: audioSettings, settings: settings)
+    }
+
+    func confirmLongformConcept(
+        _ concept: ThematicConcept,
+        confirmedMovieTitle: String? = nil,
         backgroundMusicURL: URL? = nil,
         musicVolume: Float = 0.28,
         duckingEnabled: Bool = true,
+        settings: AppSettings
+    ) {
+        let audioSettings = LongformAudioSettings(
+            backgroundMusicURL: backgroundMusicURL,
+            musicVolume: musicVolume,
+            duckingEnabled: duckingEnabled
+        )
+        confirmLongformConceptInternal(concept, confirmedMovieTitle: confirmedMovieTitle, audioSettings: audioSettings, settings: settings)
+    }
+
+    private func confirmLongformConceptInternal(
+        _ concept: ThematicConcept,
+        confirmedMovieTitle: String? = nil,
+        audioSettings: LongformAudioSettings,
         settings: AppSettings
     ) {
         guard let currentJob = job, let transcript = storedTranscript else { return }
@@ -613,6 +662,8 @@ final class WorkspaceModel {
 
         phase = .buildingLongform(fraction: 0.05, step: "Подготовка видеомонтажа...")
 
+        let workDir = settings.workingDirectory ?? currentJob.url.deletingLastPathComponent()
+
         pipelineTask = Task {
             do {
                 let coordinator = LongformPipelineCoordinator()
@@ -621,9 +672,8 @@ final class WorkspaceModel {
                     movieTitle: finalMovieTitle,
                     transcript: transcript,
                     concept: concept,
-                    backgroundMusicURL: backgroundMusicURL,
-                    musicVolume: musicVolume,
-                    duckingEnabled: duckingEnabled
+                    audioSettings: audioSettings,
+                    workingDirectory: workDir
                 ) { [weak self] frac, step in
                     Task { @MainActor in
                         self?.longformBuildProgress = (frac, step)
@@ -1456,6 +1506,10 @@ final class WorkspaceModel {
 
     private func cleanUpTempInput() {
         for url in tempInputURLs {
+            // Сохраняем кэш нормализованных видео
+            if url.lastPathComponent.hasPrefix("shortcast-normalized-") {
+                continue
+            }
             try? FileManager.default.removeItem(at: url)
         }
         tempInputURLs.removeAll()
@@ -1467,8 +1521,15 @@ final class WorkspaceModel {
         let didAccess = workDir.startAccessingSecurityScopedResource()
         defer { if didAccess { workDir.stopAccessingSecurityScopedResource() } }
 
-        guard let contents = try? FileManager.default.contentsOfDirectory(at: inputDir, includingPropertiesForKeys: nil) else { return }
+        guard let contents = try? FileManager.default.contentsOfDirectory(at: inputDir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
         for url in contents {
+            // Сохраняем кэш нормализованных видео (удаляем только если старше 7 дней)
+            if url.lastPathComponent.hasPrefix("shortcast-normalized-") {
+                let modDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
+                if Date().timeIntervalSince(modDate) < 7 * 86400 {
+                    continue
+                }
+            }
             if !tempInputURLs.contains(url) {
                 try? FileManager.default.removeItem(at: url)
             }

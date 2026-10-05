@@ -49,7 +49,7 @@ export async function uploadToYouTube(page, { videoPath, title, caption, hashtag
   await fileInput.setInputFiles(videoPath);
 
   // Wait for details form to appear
-  await page.waitForSelector('#title-textarea, #textbox[aria-label*="title"]', { timeout: 45000 });
+  await page.waitForSelector('#title-textarea, #textbox[aria-label*="title" i], #textbox[aria-label*="назван" i]', { timeout: 45000 });
 
   console.log(JSON.stringify({ type: 'progress', platform: 'youtube', message: 'Заполнение названия и описания видео...' }));
 
@@ -59,9 +59,11 @@ export async function uploadToYouTube(page, { videoPath, title, caption, hashtag
     formattedTitle += ' #Shorts';
   }
 
-  // Set Title
-  const titleBox = page.locator('div#title-textarea #textbox, #textbox[aria-label*="title"]').first();
+  // Set Title (handle web-components and Russian/English locale)
+  const titleBox = page.locator('#title-textarea #textbox, #title-textarea [contenteditable="true"], [aria-label*="title" i], [aria-label*="назван" i]').first();
+  await titleBox.waitFor({ state: 'visible', timeout: 30000 });
   await titleBox.click();
+  await page.waitForTimeout(300);
   await page.keyboard.press('Meta+A').catch(() => {});
   await page.keyboard.press('Backspace').catch(() => {});
   await page.keyboard.type(formattedTitle.slice(0, 100), { delay: 10 });
@@ -76,42 +78,42 @@ export async function uploadToYouTube(page, { videoPath, title, caption, hashtag
   }
   const fullDescription = descParts.filter(Boolean).join('\n\n');
 
-  const descBox = page.locator('div#description-textarea #textbox, #textbox[aria-label*="description"]').first();
-  if (await descBox.isVisible().catch(() => false)) {
+  const descBox = page.locator('#description-textarea #textbox, #description-textarea [contenteditable="true"], [aria-label*="description" i], [aria-label*="описан" i]').first();
+  if (await descBox.isVisible({ timeout: 5000 }).catch(() => false)) {
     await descBox.click();
+    await page.waitForTimeout(300);
     await page.keyboard.press('Meta+A').catch(() => {});
     await page.keyboard.press('Backspace').catch(() => {});
     await page.keyboard.type(fullDescription.slice(0, 4900), { delay: 5 });
   }
 
   // Set Audience: "Not made for kids" (required by YouTube)
-  const notForKidsRadio = page.locator('tp-yt-paper-radio-button[name="VIDEO_MADE_FOR_KIDS_NOT_MFK"], [aria-label*="не для детей"], [aria-label*="not made for kids"]').first();
+  const notForKidsRadio = page.locator('tp-yt-paper-radio-button[name="VIDEO_MADE_FOR_KIDS_NOT_MFK"], [aria-label*="не для детей" i], [aria-label*="not made for kids" i]').first();
   await notForKidsRadio.scrollIntoViewIfNeeded().catch(() => {});
-  await notForKidsRadio.click().catch(() => {});
+  if (await notForKidsRadio.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await notForKidsRadio.click().catch(() => {});
+  }
 
-  // Step 1 -> Step 2 (Elements)
-  const nextBtn = page.locator('#next-button, button:has-text("Next"), button:has-text("Далее")').first();
-  await nextBtn.waitFor({ state: 'visible', timeout: 15000 });
-  await nextBtn.click();
-  await page.waitForTimeout(1000);
-
-  // Step 2 -> Step 3 (Checks)
-  await nextBtn.click();
-  await page.waitForTimeout(1000);
-
-  // Step 3 -> Step 4 (Visibility)
-  await nextBtn.click();
-  await page.waitForTimeout(1500);
+  // Navigate through steps (Step 1 -> Elements -> Checks -> Visibility)
+  for (let step = 0; step < 4; step++) {
+    const nextBtn = page.locator('#next-button, button:has-text("Next"), button:has-text("Далее")').first();
+    if (await nextBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+      if (await nextBtn.isEnabled().catch(() => false)) {
+        await nextBtn.click();
+        await page.waitForTimeout(1200);
+      }
+    }
+  }
 
   console.log(JSON.stringify({ type: 'progress', platform: 'youtube', message: 'Установка доступа к видео...' }));
 
   // Set Visibility
   if (isPublic) {
-    const publicRadio = page.locator('tp-yt-paper-radio-button[name="PUBLIC"], [aria-label*="Открытый"], [aria-label*="Public"]').first();
+    const publicRadio = page.locator('tp-yt-paper-radio-button[name="PUBLIC"], [aria-label*="Открытый" i], [aria-label*="Public" i]').first();
     await publicRadio.scrollIntoViewIfNeeded().catch(() => {});
     await publicRadio.click().catch(() => {});
   } else {
-    const unlistedRadio = page.locator('tp-yt-paper-radio-button[name="UNLISTED"], [aria-label*="Доступ по ссылке"], [aria-label*="Unlisted"]').first();
+    const unlistedRadio = page.locator('tp-yt-paper-radio-button[name="UNLISTED"], [aria-label*="Доступ по ссылке" i], [aria-label*="Unlisted" i]').first();
     await unlistedRadio.scrollIntoViewIfNeeded().catch(() => {});
     await unlistedRadio.click().catch(() => {});
   }

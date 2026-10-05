@@ -60,7 +60,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         )
         rootLayer.addSublayer(subtitlePhrasesLayer)
 
-        // 3. Вступительная золотая линия и философский слоган (0.0с – 4.5с)
+        // 3. Вступительная золотая линия и философский слоган (0.0с – 3.2с)
         let introTaglineLayer = buildIntroTaglineLayer(
             renderSize: renderSize,
             concept: concept,
@@ -69,16 +69,14 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         )
         rootLayer.addSublayer(introTaglineLayer)
 
-        // 4. Маркеры перехода между драматургическими актами (Act Chapter Cards)
-        if !acts.isEmpty {
-            let actLayers = buildActChapterLayers(
-                renderSize: renderSize,
-                acts: acts,
-                concept: concept,
-                totalDuration: calculatedTotalDuration
-            )
-            rootLayer.addSublayer(actLayers)
-        }
+        // 4. Элегантные экранные карточки смены акта (Act Transition Cards)
+        let actCardsLayer = buildActTransitionCardsLayer(
+            renderSize: renderSize,
+            concept: concept,
+            acts: acts,
+            totalDuration: calculatedTotalDuration
+        )
+        rootLayer.addSublayer(actCardsLayer)
 
         return rootLayer
     }
@@ -127,14 +125,16 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         layer.contentsScale = 2.0
         layer.contents = renderAttributedText(conceptStr, size: layer.frame.size)
 
-        // Плавное затухание в последние 2.0 секунды фильма
-        let outroStartTime = max(0.0, totalDuration - 2.0)
-        let kOutroStart = outroStartTime / t
+        // Плавный Cold Open Fade-In (0.0 -> 0.8с) и затухание в последние 2.5 секунды
+        let outroStartTime = max(0.0, totalDuration - 2.5)
+        let kFadeIn = min(0.8 / t, 0.08)
+        let kOutroStart = max(kFadeIn + 0.01, outroStartTime / t)
 
         let anim = CAKeyframeAnimation(keyPath: "opacity")
-        anim.values = [1.0, 1.0, 0.0]
+        anim.values = [0.0, 1.0, 1.0, 0.0]
         anim.keyTimes = [
             NSNumber(value: 0.0),
+            NSNumber(value: kFadeIn),
             NSNumber(value: kOutroStart),
             NSNumber(value: 1.0)
         ]
@@ -142,12 +142,62 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         anim.beginTime = AVCoreAnimationBeginTimeAtZero
         anim.fillMode = .both
         anim.isRemovedOnCompletion = false
-        layer.add(anim, forKey: "centralConceptOutroFade")
+        layer.add(anim, forKey: "centralConceptFade")
 
         return (layer, conceptY, layerH)
     }
 
     // MARK: - 2. Плавные синхронные субтитры реплик под концептом
+
+    // MARK: - 2. Плавные синхронные субтитры реплик под концептом
+
+    private func chunkTimedPhrases(_ phrases: [TimedSubtitlePhrase]) -> [TimedSubtitlePhrase] {
+        var result: [TimedSubtitlePhrase] = []
+        for phrase in phrases {
+            let clean = phrase.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !clean.isEmpty, phrase.end > phrase.start else { continue }
+            let words = clean.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            if words.count <= 5 && clean.count <= 38 {
+                result.append(phrase)
+                continue
+            }
+
+            // Разбиваем длинную фразу на ритмичные порции по 3-5 слов (кино-ритм)
+            var chunks: [[String]] = []
+            var currentChunk: [String] = []
+            var currentLen = 0
+
+            for word in words {
+                if !currentChunk.isEmpty && (currentChunk.count >= 4 || currentLen + word.count + 1 > 34) {
+                    chunks.append(currentChunk)
+                    currentChunk = [word]
+                    currentLen = word.count
+                } else {
+                    currentChunk.append(word)
+                    currentLen += word.count + 1
+                }
+            }
+            if !currentChunk.isEmpty {
+                chunks.append(currentChunk)
+            }
+
+            let totalChars = max(1, clean.count)
+            let totalDur = phrase.end - phrase.start
+            var runningTime = phrase.start
+
+            for chunk in chunks {
+                let chunkText = chunk.joined(separator: " ")
+                let chunkFraction = Double(chunkText.count) / Double(totalChars)
+                let chunkDur = max(0.45, totalDur * chunkFraction)
+                let chunkEnd = min(phrase.end, runningTime + chunkDur)
+                if chunkEnd > runningTime {
+                    result.append(TimedSubtitlePhrase(start: runningTime, end: chunkEnd, text: chunkText))
+                }
+                runningTime = chunkEnd
+            }
+        }
+        return result
+    }
 
     private func buildSynchronizedSubtitlesLayer(
         renderSize: CGSize,
@@ -183,16 +233,22 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             .kern: 1.5
         ]
 
-        for phrase in timedPhrases {
+        let maxTextWidth = min(W * 0.75, 960.0)
+        let chunked = chunkTimedPhrases(timedPhrases)
+
+        for phrase in chunked {
             let cleanText = phrase.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanText.isEmpty, phrase.end > phrase.start else { continue }
             // Не показываем субтитры во время вступительной заставки (0.0-4.5с), чтобы не перекрывать тезис
             guard phrase.end > 4.5 else { continue }
 
             let subStr = NSAttributedString(string: cleanText.uppercased(), attributes: subAttrs)
-            let textSize = subStr.size()
-            let subW = min(W * 0.85, textSize.width + 40.0)
-            let subH = textSize.height + 18.0
+            let boundingRect = subStr.boundingRect(
+                with: CGSize(width: maxTextWidth, height: 200.0),
+                options: [.usesLineFragmentOrigin, .usesFontLeading]
+            )
+            let subW = min(W * 0.85, max(120.0, ceil(boundingRect.width) + 36.0))
+            let subH = max(36.0, ceil(boundingRect.height) + 16.0)
 
             // Размещаем прямо под концептом (вниз от conceptY с безопасным отступом)
             let subX = (W - subW) / 2.0
@@ -206,12 +262,11 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
 
             // Если фраза началась до окончания заставки, плавно включаем ее сразу после исчезновения заставки (4.55с)
             let pStart = max(phrase.start, 4.55)
-            // И ограничиваем конец фразы началом финального затухания (totalDuration - 2.0)
             let maxEndTime = max(pStart + 0.35, totalDuration - 2.0)
             let pEnd = min(max(phrase.end, pStart + 0.35), maxEndTime)
             guard pEnd > pStart else { continue }
             let phraseDuration = pEnd - pStart
-            let fadeDuration = min(0.12, phraseDuration * 0.25)
+            let fadeDuration = min(0.10, phraseDuration * 0.20)
 
             let kStart = pStart / t
             let kFadeIn = (pStart + fadeDuration) / t
@@ -255,11 +310,12 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         let W = renderSize.width
         let t = max(totalDuration, 5.0)
 
-        // Золотая акцентная черта
+        // Золотая акцентная черта строго под словом концепта
         let accentColor = NSColor(hex: concept.accentColorHex)?.cgColor ?? CGColor(srgbRed: 0.96, green: 0.82, blue: 0.13, alpha: 1.0)
         let lineW: CGFloat = 140.0
+        let lineY = conceptY - 14.0
         let lineLayer = CALayer()
-        lineLayer.frame = CGRect(x: (W - lineW) / 2.0, y: conceptY - 10.0, width: lineW, height: 2.5)
+        lineLayer.frame = CGRect(x: (W - lineW) / 2.0, y: lineY, width: lineW, height: 2.5)
         lineLayer.backgroundColor = accentColor
         lineLayer.cornerRadius = 1.25
         lineLayer.shadowColor = CGColor(gray: 0, alpha: 0.8)
@@ -267,7 +323,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         lineLayer.shadowOffset = CGSize(width: 0, height: -1.0)
         container.addSublayer(lineLayer)
 
-        // Подзаголовок / тезис
+        // Подзаголовок / тезис размещается строго ПОД золотой чертой с зазором
         let taglineText = concept.tagline.isEmpty ? concept.philosophicalPremise : concept.tagline
         if !taglineText.isEmpty {
             let paragraph = NSMutableParagraphStyle()
@@ -288,12 +344,18 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             ]
 
             let subStr = NSAttributedString(string: taglineText, attributes: subAttrs)
-            let textSize = subStr.size()
-            let subW = textSize.width + 40.0
-            let subH = textSize.height + 16.0
+            let maxTaglineW = min(W * 0.75, 960.0)
+            let boundingRect = subStr.boundingRect(
+                with: CGSize(width: maxTaglineW, height: 160.0),
+                options: [.usesLineFragmentOrigin, .usesFontLeading]
+            )
+            let subW = min(W * 0.85, ceil(boundingRect.width) + 40.0)
+            let subH = ceil(boundingRect.height) + 16.0
 
+            // Размещаем под линией с отступом 14.0px
+            let subY = lineY - subH - 14.0
             let subLayer = CALayer()
-            subLayer.frame = CGRect(x: (W - subW) / 2.0, y: conceptY - 40.0, width: subW, height: subH)
+            subLayer.frame = CGRect(x: (W - subW) / 2.0, y: subY, width: subW, height: subH)
             subLayer.contentsScale = 2.0
             subLayer.contents = renderAttributedText(subStr, size: subLayer.frame.size)
             container.addSublayer(subLayer)
@@ -322,102 +384,121 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         return container
     }
 
-    // MARK: - 4. Маркеры драматургических актов (Act Chapter Cards)
+    // MARK: - 4. Карточки смены драматургических актов (Act Transition Cards)
 
-    private func buildActChapterLayers(
+    private func buildActTransitionCardsLayer(
         renderSize: CGSize,
-        acts: [LongformAct],
         concept: ThematicConcept,
+        acts: [LongformAct],
         totalDuration: Double
     ) -> CALayer {
-        let container = CALayer()
-        container.frame = CGRect(origin: .zero, size: renderSize)
-
+        let root = CALayer()
+        root.frame = CGRect(origin: .zero, size: renderSize)
         let t = max(totalDuration, 5.0)
-        let romanNumerals = ["I", "II", "III", "IV", "V"]
-        var accumulatedTime = 0.0
+        let W = renderSize.width
+        let H = renderSize.height
 
-        for (idx, act) in acts.enumerated() {
-            let actStart = accumulatedTime
-            accumulatedTime += act.duration
+        let accentColor = NSColor(hex: concept.accentColorHex) ?? NSColor(hex: "#FFE45C") ?? .yellow
+        let romanNumerals = ["I", "II", "III", "IV", "V", "VI"]
 
-            // Первый акт пропускаем, так как в начале уже играет интро
-            guard actStart >= 4.5 && actStart < t else { continue }
+        var currentTimelineOffset: Double = 2.5 // Синхронизировано с introPadding (Cold Open)
 
-            let roman = idx < romanNumerals.count ? romanNumerals[idx] : "\(idx + 1)"
-            let badgeText = "АКТ \(roman) • \(act.type.rawValue.uppercased())"
+        for (index, act) in acts.enumerated() {
+            let actDuration = act.duration
+            let actStartTimeline = currentTimelineOffset
+            currentTimelineOffset += actDuration
 
-            let font = NSFont.systemFont(ofSize: 18.0, weight: .bold)
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.alignment = .left
+            // Карточки для последующих актов (начиная со второго: Акт II, III, IV), чтобы не перекрывать вступительный интро-слоган
+            guard index > 0, actStartTimeline < totalDuration else { continue }
 
-            let shadow = NSShadow()
-            shadow.shadowColor = NSColor.black.withAlphaComponent(0.9)
-            shadow.shadowBlurRadius = 8.0
-            shadow.shadowOffset = CGSize(width: 0, height: -2.0)
+            let roman = (index < romanNumerals.count) ? romanNumerals[index] : "\(index + 1)"
+            let actBadgeText = "АКТ \(roman)"
+            let actTitleText = act.title.uppercased()
 
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: NSColor(hex: concept.accentColorHex) ?? NSColor(hex: "#FFE45C") ?? .yellow,
-                .paragraphStyle: paragraph,
-                .shadow: shadow,
+            // Сборка составного кинематографического текста
+            let badgeFont = SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: 16.0, fallback: .heavy)
+            let titleFont = SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: 22.0, fallback: .heavy)
+
+            let badgeAttrs: [NSAttributedString.Key: Any] = [
+                .font: badgeFont,
+                .foregroundColor: accentColor,
                 .kern: 3.0
             ]
+            let dotAttrs: [NSAttributedString.Key: Any] = [
+                .font: titleFont,
+                .foregroundColor: NSColor.white.withAlphaComponent(0.4),
+                .kern: 2.0
+            ]
+            let titleAttrs: [NSAttributedString.Key: Any] = [
+                .font: titleFont,
+                .foregroundColor: NSColor.white,
+                .kern: 2.0
+            ]
 
-            let str = NSAttributedString(string: badgeText, attributes: attrs)
-            let textSize = str.size()
-            let badgeW = textSize.width + 36.0
-            let badgeH = textSize.height + 16.0
+            let fullAttributed = NSMutableAttributedString()
+            fullAttributed.append(NSAttributedString(string: actBadgeText, attributes: badgeAttrs))
+            fullAttributed.append(NSAttributedString(string: "   •   ", attributes: dotAttrs))
+            fullAttributed.append(NSAttributedString(string: actTitleText, attributes: titleAttrs))
 
-            let badgeLayer = CALayer()
-            badgeLayer.frame = CGRect(
-                x: 70.0,
-                y: renderSize.height - badgeH - 60.0,
-                width: badgeW,
-                height: badgeH
-            )
-            badgeLayer.backgroundColor = CGColor(gray: 0.05, alpha: 0.65)
-            badgeLayer.cornerRadius = 8.0
-            badgeLayer.borderWidth = 1.0
-            badgeLayer.borderColor = CGColor(gray: 1.0, alpha: 0.15)
-            badgeLayer.opacity = 0.0
+            let textSize = fullAttributed.size()
+            let paddingH: CGFloat = 36.0
+            let paddingV: CGFloat = 16.0
+            let cardW = textSize.width + paddingH * 2.0
+            let cardH = textSize.height + paddingV * 2.0
 
-            let textSubLayer = CALayer()
-            textSubLayer.frame = CGRect(x: 18.0, y: 8.0, width: textSize.width + 10.0, height: textSize.height + 4.0)
-            textSubLayer.contentsScale = 2.0
-            textSubLayer.contents = renderAttributedText(str, size: textSubLayer.frame.size)
-            badgeLayer.addSublayer(textSubLayer)
+            // Размещаем в верхней трети экрана (не перекрывая центральный концепт и субтитры)
+            let cardX = (W - cardW) / 2.0
+            let cardY = H * 0.78
 
-            // Анимация показа акта на 3 секунды
-            let fadeInEnd = actStart + 0.4
-            let holdEnd = actStart + 2.6
-            let fadeOutEnd = actStart + 3.2
+            let cardLayer = CALayer()
+            cardLayer.frame = CGRect(x: cardX, y: cardY, width: cardW, height: cardH)
+            cardLayer.backgroundColor = CGColor(red: 0.06, green: 0.06, blue: 0.08, alpha: 0.88)
+            cardLayer.cornerRadius = 14.0
+            cardLayer.borderWidth = 1.0
+            cardLayer.borderColor = accentColor.withAlphaComponent(0.40).cgColor
+            cardLayer.shadowColor = CGColor(gray: 0, alpha: 1.0)
+            cardLayer.shadowOpacity = 0.85
+            cardLayer.shadowRadius = 14.0
+            cardLayer.shadowOffset = CGSize(width: 0, height: -3)
+            cardLayer.opacity = 0.0
 
-            let kStart = actStart / t
-            let kFadeIn = fadeInEnd / t
-            let kHold = holdEnd / t
-            let kFadeOut = fadeOutEnd / t
+            let textLayer = CALayer()
+            textLayer.frame = CGRect(x: paddingH, y: paddingV, width: textSize.width, height: textSize.height)
+            textLayer.contentsScale = 2.0
+            textLayer.contents = renderAttributedText(fullAttributed, size: textSize)
+            cardLayer.addSublayer(textLayer)
+
+            // Анимация показа карточки: длительность 2.5 секунды (0.35с fade-in, 1.8с hold, 0.35с fade-out)
+            let tStart = actStartTimeline
+            let cardDuration = 2.5
+            let tEnd = min(totalDuration, tStart + cardDuration)
+            guard tEnd > tStart else { continue }
+
+            let k0 = max(0.0, (tStart - 0.01) / t)
+            let k1 = min(1.0, (tStart + 0.35) / t)
+            let k2 = max(k1, (tEnd - 0.35) / t)
+            let k3 = min(1.0, tEnd / t)
 
             let anim = CAKeyframeAnimation(keyPath: "opacity")
             anim.values = [0.0, 0.0, 1.0, 1.0, 0.0, 0.0]
             anim.keyTimes = [
                 NSNumber(value: 0.0),
-                NSNumber(value: max(0.0, kStart)),
-                NSNumber(value: min(1.0, kFadeIn)),
-                NSNumber(value: min(1.0, kHold)),
-                NSNumber(value: min(1.0, kFadeOut)),
+                NSNumber(value: k0),
+                NSNumber(value: k1),
+                NSNumber(value: k2),
+                NSNumber(value: k3),
                 NSNumber(value: 1.0)
             ]
             anim.duration = t
             anim.beginTime = AVCoreAnimationBeginTimeAtZero
             anim.fillMode = .both
             anim.isRemovedOnCompletion = false
-            badgeLayer.add(anim, forKey: "actBadgeOpacity")
+            cardLayer.add(anim, forKey: "actCard_\(index)")
 
-            container.addSublayer(badgeLayer)
+            root.addSublayer(cardLayer)
         }
 
-        return container
+        return root
     }
 
     // MARK: - 5. Генерация превью в стиле Shortcast Cinema

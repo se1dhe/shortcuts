@@ -185,12 +185,6 @@ final class MomentFinderService {
         var allClips: [ClipCandidate] = []
         
         for chunk in chunks {
-            let session = ChatSession(
-                container,
-                instructions: instructions,
-                generateParameters: params,
-                additionalContext: ["enable_thinking": false])
-
             let userPrompt = CinemaMomentDirector.cinemaUserPrompt(
                 transcript: chunk,
                 movieTitle: videoTitle,
@@ -198,15 +192,34 @@ final class MomentFinderService {
                 isComedy: isComedy)
 
             Self.log("findMoments: chunk \(chunk.count) chars, using CinemaMomentDirector, isComedy=\(isComedy), sceneMap=\(sceneMap != nil)")
-            var raw = ""
-            for try await token in session.streamResponse(to: userPrompt) {
-                raw += token
-            }
-            Self.log("findMoments raw output (\(raw.count) chars):\n\(raw)")
 
-            let arcs = CinemaMomentDirector.parseArcs(from: raw, isComedy: isComedy)
-            let clips = arcs.map { $0.toClipCandidate() }
-            Self.log("findMoments: parsed \(clips.count) clip(s) from chunk")
+            // The model occasionally returns malformed JSON or prose instead of the
+            // arc array, which parses to zero clips. Nudge it and retry up to twice
+            // before giving up on this chunk.
+            var clips: [ClipCandidate] = []
+            let maxAttempts = 3
+            for attempt in 1...maxAttempts {
+                let prompt = attempt == 1
+                    ? userPrompt
+                    : userPrompt + "\n\nВНИМАНИЕ: предыдущий ответ был невалидным. Ответь ТОЛЬКО валидным JSON-массивом объектов без markdown, без пояснений и без текста до или после массива."
+
+                let session = ChatSession(
+                    container,
+                    instructions: instructions,
+                    generateParameters: params,
+                    additionalContext: ["enable_thinking": false])
+
+                var raw = ""
+                for try await token in session.streamResponse(to: prompt) {
+                    raw += token
+                }
+                Self.log("findMoments raw output (attempt \(attempt), \(raw.count) chars):\n\(raw)")
+
+                let arcs = CinemaMomentDirector.parseArcs(from: raw, isComedy: isComedy)
+                clips = arcs.map { $0.toClipCandidate() }
+                Self.log("findMoments: parsed \(clips.count) clip(s) from chunk (attempt \(attempt))")
+                if !clips.isEmpty { break }
+            }
             allClips.append(contentsOf: clips)
         }
         

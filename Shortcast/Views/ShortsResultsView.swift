@@ -194,14 +194,34 @@ struct ShortsResultsView: View {
     }
 
     private var gridView: some View {
-        ScrollView {
-            LazyVGrid(columns: columns, spacing: 18) {
-                ForEach(workspace.clips) { clip in
-                    ShortClipTile(clip: clip)
+        Group {
+            if workspace.clips.isEmpty {
+                ContentUnavailableView {
+                    Label("Шортсы не найдены", systemImage: "scissors")
+                } description: {
+                    Text("Модель не смогла выделить подходящие сцены из этого фильма. Попробуйте сгенерировать ещё раз.")
+                        .multilineTextAlignment(.center)
+                } actions: {
+                    Button {
+                        workspace.regenerateShorts(modelManager: modelManager, settings: settings)
+                    } label: {
+                        Label("Попробовать снова", systemImage: "arrow.counterclockwise")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 18) {
+                        ForEach(workspace.clips) { clip in
+                            ShortClipTile(clip: clip)
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 22)
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 22)
         }
     }
 

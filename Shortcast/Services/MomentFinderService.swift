@@ -540,7 +540,7 @@ final class MomentFinderService {
 
         let s = profile.sampling
         var params = GenerateParameters(
-            maxTokens: 1600,
+            maxTokens: 2048,
             temperature: 0.35,
             topP: s.topP,
             topK: s.topK,
@@ -561,9 +561,23 @@ final class MomentFinderService {
         if let overview = movieOverview?.trimmingCharacters(in: .whitespacesAndNewlines), !overview.isEmpty {
             promptParts.append("Синопсис/сюжет фильма:\n\"\"\"\n\(overview)\n\"\"\"")
         }
-        // Передаем богатый срез диалогов по всем 4 актам (до 28000 символов), без урезания до 4500 символов
-        let fullDialogueSample = String(sample.prefix(28_000))
-        promptParts.append("Срез ключевых диалогов фильма (хронологически по 4 актам сюжета):\n\"\"\"\n\(fullDialogueSample)\n\"\"\"")
+        // Отправляем ВЕСЬ сжатый транскрипт. Безопасный лимит ~40k символов
+        // (~35k токенов) покрывает префилл Qwen. Для очень длинных фильмов
+        // прореживаем строки равномерно по всей хронологии, а не обрезаем хвост,
+        // чтобы сохранить покрытие всех актов.
+        let maxContextChars = 40_000
+        let fullDialogueSample: String
+        if sample.count <= maxContextChars {
+            fullDialogueSample = sample
+        } else {
+            let lines = sample.components(separatedBy: "\n")
+            let targetLines = max(1, lines.count * maxContextChars / sample.count)
+            let step = max(1, lines.count / targetLines)
+            let sampled = stride(from: 0, to: lines.count, by: step).map { lines[$0] }
+            fullDialogueSample = String(sampled.joined(separator: "\n").prefix(maxContextChars))
+            Self.log("analyzeThematicCore: transcript \(sample.count) chars > \(maxContextChars), downsampled to \(fullDialogueSample.count) chars (step \(step))")
+        }
+        promptParts.append("Срез ключевых диалогов фильма (хронологически по всему сюжету):\n\"\"\"\n\(fullDialogueSample)\n\"\"\"")
         promptParts.append("Выбери ОДНУ ГЛАВНУЮ тему эссе (primaryConcept), подробно обоснуй выбор (aiReasoning) и предложи альтернативные грани (alternativeConcepts). Верни СТРОГО валидный JSON-объект:")
         let userPrompt = promptParts.joined(separator: "\n\n")
 

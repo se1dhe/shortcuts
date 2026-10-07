@@ -78,7 +78,7 @@ struct ThematicParsingTests {
         #expect(result?.allConcepts.count == 2)
     }
 
-    @Test("stratifiedThematicSample spans all four quarters of the movie transcript")
+    @Test("stratifiedThematicSample covers the whole transcript with compressed timecoded lines")
     func testStratifiedSampleCoversAllActs() {
         var segments: [TranscriptSegment] = []
         for i in 0..<200 {
@@ -99,11 +99,12 @@ struct ThematicParsingTests {
             language: "ru"
         )
 
-        let sample = LongformThematicService.stratifiedThematicSample(from: transcript, targetSegmentsCount: 80)
-        #expect(sample.contains("Акт I"))
-        #expect(sample.contains("Акт II"))
-        #expect(sample.contains("Акт III"))
-        #expect(sample.contains("Акт IV"))
+        let sample = LongformThematicService.stratifiedThematicSample(from: transcript)
+        // First scene (00:00) and last scene (~99:30) must both be present —
+        // i.e. the sample spans the entire film, not just a prefix.
+        #expect(sample.contains("[00:00]"))
+        #expect(sample.contains("Реплика номер 0 "))
+        #expect(sample.contains("Реплика номер 199 "))
         #expect(sample.count > 1000)
     }
 }

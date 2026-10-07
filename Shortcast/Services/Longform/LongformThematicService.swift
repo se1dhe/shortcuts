@@ -47,55 +47,48 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         """
     }
 
-    /// Извлекает репрезентативный срез реплик хронологически по всем 4 актам фильма
-    static func stratifiedThematicSample(from transcript: Transcript, targetSegmentsCount: Int = 160) -> String {
+    /// Сжимает ВЕСЬ транскрипт в хронологический срез для LLM: соседние реплики
+    /// одной сцены (пауза < 0.8с) сливаются в одну строку с таймкодом начала.
+    /// Формат `[MM:SS] текст` без дробных секунд и пустых строк — максимум
+    /// покрытия сюжета при минимуме символов. `targetSegmentsCount` больше не
+    /// используется как квота (оставлен для совместимости сигнатуры).
+    static func stratifiedThematicSample(from transcript: Transcript, targetSegmentsCount: Int = 0) -> String {
         let segments = transcript.segments.filter { seg in
-            let text = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            let wordCount = text.split(whereSeparator: { $0.isWhitespace }).count
-            return wordCount >= 3
+            !seg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
-
-        guard !segments.isEmpty else {
-            return transcript.segments.prefix(60).map(\.text).joined(separator: "\n")
-        }
-
-        guard segments.count > targetSegmentsCount else {
-            return segments.map { formatSegmentForPrompt($0) }.joined(separator: "\n")
-        }
-
-        let totalDuration = segments.last?.end ?? 1.0
-
-        let quarters = [
-            (label: "Акт I (Экспозиция и завязка конфликта)", range: 0.0 ... totalDuration * 0.25, count: targetSegmentsCount / 4),
-            (label: "Акт II (Кризис, падение и потеря контроля)", range: totalDuration * 0.25 ... totalDuration * 0.50, count: targetSegmentsCount / 4),
-            (label: "Акт III (Борьба, преодоление и кульминация)", range: totalDuration * 0.50 ... totalDuration * 0.75, count: targetSegmentsCount / 4),
-            (label: "Акт IV (Катарсис, откровение и финал)", range: totalDuration * 0.75 ... totalDuration, count: targetSegmentsCount / 4)
-        ]
+        guard !segments.isEmpty else { return "" }
 
         var lines: [String] = []
+        var sceneStart = segments[0].start
+        var sceneEnd = segments[0].end
+        var sceneText = segments[0].text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        for q in quarters {
-            lines.append("--- \(q.label) ---")
-            let qSegs = segments.filter { $0.start >= q.range.lowerBound && $0.start <= q.range.upperBound }
-            guard !qSegs.isEmpty else { continue }
-
-            let step = max(1, qSegs.count / max(1, q.count))
-            var chosen = 0
-            for idx in stride(from: 0, to: qSegs.count, by: step) {
-                if chosen >= q.count { break }
-                lines.append(formatSegmentForPrompt(qSegs[idx]))
-                chosen += 1
+        for seg in segments.dropFirst() {
+            let text = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let gap = seg.start - sceneEnd
+            if gap < 0.8 {
+                sceneText += " " + text
+                sceneEnd = seg.end
+            } else {
+                lines.append(formatCompressedLine(start: sceneStart, text: sceneText))
+                sceneStart = seg.start
+                sceneEnd = seg.end
+                sceneText = text
             }
         }
+        lines.append(formatCompressedLine(start: sceneStart, text: sceneText))
 
         return lines.joined(separator: "\n")
     }
 
+    private static func formatCompressedLine(start: Double, text: String) -> String {
+        let minutes = Int(start) / 60
+        let seconds = Int(start) % 60
+        return String(format: "[%02d:%02d] %@", minutes, seconds, text)
+    }
+
     private static func formatSegmentForPrompt(_ seg: TranscriptSegment) -> String {
-        let minutes = Int(seg.start) / 60
-        let seconds = Int(seg.start) % 60
-        let timeStr = String(format: "%02d:%02d", minutes, seconds)
-        return "[\(timeStr)] \(seg.text.trimmingCharacters(in: .whitespacesAndNewlines))"
+        formatCompressedLine(start: seg.start, text: seg.text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// Глубоко анализирует полный сценарий фильма и возвращает структурированный результат с ОДНОЙ главной темой

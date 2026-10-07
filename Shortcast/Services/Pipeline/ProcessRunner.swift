@@ -32,8 +32,16 @@ public enum ProcessRunnerError: LocalizedError, Sendable {
 }
 
 /// Thread-safe process executor that prevents UNIX Pipe deadlocks by reading streams concurrently.
+///
+/// Captured stdout/stderr are capped. Long ffmpeg encodes can emit gigabytes of
+/// stats on a pipe; buffering that in the parent process is what ballooned RAM.
 public final class ProcessRunner: ProcessRunning, @unchecked Sendable {
     public static let shared = ProcessRunner()
+
+    /// Enough for ffprobe JSON; anything larger is discarded from the head.
+    private static let maxStdoutBytes = 2 * 1024 * 1024
+    /// Keep the tail so the actual ffmpeg error line survives.
+    private static let maxStderrBytes = 256 * 1024
 
     public init() {}
 
@@ -58,12 +66,13 @@ public final class ProcessRunner: ProcessRunning, @unchecked Sendable {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
+        let stdoutLimit = Self.maxStdoutBytes
+        let stderrLimit = Self.maxStderrBytes
         let stdoutTask = Task.detached {
-            stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+            Self.collect(handle: stdoutPipe.fileHandleForReading, limit: stdoutLimit, keepTail: false)
         }
-
         let stderrTask = Task.detached {
-            stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            Self.collect(handle: stderrPipe.fileHandleForReading, limit: stderrLimit, keepTail: true)
         }
 
         try process.run()
@@ -94,5 +103,28 @@ public final class ProcessRunner: ProcessRunning, @unchecked Sendable {
                 errorOutput: errStr.isEmpty ? outStr : errStr
             )
         }
+    }
+
+    private static func collect(handle: FileHandle, limit: Int, keepTail: Bool) -> Data {
+        var buffer = Data()
+        while true {
+            let chunk: Data
+            do {
+                chunk = try handle.read(upToCount: 64 * 1024) ?? Data()
+            } catch {
+                break
+            }
+            if chunk.isEmpty { break }
+            if keepTail {
+                buffer.append(chunk)
+                if buffer.count > limit {
+                    buffer = Data(buffer.suffix(limit))
+                }
+            } else if buffer.count < limit {
+                let remaining = limit - buffer.count
+                buffer.append(chunk.prefix(remaining))
+            }
+        }
+        return buffer
     }
 }

@@ -294,4 +294,87 @@ struct SentenceBoundaryTests {
 
         #expect(mix.inputParameters.count == 2)
     }
+
+    /// Opt-in smoke test for a real HEVC source. It is intentionally gated so
+    /// CI does not need a feature-length movie, while local investigations can
+    /// exercise the same AVFoundation export path that the app uses.
+    @Test("Longform pipeline exports a short composition from a real HEVC source when requested")
+    func testLongformHEVCExportSmokeTest() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["SHORTCAST_LONGFORM_SMOKE_TEST"] == "1",
+              let sourcePath = environment["SHORTCAST_LONGFORM_SMOKE_SOURCE"],
+              !sourcePath.isEmpty
+        else {
+            return
+        }
+
+        let sourceURL = URL(fileURLWithPath: sourcePath)
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else {
+            Issue.record("Smoke-test source does not exist: \(sourceURL.path)")
+            return
+        }
+
+        let musicURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Shortcast/Resources/Music/Prrodan_Foggy_Night.m4a")
+        guard FileManager.default.fileExists(atPath: musicURL.path) else {
+            Issue.record("Bundled smoke-test music does not exist: \(musicURL.path)")
+            return
+        }
+
+        let workingDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shortcast-longform-smoke-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: workingDirectory) }
+
+        let concept = ThematicConcept(
+            word: "ВРЕМЯ",
+            tagline: "Короткая проверка экспорта HEVC.",
+            philosophicalPremise: "Проверяем совместимость финального кодера.",
+            suggestedTitle: "Smoke test",
+            accentColorHex: "#F5D020"
+        )
+        let starts: [Double] = [60, 1_600, 3_400, 5_900]
+        let transcriptSegments = starts.map {
+            TranscriptSegment(start: $0, end: $0 + 1.2, text: "Проверка экспорта.", words: [])
+        }
+        let actTypes: [LongformActType] = [.hook, .downfall, .struggle, .catharsis]
+        let acts = zip(actTypes, starts).map { type, start in
+            LongformAct(
+                type: type,
+                title: type.rawValue,
+                dramaticBeat: "Smoke test",
+                segments: [TimeSegment(start: start, end: start + 1.2)]
+            )
+        }
+        let arc = LongformNarrativeArc(
+            movieTitle: "HEVC smoke test",
+            concept: concept,
+            acts: acts,
+            summary: "Short export smoke test"
+        )
+        let audioSettings = LongformAudioSettings(
+            backgroundMusicURL: musicURL,
+            musicVolume: 0.18,
+            duckingEnabled: true,
+            dialogueFocusEnabled: true,
+            originalMusicDucking: 0.82,
+            coldOpenEnabled: true,
+            antiCopyrightEnabled: false
+        )
+
+        let result = try await LongformPipelineCoordinator().buildLongformVideo(
+            sourceURL: sourceURL,
+            movieTitle: "HEVC smoke test",
+            transcript: Transcript(segments: transcriptSegments, language: "ru"),
+            concept: concept,
+            audioSettings: audioSettings,
+            existingArc: arc,
+            workingDirectory: workingDirectory,
+            progressHandler: nil
+        )
+
+        #expect(FileManager.default.fileExists(atPath: result.outputURL.path))
+        #expect(result.duration > 10)
+    }
 }

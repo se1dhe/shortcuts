@@ -63,7 +63,51 @@ struct ShortsResultsView: View {
 
     // MARK: - Header
 
+    private var headerTitle: String {
+        if let title = workspace.detectedMovie?.title,
+           !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !MovieMetadataService.isGarbageTitle(title) {
+            return title
+        }
+        if let title = workspace.job?.effectiveTitle,
+           !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !MovieMetadataService.isGarbageTitle(title) {
+            return title
+        }
+        return String(localized: "Your shorts")
+    }
+
     private var header: some View {
+        ViewThatFits(in: .horizontal) {
+            headerBar(showsTitleInline: true)
+            VStack(alignment: .leading, spacing: 10) {
+                headerIdentity
+                HStack(spacing: 12) {
+                    modePicker
+                    Spacer(minLength: 0)
+                    headerActions
+                }
+            }
+            .padding(.horizontal, 22)
+            .padding(.vertical, 14)
+        }
+    }
+
+    private func headerBar(showsTitleInline: Bool) -> some View {
+        HStack(spacing: 14) {
+            headerIdentity
+            if showsTitleInline {
+                Spacer(minLength: 12)
+            }
+            modePicker
+            Spacer(minLength: 12)
+            headerActions
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 14)
+    }
+
+    private var headerIdentity: some View {
         HStack(spacing: 14) {
             ZStack {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -76,9 +120,10 @@ struct ShortsResultsView: View {
             }
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(workspace.job?.fileName ?? "Your shorts")
+                Text(headerTitle)
                     .font(.title3.weight(.bold))
                     .lineLimit(1)
+                    .truncationMode(.middle)
                 HStack(spacing: 8) {
                     statChip("\(workspace.clips.count) shorts", "rectangle.stack")
                     if let lang = workspace.clips.compactMap(\.detectedLanguage).first {
@@ -87,17 +132,27 @@ struct ShortsResultsView: View {
                     statChip("\(workspace.approvedReadyCount) approved", "checkmark.circle")
                 }
             }
+            .layoutPriority(0)
+        }
+        .frame(minWidth: 160, maxWidth: .infinity, alignment: .leading)
+    }
 
-            Picker("Режим", selection: $viewMode) {
-                ForEach(ViewMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
-                }
+    private var modePicker: some View {
+        Picker("Режим", selection: $viewMode) {
+            ForEach(ViewMode.allCases) { mode in
+                Text(mode.rawValue).tag(mode)
             }
-            .pickerStyle(.segmented)
-            .frame(width: 170)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(width: 220)
+        .fixedSize()
+        .layoutPriority(1)
+        .accessibilityLabel("Режим")
+    }
 
-            Spacer()
-
+    private var headerActions: some View {
+        HStack(spacing: 10) {
             if browser.cameFromRecommendations {
                 Button {
                     browser.cameFromRecommendations = false
@@ -116,7 +171,7 @@ struct ShortsResultsView: View {
                 Label("Start over", systemImage: "arrow.counterclockwise")
             }
             .controlSize(.large)
-            
+
             Button {
                 workspace.regenerateShorts(modelManager: modelManager, settings: settings)
             } label: {
@@ -124,8 +179,8 @@ struct ShortsResultsView: View {
             }
             .controlSize(.large)
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 14)
+        .fixedSize(horizontal: true, vertical: false)
+        .layoutPriority(1)
     }
 
     @ViewBuilder

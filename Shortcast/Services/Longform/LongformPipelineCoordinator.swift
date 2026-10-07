@@ -162,7 +162,6 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         // 3. Подключение фонового саундтрека с бесшовным мягким зацикливанием
         progressHandler?(0.50, "Мастеринг непрерывного саундтрека...")
         var audioMix: AVAudioMix? = nil
-
         let musicURL: URL? = audioSettings.backgroundMusicURL
         if let rawMusicURL = musicURL,
            let compMusicTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
@@ -236,25 +235,45 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         transform = transform.concatenating(CGAffineTransform(translationX: tx, y: ty))
         layerInstruction.setTransform(transform, at: .zero)
 
+        // AVFoundation raises an Objective-C exception (or stops the export)
+        // when opacity ramps overlap by even one frame. This can happen when a
+        // short first shot meets the Cold Open, or when the final shot is very
+        // short. Keep every ramp on this instruction strictly disjoint.
+        var lastOpacityRampEnd = 0.0
+        func scheduleOpacityRamp(
+            from startOpacity: Float,
+            to endOpacity: Float,
+            start: Double,
+            end: Double
+        ) {
+            let safeStart = max(start, lastOpacityRampEnd + 0.001)
+            guard end - safeStart >= 0.02 else { return }
+            layerInstruction.setOpacityRamp(
+                fromStartOpacity: startOpacity,
+                toEndOpacity: endOpacity,
+                timeRange: CMTimeRange(
+                    start: CMTime(seconds: safeStart, preferredTimescale: 600),
+                    duration: CMTime(seconds: end - safeStart, preferredTimescale: 600)
+                )
+            )
+            lastOpacityRampEnd = end
+        }
+
         // Плавный выход первого кадра фильма из затемнения (Cold Open Fade-In)
         if introPadding > 0 {
             layerInstruction.setOpacity(0.0, at: .zero)
-            layerInstruction.setOpacityRamp(
-                fromStartOpacity: 0.0,
-                toEndOpacity: 1.0,
-                timeRange: CMTimeRange(
-                    start: CMTime(seconds: introPadding, preferredTimescale: 600),
-                    duration: CMTime(seconds: 1.5, preferredTimescale: 600)
-                )
+            scheduleOpacityRamp(
+                from: 0.0,
+                to: 1.0,
+                start: introPadding,
+                end: introPadding + 1.5
             )
         } else {
-            layerInstruction.setOpacityRamp(
-                fromStartOpacity: 0.0,
-                toEndOpacity: 1.0,
-                timeRange: CMTimeRange(
-                    start: .zero,
-                    duration: CMTime(seconds: 1.2, preferredTimescale: 600)
-                )
+            scheduleOpacityRamp(
+                from: 0.0,
+                to: 1.0,
+                start: 0.0,
+                end: 1.2
             )
         }
 
@@ -264,33 +283,27 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             let fadeInDuration: Double = cut.isInterAct ? 0.45 : 0.32
             let fadeOutStart = max(introPadding + 0.5, cut.sceneEndTime - fadeOutDuration)
 
-            layerInstruction.setOpacityRamp(
-                fromStartOpacity: 1.0,
-                toEndOpacity: 0.0,
-                timeRange: CMTimeRange(
-                    start: CMTime(seconds: fadeOutStart, preferredTimescale: 600),
-                    duration: CMTime(seconds: fadeOutDuration, preferredTimescale: 600)
-                )
+            scheduleOpacityRamp(
+                from: 1.0,
+                to: 0.0,
+                start: fadeOutStart,
+                end: cut.sceneEndTime
             )
-            layerInstruction.setOpacityRamp(
-                fromStartOpacity: 0.0,
-                toEndOpacity: 1.0,
-                timeRange: CMTimeRange(
-                    start: CMTime(seconds: cut.nextSceneStartTime, preferredTimescale: 600),
-                    duration: CMTime(seconds: fadeInDuration, preferredTimescale: 600)
-                )
+            scheduleOpacityRamp(
+                from: 0.0,
+                to: 1.0,
+                start: cut.nextSceneStartTime,
+                end: cut.nextSceneStartTime + fadeInDuration
             )
         }
 
         // Финальное кинематографическое затухание в темноту (Outro Fade to Black)
         let finalFadeStart = max(introPadding + 2.0, speechFinishTime - 1.2)
-        layerInstruction.setOpacityRamp(
-            fromStartOpacity: 1.0,
-            toEndOpacity: 0.0,
-            timeRange: CMTimeRange(
-                start: CMTime(seconds: finalFadeStart, preferredTimescale: 600),
-                duration: CMTime(seconds: 1.2, preferredTimescale: 600)
-            )
+        scheduleOpacityRamp(
+            from: 1.0,
+            to: 0.0,
+            start: finalFadeStart,
+            end: speechFinishTime
         )
         layerInstruction.setOpacity(0.0, at: CMTime(seconds: speechFinishTime, preferredTimescale: 600))
 
@@ -382,7 +395,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         } else {
             exportDir = FileManager.default.temporaryDirectory.appendingPathComponent("LongformExports", isDirectory: true)
         }
-        try? FileManager.default.createDirectory(at: exportDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: exportDir, withIntermediateDirectories: true)
 
         let isAntiCopyrightActive = audioSettings.antiCopyrightEnabled && audioSettings.antiCopyrightPreset != .off
         let cleanOutputURL = exportDir.appendingPathComponent("longform_\(concept.word.lowercased())_\(UUID().uuidString.prefix(6)).mp4")
@@ -390,23 +403,12 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             ? exportDir.appendingPathComponent("raw_render_\(concept.word.lowercased())_\(UUID().uuidString.prefix(6)).mp4")
             : cleanOutputURL
 
-        guard let exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPreset1920x1080) else {
-            throw NSError(domain: "LongformPipeline", code: -4, userInfo: [NSLocalizedDescriptionKey: "Не удалось создать AVAssetExportSession."])
-        }
-
-        exportSession.outputURL = intermediateURL
-        exportSession.outputFileType = .mp4
-        exportSession.videoComposition = videoComposition
-        if let audioMix {
-            exportSession.audioMix = audioMix
-        }
-
-        await exportSession.export()
-
-        if exportSession.status != .completed {
-            let errorMsg = exportSession.error?.localizedDescription ?? "Неизвестная ошибка экспорта"
-            throw NSError(domain: "LongformPipeline", code: -5, userInfo: [NSLocalizedDescriptionKey: "Экспорт не удался: \(errorMsg)"])
-        }
+        try await exportComposition(
+            composition,
+            videoComposition: videoComposition,
+            audioMix: audioMix,
+            to: intermediateURL
+        )
 
         var finalVideoURL = cleanOutputURL
         if isAntiCopyrightActive {
@@ -456,5 +458,88 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             duration: totalDuration,
             thumbnailURL: thumbnailURL
         )
+    }
+
+    /// Exports the final composition with a compatible retry path. Some long HEVC
+    /// sources make the fixed 1080p preset stop in VideoToolbox even though the
+    /// composition itself is valid. `HighestQuality` still honours the 1920×1080
+    /// video composition, but uses a different export path on macOS.
+    private func exportComposition(
+        _ composition: AVComposition,
+        videoComposition: AVVideoComposition,
+        audioMix: AVAudioMix?,
+        to outputURL: URL
+    ) async throws {
+        let presets = [
+            AVAssetExportPreset1920x1080,
+            AVAssetExportPresetHighestQuality
+        ]
+        var failures: [String] = []
+
+        for preset in presets {
+            try Task.checkCancellation()
+            try? FileManager.default.removeItem(at: outputURL)
+
+            guard let exportSession = AVAssetExportSession(asset: composition, presetName: preset) else {
+                failures.append("\(preset): не удалось создать сессию экспорта")
+                continue
+            }
+
+            exportSession.videoComposition = videoComposition
+            exportSession.audioMix = audioMix
+
+            do {
+                try await exportSession.export(to: outputURL, as: .mp4)
+                guard exportSession.status == .completed else {
+                    throw exportFailure(for: exportSession, preset: preset)
+                }
+                Self.logger.notice("Longform export completed with preset \(preset, privacy: .public)")
+                return
+            } catch is CancellationError {
+                exportSession.cancelExport()
+                throw CancellationError()
+            } catch {
+                if Task.isCancelled {
+                    exportSession.cancelExport()
+                    throw CancellationError()
+                }
+
+                let detail = exportFailureDescription(for: exportSession, fallback: error)
+                failures.append("\(preset): \(detail)")
+                Self.logger.warning("Longform export failed with preset \(preset, privacy: .public): \(detail, privacy: .public)")
+            }
+        }
+
+        let detail = failures.joined(separator: " | ")
+        throw NSError(
+            domain: "LongformPipeline",
+            code: -5,
+            userInfo: [
+                NSLocalizedDescriptionKey: "Экспорт не удался после всех совместимых попыток. \(detail)",
+                NSLocalizedFailureReasonErrorKey: detail
+            ]
+        )
+    }
+
+    private func exportFailure(for session: AVAssetExportSession, preset: String) -> NSError {
+        NSError(
+            domain: "LongformPipeline",
+            code: -5,
+            userInfo: [
+                NSLocalizedDescriptionKey: "\(preset): \(exportFailureDescription(for: session, fallback: nil))"
+            ]
+        )
+    }
+
+    private func exportFailureDescription(for session: AVAssetExportSession, fallback: Error?) -> String {
+        let primary = session.error ?? fallback
+        guard let primary else {
+            return "статус экспорта: \(session.status.rawValue)"
+        }
+
+        let nsError = primary as NSError
+        let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+        let underlyingDescription = underlying.map { " [\($0.domain) \($0.code): \($0.localizedDescription)]" } ?? ""
+        return "\(nsError.domain) \(nsError.code): \(nsError.localizedDescription)\(underlyingDescription)"
     }
 }

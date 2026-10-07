@@ -41,18 +41,41 @@ enum MediaExtractor {
         containersNeedingNormalization.contains(url.pathExtension.lowercased())
     }
 
-    /// Converts non-Apple video containers into a broadly compatible H.264/AAC
-    /// MP4. The first pass uses VideoToolbox; a software H.264 fallback keeps
-    /// imports working on Macs where the hardware encoder rejects the source.
+    /// Makes the source readable by AVFoundation without transcoding the whole film
+    /// unless the video codec cannot be stream-copied into MP4.
     static func normalizeInputIfNeeded(
         from sourceURL: URL,
         workingDirectory: URL,
         selectedAudioStreamIndex: Int? = nil
     ) async throws -> URL {
-        // If normalization is not required and no specific audio track was chosen, pass-through.
-        // However, if a specific audio stream was chosen from a multi-track container,
-        // we MUST normalize to ensure AVFoundation/Whisper isolate that single track.
         guard needsNormalization(sourceURL) || selectedAudioStreamIndex != nil else { return sourceURL }
+
+        let ffprobe: URL
+        do {
+            ffprobe = try await BinaryDownloadService.ensureAvailable(.ffprobe, workingDirectory: workingDirectory)
+        } catch {
+            if needsNormalization(sourceURL) {
+                throw MediaExtractorError.inputConversionFailed("FFprobe is required: \(shortError(error))")
+            }
+            return sourceURL
+        }
+
+        let inspectedTracks = await inspectAudioTracks(sourceURL: sourceURL, ffprobe: ffprobe)
+        let videoStream = await inspectVideoStream(sourceURL: sourceURL, ffprobe: ffprobe)
+        let selectedTrack: AudioTrackInfo?
+        let targetAudioMap: String
+        if let chosen = selectedAudioStreamIndex {
+            targetAudioMap = "0:\(chosen)"
+            selectedTrack = inspectedTracks.first(where: { $0.id == chosen })
+        } else {
+            selectedTrack = pickRecommendedAudioTrack(from: inspectedTracks)
+            targetAudioMap = selectedTrack != nil ? "0:\(selectedTrack!.id)" : "0:a:0?"
+        }
+
+        let mustFixContainer = needsNormalization(sourceURL)
+        let isolatingAudio = inspectedTracks.count > 1 && selectedAudioStreamIndex != nil
+        let mustDownmix = (selectedTrack?.channels ?? 2) >= 6
+        guard mustFixContainer || isolatingAudio || mustDownmix else { return sourceURL }
 
         let inputDirectory = workingDirectory.appendingPathComponent("input", isDirectory: true)
         do {
@@ -69,14 +92,9 @@ enum MediaExtractor {
         let deterministicName = "shortcast-normalized-\(baseCleanName.prefix(40))-\(sourceSize)\(streamSuffix).mp4"
         let outputURL = inputDirectory.appendingPathComponent(deterministicName)
 
-        // 1. Быстрая проверка дискового кэша: если нормализованный MP4 уже существует и читаем, используем мгновенно
         if FileManager.default.fileExists(atPath: outputURL.path) {
-            let existingSize = (try? outputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            if existingSize > 1024 * 1024 {
-                let asset = AVURLAsset(url: outputURL)
-                if (try? await asset.loadTracks(withMediaType: .video).first) != nil {
-                    return outputURL
-                }
+            if await isPlayableMP4(outputURL) {
+                return outputURL
             }
             try? FileManager.default.removeItem(at: outputURL)
         }
@@ -89,116 +107,279 @@ enum MediaExtractor {
                 "FFmpeg is required for \(sourceURL.pathExtension.uppercased()) import: \(shortError(error))")
         }
 
-        let ffprobe: URL
-        do {
-            ffprobe = try await BinaryDownloadService.ensureAvailable(.ffprobe, workingDirectory: workingDirectory)
-        } catch {
-            throw MediaExtractorError.inputConversionFailed("FFprobe is required: \(shortError(error))")
+        let canCopyAudio = !mustDownmix && Self.copyableAudioCodecs.contains(selectedTrack?.codec ?? "")
+        let audioFilter: String? = mustDownmix
+            ? "pan=stereo|c0=c2|c1=c2,aresample=async=1:first_pts=0"
+            : (canCopyAudio ? nil : "aresample=async=1:first_pts=0")
+
+        if videoStream?.canStreamCopyToMP4 != false {
+            let copyOK = await runFFmpeg(
+                ffmpeg,
+                arguments: remuxArguments(
+                    source: sourceURL,
+                    output: outputURL,
+                    audioMap: targetAudioMap,
+                    videoTag: videoStream?.videoTag,
+                    copyAudio: canCopyAudio,
+                    audioFilter: audioFilter
+                ),
+                outputURL: outputURL
+            )
+            if copyOK { return outputURL }
+
+            if canCopyAudio {
+                let copyVideoEncodeAudio = await runFFmpeg(
+                    ffmpeg,
+                    arguments: remuxArguments(
+                        source: sourceURL,
+                        output: outputURL,
+                        audioMap: targetAudioMap,
+                        videoTag: videoStream?.videoTag,
+                        copyAudio: false,
+                        audioFilter: audioFilter
+                    ),
+                    outputURL: outputURL
+                )
+                if copyVideoEncodeAudio { return outputURL }
+            }
+
+            if audioFilter != nil {
+                let copyBareOK = await runFFmpeg(
+                    ffmpeg,
+                    arguments: remuxArguments(
+                        source: sourceURL,
+                        output: outputURL,
+                        audioMap: targetAudioMap,
+                        videoTag: videoStream?.videoTag,
+                        copyAudio: false,
+                        audioFilter: nil
+                    ),
+                    outputURL: outputURL
+                )
+                if copyBareOK { return outputURL }
+            }
         }
 
-        let inspectedTracks = await inspectAudioTracks(sourceURL: sourceURL, ffprobe: ffprobe)
-        let selectedTrack: AudioTrackInfo?
-        let targetAudioMap: String
-        if let chosen = selectedAudioStreamIndex {
-            targetAudioMap = "0:\(chosen)"
-            selectedTrack = inspectedTracks.first(where: { $0.id == chosen })
-        } else {
-            selectedTrack = pickRecommendedAudioTrack(from: inspectedTracks)
-            targetAudioMap = selectedTrack != nil ? "0:\(selectedTrack!.id)" : "0:a:0?"
+        let downscale = videoStream?.shouldDownscale ?? false
+        let hwOK = await runFFmpeg(
+            ffmpeg,
+            arguments: transcodeArguments(
+                source: sourceURL,
+                output: outputURL,
+                audioMap: targetAudioMap,
+                copyAudio: canCopyAudio,
+                audioFilter: audioFilter,
+                hardware: true,
+                hwaccel: true,
+                downscale: downscale
+            ),
+            outputURL: outputURL
+        )
+        if hwOK { return outputURL }
+
+        let hwNoAccelOK = await runFFmpeg(
+            ffmpeg,
+            arguments: transcodeArguments(
+                source: sourceURL,
+                output: outputURL,
+                audioMap: targetAudioMap,
+                copyAudio: canCopyAudio,
+                audioFilter: audioFilter,
+                hardware: true,
+                hwaccel: false,
+                downscale: downscale
+            ),
+            outputURL: outputURL
+        )
+        if hwNoAccelOK { return outputURL }
+
+        let swOK = await runFFmpeg(
+            ffmpeg,
+            arguments: transcodeArguments(
+                source: sourceURL,
+                output: outputURL,
+                audioMap: targetAudioMap,
+                copyAudio: canCopyAudio,
+                audioFilter: audioFilter,
+                hardware: false,
+                hwaccel: false,
+                downscale: downscale
+            ),
+            outputURL: outputURL
+        )
+        if swOK { return outputURL }
+
+        throw MediaExtractorError.inputConversionFailed("FFmpeg could not produce a playable MP4 from this file.")
+    }
+
+    private static let copyableAudioCodecs: Set<String> = ["aac", "mp3", "ac3"]
+
+    private struct ProbedVideoStream: Sendable {
+        let codecName: String
+        let width: Int
+        let height: Int
+
+        var canStreamCopyToMP4: Bool {
+            switch codecName {
+            case "h264", "hevc", "mpeg4":
+                return true
+            default:
+                return false
+            }
         }
 
-        // Dialogue Isolation: для 5.1/7.1 выделяем 100% чистый центральный канал речи (c2 / FC),
-        // полностью исключая каналы фронтальной и тыловой музыки (c0, c1, c4, c5),
-        // плюс применяем dialoguenhance для кристальной изоляции голоса под наш саундтрек.
-        let isMultiChannel = (selectedTrack?.channels ?? 2) >= 6
-        let audioFilter = isMultiChannel
-            ? "pan=stereo|c0=c2|c1=c2,dialoguenhance,aresample=async=1:first_pts=0"
-            : "pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1,dialoguenhance,aresample=async=1:first_pts=0"
+        var videoTag: String? {
+            codecName == "hevc" ? "hvc1" : nil
+        }
 
-        // 2. СВЕРХБЫСТРЫЙ ПАСС: Ремуксинг без перекодирования (-c:v copy).
-        // Если видеопоток уже H.264 или HEVC, перепаковка MKV в MP4 занимает 5-10 секунд вместо 20 минут.
-        let remuxArguments = [
-            "-hide_banner", "-y",
-            "-i", sourceURL.path,
+        var shouldDownscale: Bool { height > 1080 || width > 1920 }
+    }
+
+    private static let ffmpegQuietPrefix = [
+        "-hide_banner", "-nostdin", "-nostats", "-loglevel", "error", "-y"
+    ]
+
+    private static func remuxArguments(
+        source: URL,
+        output: URL,
+        audioMap: String,
+        videoTag: String?,
+        copyAudio: Bool,
+        audioFilter: String?
+    ) -> [String] {
+        var args = ffmpegQuietPrefix + [
+            "-i", source.path,
             "-map", "0:v:0",
-            "-map", targetAudioMap,
+            "-map", audioMap,
             "-map_metadata", "-1",
             "-map_chapters", "-1",
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-profile:a", "aac_low",
-            "-ar", "48000",
-            "-ac", "2",
-            "-af", audioFilter,
+            "-sn", "-dn",
+            "-c:v", "copy"
+        ]
+        if let videoTag {
+            args += ["-tag:v", videoTag]
+        }
+        args += audioEncodeArguments(copyAudio: copyAudio, audioFilter: audioFilter)
+        args += [
             "-avoid_negative_ts", "make_zero",
             "-movflags", "+faststart",
-            outputURL.path
+            output.path
         ]
+        return args
+    }
 
-        if let _ = try? await ProcessRunner.shared.run(executableURL: ffmpeg, arguments: remuxArguments) {
-            let asset = AVURLAsset(url: outputURL)
-            let vTracks = (try? await asset.loadTracks(withMediaType: .video)) ?? []
-            let aTracks = (try? await asset.loadTracks(withMediaType: .audio)) ?? []
-            let fileSize = (try? outputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-
-            if !vTracks.isEmpty && !aTracks.isEmpty && fileSize > 1024 * 1024 {
-                return outputURL
-            }
-            try? FileManager.default.removeItem(at: outputURL)
+    private static func transcodeArguments(
+        source: URL,
+        output: URL,
+        audioMap: String,
+        copyAudio: Bool,
+        audioFilter: String?,
+        hardware: Bool,
+        hwaccel: Bool,
+        downscale: Bool
+    ) -> [String] {
+        var args: [String] = []
+        if hwaccel {
+            args += ["-hwaccel", "videotoolbox"]
         }
-
-        // 3. FALLBACK ПАСС: Полное перекодирование для нестандартных кодеков (VP9, AV1 и т.д.)
-        let commonArguments = [
-            "-hide_banner", "-y",
-            "-i", sourceURL.path,
+        args += ffmpegQuietPrefix + [
+            "-i", source.path,
             "-map", "0:v:0",
-            "-map", targetAudioMap,
+            "-map", audioMap,
             "-map_metadata", "-1",
             "-map_chapters", "-1",
-            "-pix_fmt", "yuv420p",
+            "-sn", "-dn"
+        ]
+        if downscale {
+            args += ["-vf", "scale=-2:min(1080\\,ih)"]
+        }
+        args += ["-pix_fmt", "yuv420p"]
+        if hardware {
+            args += [
+                "-c:v", "h264_videotoolbox",
+                "-b:v", "8M",
+                "-maxrate", "10M",
+                "-bufsize", "16M"
+            ]
+        } else {
+            args += [
+                "-c:v", "libx264",
+                "-preset", "veryfast",
+                "-crf", "23",
+                "-threads", "4"
+            ]
+        }
+        args += audioEncodeArguments(copyAudio: copyAudio, audioFilter: audioFilter)
+        args += [
+            "-avoid_negative_ts", "make_zero",
+            "-movflags", "+faststart",
+            output.path
+        ]
+        return args
+    }
+
+    private static func audioEncodeArguments(copyAudio: Bool, audioFilter: String?) -> [String] {
+        if copyAudio {
+            return ["-c:a", "copy"]
+        }
+        var args = [
             "-c:a", "aac",
             "-b:a", "192k",
-            "-profile:a", "aac_low",
             "-ar", "48000",
-            "-ac", "2",
-            "-af", audioFilter,
-            "-avoid_negative_ts", "make_zero",
-            "-movflags", "+faststart"
+            "-ac", "2"
         ]
+        if let audioFilter {
+            args += ["-af", audioFilter]
+        }
+        return args
+    }
 
-        let hardwareArguments = commonArguments + [
-            "-c:v", "h264_videotoolbox",
-            "-b:v", "16M",
-            "-maxrate", "20M",
-            "-bufsize", "32M",
-            outputURL.path
-        ]
-        let softwareArguments = commonArguments + [
-            "-c:v", "libx264",
-            "-preset", "medium",
-            "-crf", "18",
-            outputURL.path
-        ]
-
+    private static func runFFmpeg(_ ffmpeg: URL, arguments: [String], outputURL: URL) async -> Bool {
+        try? FileManager.default.removeItem(at: outputURL)
         do {
-            _ = try await ProcessRunner.shared.run(executableURL: ffmpeg, arguments: hardwareArguments)
+            _ = try await ProcessRunner.shared.run(executableURL: ffmpeg, arguments: arguments)
         } catch {
             try? FileManager.default.removeItem(at: outputURL)
-            do {
-                _ = try await ProcessRunner.shared.run(executableURL: ffmpeg, arguments: softwareArguments)
-            } catch {
-                try? FileManager.default.removeItem(at: outputURL)
-                throw MediaExtractorError.inputConversionFailed(shortError(error))
-            }
+            return false
         }
-
-        let fileSize = (try? outputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        guard fileSize > 0 else {
+        let playable = await isPlayableMP4(outputURL)
+        if !playable {
             try? FileManager.default.removeItem(at: outputURL)
-            throw MediaExtractorError.inputConversionFailed("FFmpeg produced an empty MP4 file.")
         }
-        return outputURL
+        return playable
+    }
+
+    private static func isPlayableMP4(_ url: URL) async -> Bool {
+        let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        guard fileSize > 1024 * 1024 else { return false }
+        let asset = AVURLAsset(url: url)
+        let vTracks = (try? await asset.loadTracks(withMediaType: .video)) ?? []
+        let aTracks = (try? await asset.loadTracks(withMediaType: .audio)) ?? []
+        return !vTracks.isEmpty && !aTracks.isEmpty
+    }
+
+    private static func inspectVideoStream(sourceURL: URL, ffprobe: URL) async -> ProbedVideoStream? {
+        let args = [
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=codec_name,pix_fmt,width,height",
+            "-of", "json",
+            sourceURL.path
+        ]
+        guard let result = try? await ProcessRunner.shared.run(executableURL: ffprobe, arguments: args),
+              result.isSuccess,
+              let data = result.standardOutput.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let streams = json["streams"] as? [[String: Any]],
+              let stream = streams.first
+        else {
+            return nil
+        }
+        return ProbedVideoStream(
+            codecName: (stream["codec_name"] as? String) ?? "",
+            width: (stream["width"] as? Int) ?? 0,
+            height: (stream["height"] as? Int) ?? 0
+        )
     }
 
     private static func shortError(_ error: Error) -> String {

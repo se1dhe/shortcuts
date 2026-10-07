@@ -229,67 +229,72 @@ final class LongformAudioMasteringService: LongformAudioMasteringProtocol, Senda
                 }
             }
 
-            var lastMusicRampEnd: Double = 0.0
-
             for (idx, interval) in mergedSpeech.enumerated() {
-                guard interval.start < climaxStartTime else { break }
+                // Reserve the climax and outro for their own non-overlapping
+                // automation. AVFoundation may stop an export when two volume
+                // ramps on one track intersect, even by a single frame.
+                let dynamicDuckingEnd = max(0.0, climaxStartTime - 0.01)
+                guard interval.start < dynamicDuckingEnd else { break }
 
                 // Приглушение перед началом речи
-                let duckStart = max(lastMusicRampEnd, interval.start - 0.25)
-                let duckDuration = max(0.05, interval.start - duckStart)
-                if duckDuration >= 0.05 && duckStart >= lastMusicRampEnd {
-                    musicParams.setVolumeRamp(
-                        fromStartVolume: normalVolume,
-                        toEndVolume: duckedVolume,
-                        timeRange: CMTimeRange(
-                            start: CMTime(seconds: duckStart, preferredTimescale: 600),
-                            duration: CMTime(seconds: duckDuration, preferredTimescale: 600)
-                        )
+                let duckStart = max(lastMusicRampEnd + 0.005, interval.start - 0.25)
+                let duckEnd = min(interval.start, dynamicDuckingEnd)
+                let duckDuration = duckEnd - duckStart
+                if duckDuration >= 0.05 {
+                    safeSetVolumeRamp(
+                        params: musicParams,
+                        from: normalVolume,
+                        to: duckedVolume,
+                        start: duckStart,
+                        duration: duckDuration,
+                        lastRampEnd: &lastMusicRampEnd
                     )
-                    lastMusicRampEnd = duckStart + duckDuration
                 }
 
                 // Плавное возвращение музыки в паузе после фразы
-                let nextStart = (idx + 1 < mergedSpeech.count) ? mergedSpeech[idx + 1].start : climaxStartTime
+                let nextStart = (idx + 1 < mergedSpeech.count) ? mergedSpeech[idx + 1].start : dynamicDuckingEnd
                 let availablePause = nextStart - interval.end
 
-                if availablePause >= 1.0 && interval.end < climaxStartTime {
-                    let restoreStart = max(lastMusicRampEnd, interval.end + 0.15)
+                if availablePause >= 1.0 && interval.end < dynamicDuckingEnd {
+                    let restoreStart = max(lastMusicRampEnd + 0.005, interval.end + 0.15)
                     let restoreDuration: Double = 0.35
-                    if (restoreStart + restoreDuration) < (nextStart - 0.20) {
-                        musicParams.setVolumeRamp(
-                            fromStartVolume: duckedVolume,
-                            toEndVolume: normalVolume,
-                            timeRange: CMTimeRange(
-                                start: CMTime(seconds: restoreStart, preferredTimescale: 600),
-                                duration: CMTime(seconds: restoreDuration, preferredTimescale: 600)
-                            )
+                    if (restoreStart + restoreDuration) < min(nextStart - 0.20, dynamicDuckingEnd) {
+                        safeSetVolumeRamp(
+                            params: musicParams,
+                            from: duckedVolume,
+                            to: normalVolume,
+                            start: restoreStart,
+                            duration: restoreDuration,
+                            lastRampEnd: &lastMusicRampEnd
                         )
-                        lastMusicRampEnd = restoreStart + restoreDuration
                     }
                 }
             }
         }
 
         // Финальное крещендо музыки до начала финального затухания
-        if musicFadeStartTime > climaxStartTime {
-            let climaxStartCM = CMTime(seconds: climaxStartTime, preferredTimescale: 600)
-            let climaxDurationCM = CMTime(seconds: musicFadeStartTime - climaxStartTime, preferredTimescale: 600)
-            musicParams.setVolumeRamp(
-                fromStartVolume: duckedVolume,
-                toEndVolume: climaxVolume,
-                timeRange: CMTimeRange(start: climaxStartCM, duration: climaxDurationCM)
+        let safeClimaxStart = max(climaxStartTime, lastMusicRampEnd + 0.005)
+        if musicFadeStartTime > safeClimaxStart {
+            safeSetVolumeRamp(
+                params: musicParams,
+                from: duckedVolume,
+                to: climaxVolume,
+                start: safeClimaxStart,
+                duration: musicFadeStartTime - safeClimaxStart,
+                lastRampEnd: &lastMusicRampEnd
             )
         }
 
         // Финальное плавное затухание музыки строго ПОСЛЕ произнесения последней фразы
-        if totalDuration > musicFadeStartTime {
-            let musicFadeStartCM = CMTime(seconds: musicFadeStartTime, preferredTimescale: 600)
-            let musicFadeDurationCM = CMTime(seconds: totalDuration - musicFadeStartTime, preferredTimescale: 600)
-            musicParams.setVolumeRamp(
-                fromStartVolume: climaxVolume,
-                toEndVolume: 0.0,
-                timeRange: CMTimeRange(start: musicFadeStartCM, duration: musicFadeDurationCM)
+        let safeFadeStart = max(musicFadeStartTime, lastMusicRampEnd + 0.005)
+        if totalDuration > safeFadeStart {
+            safeSetVolumeRamp(
+                params: musicParams,
+                from: climaxVolume,
+                to: 0.0,
+                start: safeFadeStart,
+                duration: totalDuration - safeFadeStart,
+                lastRampEnd: &lastMusicRampEnd
             )
         }
 

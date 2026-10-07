@@ -307,8 +307,8 @@ final class WorkspaceModel {
 
         let normalizedInputURL: URL
         do {
-            if MediaExtractor.needsNormalization(sandboxFriendlyURL) || selectedAudioStreamIndex != nil {
-                inputPreparationMessage = "Converting \(sandboxFriendlyURL.pathExtension.uppercased()) to MP4…"
+            if MediaExtractor.needsNormalization(sandboxFriendlyURL) {
+                inputPreparationMessage = "Preparing \(sandboxFriendlyURL.pathExtension.uppercased()) for playback…"
             }
             normalizedInputURL = try await MediaExtractor.normalizeInputIfNeeded(
                 from: sandboxFriendlyURL,
@@ -854,7 +854,12 @@ final class WorkspaceModel {
                     try? await self.filmProjectService.saveProject(project)
                 }
                 self.phase = .longformResults
+            } catch is CancellationError {
+                // A reset or a new render explicitly cancels this task. Do not
+                // replace the new screen state with a spurious export error.
+                return
             } catch {
+                if Task.isCancelled { return }
                 self.errorMessage = "Ошибка монтажа длинного ролика: \(error.localizedDescription)"
                 self.phase = .empty
             }

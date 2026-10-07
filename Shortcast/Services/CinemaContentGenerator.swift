@@ -157,7 +157,10 @@ enum CinemaContentGenerator {
         }
 
         if replaceHook {
-            clip.overlayText = "🍿 Название в Telegram: @telonyx_club"
+            let channel = settings?.telegramChannelId.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !channel.isEmpty {
+                clip.overlayText = "🍿 Название в Telegram: \(channel)"
+            }
         }
 
         if saveToHistory, let settings, let tiktok = content[.tiktok] {

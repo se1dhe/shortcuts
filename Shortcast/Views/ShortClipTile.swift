@@ -417,14 +417,35 @@ private struct VideoThumbnailView: View {
             }
         }
         .task(id: url) {
-            let asset = AVURLAsset(url: url)
-            let generator = AVAssetImageGenerator(asset: asset)
-            generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = CGSize(width: 480, height: 480)
-            let time = CMTime(seconds: 0.5, preferredTimescale: 600)
-            if let cgImage = try? await generator.image(at: time).image {
-                thumbnail = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+            thumbnail = await Self.makeThumbnail(for: url)
+        }
+    }
+
+    /// The clip file is often still being flushed to disk when the tile first
+    /// appears, so a single `image(at:)` attempt fails silently and leaves the
+    /// preview black forever. Retry with backoff and fall back to time zero
+    /// (some codecs can't seek to 0.5s) before giving up.
+    private static func makeThumbnail(for url: URL) async -> NSImage? {
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 480, height: 480)
+
+        let times: [CMTime] = [
+            CMTime(seconds: 0.5, preferredTimescale: 600),
+            CMTime(seconds: 0.0, preferredTimescale: 600)
+        ]
+        let delays: [UInt64] = [0, 250_000_000, 500_000_000, 1_000_000_000]
+
+        for delay in delays {
+            if delay > 0 { try? await Task.sleep(nanoseconds: delay) }
+            if Task.isCancelled { return nil }
+            for time in times {
+                if let cgImage = try? await generator.image(at: time).image {
+                    return NSImage(cgImage: cgImage,
+                                   size: NSSize(width: cgImage.width, height: cgImage.height))
+                }
             }
         }
+        return nil
     }
 }

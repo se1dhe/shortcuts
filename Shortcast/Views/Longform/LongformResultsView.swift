@@ -384,8 +384,13 @@ struct LongformResultsView: View {
         telegramError = nil
         defer { isPostingToTelegram = false }
 
-        let botToken = settings.telegramBotToken.isEmpty ? "7797825319:AAH661tUvG9B-d6Kj6Tj-dY4q2gZ6FzE8_0" : settings.telegramBotToken
-        let channelId = settings.telegramChannelId.isEmpty ? "@telonyx_club" : settings.telegramChannelId
+        let botToken = settings.telegramBotToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let channelId = settings.telegramChannelId.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !botToken.isEmpty, !channelId.isEmpty else {
+            telegramError = "Токен Telegram или ID канала не заданы в Настройках."
+            return
+        }
 
         do {
             _ = try await TelegramPublishingService.shared.publishLongformPost(

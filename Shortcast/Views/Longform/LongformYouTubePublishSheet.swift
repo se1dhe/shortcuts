@@ -330,8 +330,15 @@ struct LongformYouTubePublishSheet: View {
     }
 
     private func publishToTelegram(youtubeURL: String?) async {
-        let botToken = settings.telegramBotToken.isEmpty ? "7797825319:AAH661tUvG9B-d6Kj6Tj-dY4q2gZ6FzE8_0" : settings.telegramBotToken
-        let channelId = settings.telegramChannelId.isEmpty ? "@telonyx_club" : settings.telegramChannelId
+        let botToken = settings.telegramBotToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let channelId = settings.telegramChannelId.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !botToken.isEmpty, !channelId.isEmpty else {
+            let errText = "Токен Telegram или ID канала не заданы в Настройках — публикация пропущена."
+            logs.append("⚠️ \(errText)")
+            telegramPostMessage = errText
+            return
+        }
 
         do {
             let msgId = try await TelegramPublishingService.shared.publishLongformPost(

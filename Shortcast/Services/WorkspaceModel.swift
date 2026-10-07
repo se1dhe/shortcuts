@@ -525,8 +525,8 @@ final class WorkspaceModel {
                                 title: inferred.title,
                                 originalTitle: nil,
                                 year: inferred.year,
-                                imdbRating: "8.5",
-                                rottenTomatoesScore: "90%",
+                                imdbRating: nil,
+                                rottenTomatoesScore: nil,
                                 posterURL: nil,
                                 backdropURL: nil,
                                 overview: "",
@@ -813,8 +813,8 @@ final class WorkspaceModel {
                 title: finalMovieTitle,
                 originalTitle: nil,
                 year: "",
-                imdbRating: "8.5",
-                rottenTomatoesScore: "90%",
+                imdbRating: nil,
+                rottenTomatoesScore: nil,
                 posterURL: nil,
                 backdropURL: nil,
                 overview: "",
@@ -1210,8 +1210,8 @@ final class WorkspaceModel {
                                 title: detected.title,
                                 originalTitle: nil,
                                 year: detected.year,
-                                imdbRating: "8.5",
-                                rottenTomatoesScore: "90%",
+                                imdbRating: nil,
+                                rottenTomatoesScore: nil,
                                 posterURL: nil,
                                 backdropURL: nil,
                                 overview: "",
@@ -1401,8 +1401,10 @@ final class WorkspaceModel {
                     newClip.detectedMovieYear = m.year
                     newClip.imdbRating = m.imdbRating
                     newClip.rottenTomatoesScore = m.rottenTomatoesScore
-                    newClip.candidate.hook = "Такой развязки никто не ожидал... 😳"
-                    newClip.overlayText = "🍿 Название в Telegram: @telonyx_club"
+                    let channel = settings.telegramChannelId.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !channel.isEmpty {
+                        newClip.overlayText = "🍿 Название в Telegram: \(channel)"
+                    }
                 }
                 return newClip
             }

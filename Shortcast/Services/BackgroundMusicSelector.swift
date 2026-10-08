@@ -30,9 +30,32 @@ public protocol BackgroundMusicSelecting: Sendable {
 /// Production implementation of BackgroundMusicSelecting.
 public final class BackgroundMusicService: BackgroundMusicSelecting, Sendable {
     public static let shared = BackgroundMusicService()
-    
-    public init() {}
-    
+
+    /// Posted (on the main queue) whenever a watched music directory changes so
+    /// views can reload the track list without a recompile.
+    public static let musicLibraryDidChange = Notification.Name("shortcast.backgroundMusic.libraryDidChange")
+
+    private let watcher: MusicDirectoryWatcher
+
+    public init() {
+        self.watcher = MusicDirectoryWatcher {
+            NotificationCenter.default.post(name: BackgroundMusicService.musicLibraryDidChange, object: nil)
+        }
+    }
+
+    /// Begins watching the built-in music directory (and the optional custom
+    /// directory) for added/removed/renamed audio files. Safe to call repeatedly;
+    /// each call replaces the previous set of watchers.
+    public func startWatching(customDirectory: URL?) {
+        var directories = [defaultMusicDirectory()]
+        if let customDirectory { directories.append(customDirectory) }
+        watcher.watch(directories)
+    }
+
+    public func stopWatching() {
+        watcher.stop()
+    }
+
     public func defaultMusicDirectory() -> URL {
         // First check bundled resources
         if let bundleDir = Bundle.main.resourceURL?.appendingPathComponent("Music"),
@@ -248,5 +271,70 @@ public final class BackgroundMusicService: BackgroundMusicSelecting, Sendable {
 public enum BackgroundMusicSelector {
     public static func selectBestTrack(from directory: URL?, mood: String? = nil) async -> URL? {
         await BackgroundMusicService.shared.selectBestTrack(from: directory, mood: mood)
+    }
+}
+
+/// Watches one or more directories with a `DispatchSource` file-system object and
+/// fires a debounced callback (on the main queue) when audio files are added,
+/// removed, or renamed. Encapsulated as its own `@unchecked Sendable` type so the
+/// owning `Sendable` service keeps no mutable stored state.
+final class MusicDirectoryWatcher: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sources: [DispatchSourceFileSystemObject] = []
+    private var lastFire: Date = .distantPast
+    private let onChange: @Sendable () -> Void
+
+    init(onChange: @escaping @Sendable () -> Void) {
+        self.onChange = onChange
+    }
+
+    deinit {
+        for source in sources { source.cancel() }
+    }
+
+    func watch(_ directories: [URL]) {
+        lock.lock()
+        for source in sources { source.cancel() }
+        sources.removeAll()
+        lock.unlock()
+
+        for directory in directories {
+            addSource(for: directory)
+        }
+    }
+
+    func stop() {
+        lock.lock()
+        for source in sources { source.cancel() }
+        sources.removeAll()
+        lock.unlock()
+    }
+
+    private func addSource(for directory: URL) {
+        let path = directory.path(percentEncoded: false)
+        let fd = open(path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .rename, .delete, .extend],
+            queue: .global(qos: .utility))
+        source.setEventHandler { [weak self] in self?.fire() }
+        source.setCancelHandler { close(fd) }
+        source.resume()
+        lock.lock()
+        sources.append(source)
+        lock.unlock()
+    }
+
+    private func fire() {
+        lock.lock()
+        let now = Date()
+        // Debounce: file copies fire several events in quick succession.
+        let shouldFire = now.timeIntervalSince(lastFire) > 1.0
+        if shouldFire { lastFire = now }
+        lock.unlock()
+        guard shouldFire else { return }
+        let callback = onChange
+        DispatchQueue.main.async { callback() }
     }
 }

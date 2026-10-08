@@ -30,7 +30,11 @@ struct MusicLibraryView: View {
             footer
         }
         .task(id: settings.customMusicDirectory) {
+            BackgroundMusicService.shared.startWatching(customDirectory: settings.customMusicDirectory)
             await refreshTracks()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: BackgroundMusicService.musicLibraryDidChange)) { _ in
+            Task { await refreshTracks() }
         }
         .onDisappear {
             stopPlayback()

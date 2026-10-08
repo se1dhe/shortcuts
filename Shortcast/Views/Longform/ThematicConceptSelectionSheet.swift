@@ -10,6 +10,7 @@ struct ThematicConceptSelectionSheet: View {
     let onCancel: () -> Void
     let onRegenerate: (() -> Void)?
 
+    @Environment(AppSettings.self) private var settings
     @State private var editedMovieTitle: String
     @State private var selectedConceptId: String? = nil
     @State private var customWord: String = ""
@@ -42,17 +43,10 @@ struct ThematicConceptSelectionSheet: View {
         }
     }
 
-    private let musicPresets: [(name: String, fileName: String)] = [
-        ("prrodan: Foggy Night (Главная тема)", "Prrodan_Foggy_Night.m4a"),
-        ("prrodan: Тёмная атмосфера (Dark Atmosphere)", "Prrodan_Dark_Atmosphere.m4a"),
-        ("prrodan: Внутренняя стойкость (Resilience)", "Prrodan_Cinematic_Resilience.m4a"),
-        ("prrodan: Экзистенциальное эхо (Existential Echo)", "Prrodan_Existential_Echo.m4a"),
-        ("prrodan: Опасный разум (Dangerous Mind)", "Prrodan_Dangerous_Mind.m4a"),
-        ("prrodan: Несломленный дух (Unbroken Spirit)", "Prrodan_Unbroken_Spirit.m4a"),
-        ("Тёмный кинематографичный монолог (Monologue)", "Sigma_Monologue_Dark.m4a"),
-        ("Напряжение и саспенс (Suspense)", "Tension_Dark_Suspense.m4a"),
-        ("Драматическая тема (Emotional)", "Dramatic_Emotional_Theme.m4a")
-    ]
+    /// Динамический список саундтреков, сканируемый из Resources/Music и
+    /// пользовательской папки. Обновляется вживую через watcher в
+    /// `BackgroundMusicService` — добавление файла подхватывается без перекомпиляции.
+    @State private var musicTracks: [BackgroundMusicTrack] = []
 
     init(
         movieTitle: String,
@@ -103,36 +97,18 @@ struct ThematicConceptSelectionSheet: View {
         if let customAudioURL {
             return customAudioURL
         }
-        guard !musicPresets.isEmpty else { return nil }
-        let safeIndex = min(max(0, selectedPresetIndex), musicPresets.count - 1)
-        let fileName = musicPresets[safeIndex].fileName
-        return resolveMusicFile(fileName: fileName)
+        guard !musicTracks.isEmpty else { return nil }
+        let safeIndex = min(max(0, selectedPresetIndex), musicTracks.count - 1)
+        return musicTracks[safeIndex].url
     }
 
-    private func resolveMusicFile(fileName: String) -> URL? {
-        if let url = Bundle.main.url(forResource: fileName, withExtension: nil, subdirectory: "Music") {
-            return url
+    private func loadMusicTracks() async {
+        BackgroundMusicService.shared.startWatching(customDirectory: settings.customMusicDirectory)
+        let tracks = await BackgroundMusicService.shared.loadAvailableTracks(customDirectory: settings.customMusicDirectory)
+        musicTracks = tracks
+        if selectedPresetIndex >= tracks.count {
+            selectedPresetIndex = 0
         }
-        if let url = Bundle.main.url(forResource: fileName, withExtension: nil) {
-            return url
-        }
-        if let resURL = Bundle.main.resourceURL?.appendingPathComponent(fileName),
-           FileManager.default.fileExists(atPath: resURL.path) {
-            return resURL
-        }
-        if let resMusicURL = Bundle.main.resourceURL?.appendingPathComponent("Music/\(fileName)"),
-           FileManager.default.fileExists(atPath: resMusicURL.path) {
-            return resMusicURL
-        }
-        let fallback = BackgroundMusicService.shared.defaultMusicDirectory().appendingPathComponent(fileName)
-        if FileManager.default.fileExists(atPath: fallback.path) {
-            return fallback
-        }
-        let localPath = URL(fileURLWithPath: "Shortcast/Resources/Music/\(fileName)")
-        if FileManager.default.fileExists(atPath: localPath.path) {
-            return localPath
-        }
-        return nil
     }
 
     var body: some View {
@@ -522,13 +498,13 @@ struct ThematicConceptSelectionSheet: View {
                     if ambientMusicEnabled {
                         HStack(spacing: 12) {
                             Picker("Саундтрек:", selection: $selectedPresetIndex) {
-                                ForEach(0..<musicPresets.count, id: \.self) { idx in
-                                    Text(musicPresets[idx].name).tag(idx)
+                                ForEach(0..<musicTracks.count, id: \.self) { idx in
+                                    Text(musicTracks[idx].name).tag(idx)
                                 }
                             }
                             .pickerStyle(.menu)
                             .frame(maxWidth: 320)
-                            .disabled(customAudioURL != nil)
+                            .disabled(customAudioURL != nil || musicTracks.isEmpty)
 
                             Button {
                                 let openPanel = NSOpenPanel()
@@ -692,6 +668,12 @@ struct ThematicConceptSelectionSheet: View {
             if !isEnabled {
                 previewController.stop()
             }
+        }
+        .task(id: settings.customMusicDirectory) {
+            await loadMusicTracks()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: BackgroundMusicService.musicLibraryDidChange)) { _ in
+            Task { await loadMusicTracks() }
         }
         .onDisappear {
             previewController.stop()

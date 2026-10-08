@@ -1433,47 +1433,40 @@ final class WorkspaceModel {
                 modelManager.freeDirectorIfMemoryTight()
             }
 
-            // Stage 4: Cut, then caption, each clip in turn (65% -> 100%)
+            // Stage 4: Cut, then caption, each clip (65% -> 100%).
+            // Шаг 11c: рендерим до 2 клипов параллельно. Тяжёлая работа (FFmpeg
+            // нарезка/сабы) приостанавливает задачу вне main actor, поэтому два
+            // рендера реально перекрываются во времени.
             progressTracker.startRendering(totalClips: clips.count)
 
-            for (index, clip) in clips.enumerated() {
-                try Task.checkCancellation()
-                progressTracker.updateRenderingProgress(
-                    clipIndex: index,
-                    totalClips: clips.count,
-                    clipName: clip.candidate.overlay.isEmpty ? "Эдит \(index + 1)" : clip.candidate.overlay)
-                do {
-                    let tCut = Date()
-                    try await ClipRenderingService.renderAndCaption(
-                        clip: clip,
-                        jobURL: job.url,
-                        transcript: transcript,
-                        captionLanguage: captionLanguage,
-                        modelManager: modelManager,
-                        settings: settings,
-                        transcription: transcription
-                    )
-                    await self.applyCinemaContentForGeneratedClip(
-                        clip: clip,
-                        movie: self.detectedMovie ?? movie,
-                        modelManager: modelManager,
-                        language: captionLanguage,
-                        settings: settings
-                    )
-                    saveProcessedRecord(for: clip, settings: settings)
-                    Self.log("clip \(index + 1)/\(clips.count) ready in \(Self.elapsed(since: tCut))")
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    clip.stage = .failed(error.localizedDescription)
-                    Self.log("clip \(index + 1)/\(clips.count) failed: \(error.localizedDescription)")
-                    
-                    // Fallback captioning
-                    Self.log("clip \(index + 1)/\(clips.count) caption fallback due to failure: \(error.localizedDescription)")
-                    clip.applyGeneratedCopy(
-                        fallbackGeneration(for: clip, language: captionLanguage),
-                        detectedLanguage: captionLanguage)
-                    saveProcessedRecord(for: clip, settings: settings)
+            let renderTargets = clips
+            let totalClips = renderTargets.count
+            let maxConcurrent = 2
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                var nextIndex = 0
+                func enqueueNext() {
+                    guard nextIndex < totalClips else { return }
+                    let idx = nextIndex
+                    nextIndex += 1
+                    let clip = renderTargets[idx]
+                    group.addTask {
+                        try await self.renderSingleShortClip(
+                            clip: clip,
+                            index: idx,
+                            total: totalClips,
+                            job: job,
+                            transcript: transcript,
+                            movie: self.detectedMovie ?? movie,
+                            captionLanguage: captionLanguage,
+                            modelManager: modelManager,
+                            settings: settings
+                        )
+                    }
+                }
+                for _ in 0..<min(maxConcurrent, totalClips) { enqueueNext() }
+                while let _ = try await group.next() {
+                    try Task.checkCancellation()
+                    enqueueNext()
                 }
             }
             progressTracker.finish()
@@ -1487,6 +1480,59 @@ final class WorkspaceModel {
             errorMessage = "Couldn't make shorts from that video. \(error.localizedDescription)"
             clips = []
             phase = .empty
+        }
+    }
+
+    /// Рендер и озвучка одного клипа (нарезка + сабы + кино-копирайтинг).
+    /// Вынесено из последовательного цикла для параллельного выполнения (Шаг 11c).
+    /// Ошибки конкретного клипа не валят весь пайплайн: ставим `.failed` и
+    /// применяем резервный копирайтинг. Отмена пробрасывается наверх.
+    private func renderSingleShortClip(
+        clip: ShortClip,
+        index: Int,
+        total: Int,
+        job: VideoJob,
+        transcript: Transcript,
+        movie: MovieIdentity?,
+        captionLanguage: String?,
+        modelManager: ModelManager,
+        settings: AppSettings
+    ) async throws {
+        try Task.checkCancellation()
+        progressTracker.updateRenderingProgress(
+            clipIndex: index,
+            totalClips: total,
+            clipName: clip.candidate.overlay.isEmpty ? "Эдит \(index + 1)" : clip.candidate.overlay)
+        do {
+            let tCut = Date()
+            try await ClipRenderingService.renderAndCaption(
+                clip: clip,
+                jobURL: job.url,
+                transcript: transcript,
+                captionLanguage: captionLanguage,
+                modelManager: modelManager,
+                settings: settings,
+                transcription: transcription
+            )
+            await self.applyCinemaContentForGeneratedClip(
+                clip: clip,
+                movie: movie,
+                modelManager: modelManager,
+                language: captionLanguage,
+                settings: settings
+            )
+            saveProcessedRecord(for: clip, settings: settings)
+            Self.log("clip \(index + 1)/\(total) ready in \(Self.elapsed(since: tCut))")
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            clip.stage = .failed(error.localizedDescription)
+            Self.log("clip \(index + 1)/\(total) failed: \(error.localizedDescription)")
+            Self.log("clip \(index + 1)/\(total) caption fallback due to failure: \(error.localizedDescription)")
+            clip.applyGeneratedCopy(
+                fallbackGeneration(for: clip, language: captionLanguage),
+                detectedLanguage: captionLanguage)
+            saveProcessedRecord(for: clip, settings: settings)
         }
     }
 

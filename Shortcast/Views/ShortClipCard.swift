@@ -20,6 +20,7 @@ struct ShortClipCard: View {
 
     @State private var publishPlatforms: Set<SocialPlatform> = Set(SocialPlatform.allCases)
     @State private var showBrowserPublish = false
+    @State private var showSubtitleEditor = false
     @State private var previewPlatform: SocialPlatform = .tiktok
 
     var body: some View {
@@ -47,6 +48,9 @@ struct ShortClipCard: View {
         }
         .sheet(isPresented: $showBrowserPublish) {
             BrowserPublishSheet(clip: clip)
+        }
+        .sheet(isPresented: $showSubtitleEditor) {
+            ShortSubtitleEditorView(clip: clip)
         }
         .onChange(of: clip.detectedMovieTitle) { _, newValue in
             if !newValue.trimmed.isEmpty { manualMovieTitle = newValue }
@@ -233,6 +237,17 @@ struct ShortClipCard: View {
 
             if clip.burnSubtitles {
                 SubtitleAppearanceEditor(appearance: $clip.subtitleAppearance)
+
+                Button {
+                    showSubtitleEditor = true
+                } label: {
+                    Label("Редактировать текст субтитров", systemImage: "square.and.pencil")
+                        .font(.callout)
+                }
+                .buttonStyle(.bordered)
+                .disabled(clip.subtitleSegments.isEmpty)
+                .help(clip.subtitleSegments.isEmpty ? "Для этого клипа нет субтитров" : "Править текст, объединять и разбивать строки субтитров")
+
                 Text("Uses the transcript to burn synced subtitles into the video when you publish.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)

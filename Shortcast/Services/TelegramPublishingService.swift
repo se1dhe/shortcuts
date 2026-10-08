@@ -12,6 +12,12 @@ protocol TelegramPublishingProtocol: Sendable {
         botToken: String,
         channelId: String
     ) async throws -> Int
+    func publishCampaign(
+        text: String,
+        thumbnail: URL?,
+        botToken: String,
+        channelId: String
+    ) async throws -> Int
 }
 
 enum TelegramPublishError: LocalizedError {
@@ -255,6 +261,45 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
         )
     }
 
+    // MARK: - Campaign post
+
+    /// Sends the final campaign post: a cover image (when available) plus the
+    /// user-editable text containing the essay link and every short's platform
+    /// links. The text is sent as plain (no parse_mode) so user edits with stray
+    /// `<`, `>` or `&` can never trigger a Telegram "can't parse entities" error;
+    /// Telegram still auto-links the plain URLs.
+    func publishCampaign(
+        text: String,
+        thumbnail: URL?,
+        botToken: String,
+        channelId: String
+    ) async throws -> Int {
+        let token = botToken.trimmed
+        let channel = channelId.trimmed
+        guard !token.isEmpty, !channel.isEmpty else {
+            throw TelegramPublishError.emptyCredentials
+        }
+        let cleanChannel = channel.hasPrefix("@") ? channel : "@\(channel)"
+        let caption = text.count > 1024 ? String(text.prefix(1020)) + "..." : text
+
+        if let thumbURL = thumbnail, FileManager.default.fileExists(atPath: thumbURL.path) {
+            if let msgId = try? await sendPhotoMultipart(
+                photoURL: thumbURL,
+                caption: caption,
+                botToken: token,
+                channelId: cleanChannel,
+                parseMode: nil
+            ) {
+                return msgId
+            }
+        }
+        return try await sendMessageJSON(
+            text: text.count > 4096 ? String(text.prefix(4090)) + "..." : text,
+            botToken: token,
+            channelId: cleanChannel,
+            parseMode: nil)
+    }
+
     // MARK: - Video compression
 
     /// Re-encodes a video to 720p H.264 so it fits under the Telegram Bot API upload limit.
@@ -306,7 +351,7 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
 
     // MARK: - Private API helpers
 
-    private func sendMessageJSON(text: String, botToken: String, channelId: String) async throws -> Int {
+    private func sendMessageJSON(text: String, botToken: String, channelId: String, parseMode: String? = "HTML") async throws -> Int {
         guard let url = URL(string: "https://api.telegram.org/bot\(botToken)/sendMessage") else {
             throw TelegramPublishError.invalidURL
         }
@@ -315,18 +360,18 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "chat_id": channelId,
-            "text": text,
-            "parse_mode": "HTML"
+            "text": text
         ]
+        if let parseMode { payload["parse_mode"] = parseMode }
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
         let (data, resp) = try await session.data(for: request)
         return try parseMessageID(from: data, response: resp)
     }
 
-    private func sendPhotoMultipart(photoURL: URL, caption: String, botToken: String, channelId: String) async throws -> Int {
+    private func sendPhotoMultipart(photoURL: URL, caption: String, botToken: String, channelId: String, parseMode: String? = "HTML") async throws -> Int {
         guard let url = URL(string: "https://api.telegram.org/bot\(botToken)/sendPhoto") else {
             throw TelegramPublishError.invalidURL
         }
@@ -345,10 +390,11 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
         appendString("Content-Disposition: form-data; name=\"chat_id\"\r\n\r\n")
         appendString("\(channelId)\r\n")
 
-        // parse_mode: HTML
-        appendString("--\(boundary)\r\n")
-        appendString("Content-Disposition: form-data; name=\"parse_mode\"\r\n\r\n")
-        appendString("HTML\r\n")
+        if let parseMode {
+            appendString("--\(boundary)\r\n")
+            appendString("Content-Disposition: form-data; name=\"parse_mode\"\r\n\r\n")
+            appendString("\(parseMode)\r\n")
+        }
 
         if !caption.isEmpty {
             appendString("--\(boundary)\r\n")

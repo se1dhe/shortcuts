@@ -56,6 +56,45 @@ struct UploadPostClient: Sendable {
         try Self.ensureOK(response, data: data)
     }
 
+    // MARK: - Status polling
+
+    /// Best-effort recovery of the real per-platform post URLs for an async
+    /// upload job. Upload-Post frequently answers the initial `/api/upload`
+    /// call with "submitted" and only exposes the live URLs once processing
+    /// finishes, so callers poll this with the report's `requestID`.
+    ///
+    /// Returns whatever URLs are known so far (possibly empty); never throws for
+    /// an unrecognised shape — only transport/HTTP failures propagate.
+    func pollStatus(reportID: String) async throws -> [SocialPlatform: String] {
+        guard !apiKey.trimmed.isEmpty, !reportID.trimmed.isEmpty else { return [:] }
+        var request = URLRequest(url: Self.base.appending(path: "api/uploadposts/\(reportID)"))
+        request.setValue("Apikey \(apiKey)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session().data(for: request)
+        try Self.ensureOK(response, data: data)
+        return Self.parseStatusURLs(data: data)
+    }
+
+    private static func parseStatusURLs(data: Data) -> [SocialPlatform: String] {
+        guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return [:] }
+        let nodes: [[String: Any]] = [
+            (json["results"] as? [String: Any]) ?? [:],
+            (json["data"] as? [String: Any]) ?? [:],
+            json
+        ]
+        var urls: [SocialPlatform: String] = [:]
+        for platform in SocialPlatform.allCases where platform != .telegram {
+            for node in nodes {
+                guard let entry = node[platform.uploadPostID] as? [String: Any] else { continue }
+                if let raw = (entry["url"] as? String) ?? (entry["post_url"] as? String) ?? (entry["link"] as? String),
+                   !raw.trimmed.isEmpty {
+                    urls[platform] = raw
+                    break
+                }
+            }
+        }
+        return urls
+    }
+
     // MARK: - Publish
 
     func publish(

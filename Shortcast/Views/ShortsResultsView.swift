@@ -10,6 +10,8 @@ struct ShortsResultsView: View {
     @Environment(MovieShortsBrowserModel.self) private var browser
     @Environment(ModelManager.self) private var modelManager
     @State private var showingScheduler = false
+    @State private var showCampaign = false
+    @State private var campaign: CampaignPublisher?
 
     enum ViewMode: String, CaseIterable, Identifiable {
         case grid = "Сетка"
@@ -29,6 +31,9 @@ struct ShortsResultsView: View {
             footer
         }
         .sheet(isPresented: $showingScheduler) { ScheduleSheet() }
+        .sheet(isPresented: $showCampaign) {
+            if let campaign { CampaignPublisherView(publisher: campaign) }
+        }
         .onAppear {
             workspace.applyCurrentSubtitleSettings(settings)
             workspace.applyCurrentWatermarkSettings(settings)
@@ -256,6 +261,23 @@ struct ShortsResultsView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+
+            Button {
+                workspace.applyCurrentSubtitleSettings(settings)
+                workspace.applyCurrentWatermarkSettings(settings)
+                workspace.applyCurrentPromoSettings(settings)
+                campaign = CampaignPublisher(
+                    essay: workspace.longformResult,
+                    movieTitle: workspace.detectedMovie?.title ?? headerTitle,
+                    movie: workspace.detectedMovie,
+                    clips: workspace.clips)
+                showCampaign = true
+            } label: {
+                Label("Кампейн-пост", systemImage: "antenna.radiowaves.left.and.right")
+                    .frame(minWidth: 140)
+            }
+            .controlSize(.large)
+            .disabled(workspace.approvedReadyCount == 0 && workspace.longformResult == nil)
 
             if settings.isConfigured {
                 Button {

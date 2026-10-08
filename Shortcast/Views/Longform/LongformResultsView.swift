@@ -23,6 +23,8 @@ struct LongformResultsView: View {
     @State private var showYouTubePublishSheet = false
     @State private var showSubtitleEditor = false
     @State private var showActEditor = false
+    @State private var showCampaign = false
+    @State private var campaign: CampaignPublisher?
     @State private var isPostingToTelegram = false
     @State private var telegramPostSuccess = false
     @State private var telegramError: String? = nil
@@ -190,6 +192,26 @@ struct LongformResultsView: View {
                     .tint(telegramPostSuccess ? .green : .secondary)
                     .disabled(isPostingToTelegram)
 
+                    Button {
+                        campaign = CampaignPublisher(
+                            essay: result,
+                            movieTitle: movieTitle,
+                            movie: workspace.detectedMovie,
+                            clips: workspace.clips)
+                        showCampaign = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                                .font(.subheadline)
+                            Text("Создать кампейн (эссе + шортсы + TG)")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.purple)
+
                     if let err = telegramError {
                         Text(err)
                             .font(.caption2)
@@ -320,6 +342,9 @@ struct LongformResultsView: View {
         }
         .sheet(isPresented: $showYouTubePublishSheet) {
             LongformYouTubePublishSheet(result: result, movieTitle: movieTitle, movie: workspace.detectedMovie)
+        }
+        .sheet(isPresented: $showCampaign) {
+            if let campaign { CampaignPublisherView(publisher: campaign) }
         }
         .sheet(isPresented: $showSubtitleEditor) {
             if let transcript = workspace.storedTranscript {

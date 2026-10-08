@@ -17,6 +17,14 @@ enum LongformActType: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// Драматургическое название и задача акта, сгенерированные LLM под конкретный
+/// фильм и тему. Заменяет прежние захардкоженные bucket-ы `adaptiveActDescriptors`.
+struct LongformActDescriptor: Codable, Sendable, Equatable, Hashable {
+    var type: LongformActType
+    var title: String
+    var beat: String
+}
+
 /// Отдельный акт длинного видео
 struct LongformAct: Codable, Identifiable, Equatable, Sendable {
     var id: String { "\(type.rawValue)_\(title)" }

@@ -145,7 +145,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         )
         usedRanges.append(contentsOf: act4Segs)
 
-        let descriptors = adaptiveActDescriptors(for: concept, movieTitle: movieTitle)
+        let descriptors = actDescriptors(for: concept, movieTitle: movieTitle)
 
         let acts = [
             LongformAct(
@@ -211,10 +211,6 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             return [TimeSegment(start: start, end: start + targetDuration)]
         }
 
-        let thematicKeywords = extractThematicKeywords(for: concept)
-        let dramaticKeywords = actDramaticKeywords(for: actType)
-        let coreWord = concept.word.lowercased()
-
         var bestStartIdx = -1
         var bestLength = 0
         var bestScore: Double = -Double.greatestFiniteMagnitude
@@ -223,8 +219,6 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             var currDur = 0.0
             var j = i
             var wordCount = 0
-            var thematicMatchPoints = 0
-            var dramaticBeatCount = 0
             var fillerCount = 0
             var calmIntroBonus = 0.0
             var panicPenalty = 0.0
@@ -246,24 +240,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
 
                 let lowerText = seg.text.lowercased()
 
-                // 1. Оценка совпадения с философским концептом
-                if lowerText.contains(coreWord) {
-                    thematicMatchPoints += 8
-                }
-                for kw in thematicKeywords {
-                    if lowerText.contains(kw) {
-                        thematicMatchPoints += 2
-                    }
-                }
-
-                // 2. Оценка драматургического бита для данного акта
-                for dkw in dramaticKeywords {
-                    if lowerText.contains(dkw) {
-                        dramaticBeatCount += 1
-                    }
-                }
-
-                // 3. Для Акта 1 (Вступление/Экспозиция) — отбор спокойных глубоких размышлений и отсев суеты/криков
+                // Для Акта 1 (Вступление/Экспозиция) — отбор спокойных глубоких размышлений и отсев суеты/криков
                 if actType == .hook {
                     // Особая проверка открывающей реплики кандидата: вступительная сцена обязана начинаться спокойно!
                     let firstText = candidates[i].text.lowercased()
@@ -331,22 +308,8 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                     }
                 }
 
-                // 5. Для Акта 4 (Катарсис): бонус за ключевые философские цитаты-откровения фильма
-                if actType == .catharsis {
-                    let revelationKeywords = [
-                        "он — это ты", "он это ты", "разводк", "лучшая разводка",
-                        "заставил тебя поверить", "шахматн", "правила игры", "враг внутри",
-                        "поверить, что он", "поверить что он", "победа над собой"
-                    ]
-                    for rk in revelationKeywords {
-                        if lowerText.contains(rk) {
-                            thematicMatchPoints += 25
-                        }
-                    }
-                }
-
-                // 6. Штраф за пустые короткие междометия
-                if words <= 2 && thematicMatchPoints == 0 {
+                // Штраф за пустые короткие междометия
+                if words <= 2 {
                     fillerCount += 1
                 }
 
@@ -420,10 +383,10 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
 
             let catharsisCompletionScore = (actType == .catharsis) ? thoughtEval.scoreModifier : 0.0
 
-            // Итоговый скор: максимальный вес отдается репликам по выбранной теме
-            let score = (Double(thematicMatchPoints) * 50.0)
-                + (Double(dramaticBeatCount) * 14.0)
-                + (Double(wordCount) * 0.3)
+            // Итоговый скор fallback-монтажа: плотность и объём речи, завершённость
+            // мысли, спокойствие интро и заполнение целевого хронометража. Тематический
+            // отбор сцен теперь делает LLM (Шаг 1), а не keyword matching.
+            let score = (Double(wordCount) * 0.3)
                 + densityScore
                 + calmIntroBonus
                 - panicPenalty
@@ -529,104 +492,28 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         return refined.start..<refined.end
     }
 
-    private func extractThematicKeywords(for concept: ThematicConcept) -> [String] {
-        var keywords: Set<String> = []
-        let wordLower = concept.word.lowercased()
-        keywords.insert(wordLower)
-
-        let semanticThematicMap: [String: [String]] = [
-            "эго": ["эго", "гордост", "голов", "враг", "внутри", "я сам", "меня", "себя", "разум", "мысл", "контрол", "побед", "слаб", "боль", "признай", "правд", "голос"],
-            "обман": ["обман", "разводк", "лож", "правд", "игра", "шахмат", "противник", "умн", "правил", "сделк", "деньг", "довер", "жадност", "манипул", "верит", "карты"],
-            "страх": ["страх", "боит", "боишься", "больно", "смерт", "убит", "паник", "пистолет", "выстрел", "кров", "потер", "конец", "трясет", "ужас", "слабост"],
-            "иллюзия": ["иллюзи", "кажет", "реальност", "видит", "слеп", "глаз", "сон", "правд", "скрыт", "прячет", "понима", "кажется", "зеркал", "морок"],
-            "жадность": ["жадност", "деньг", "богат", "алчност", "миллион", "долг", "заплат", "цен", "купит", "золот", "казино", "выигрыш", "мало"],
-            "терпение": ["терпен", "ждать", "время", "спеш", "тишин", "выдержк", "спокойн", "холоднокров", "секунд"],
-            "характер": ["характер", "воля", "сил", "сломат", "высто", "удар", "пада", "встават", "терпеть", "до конца"],
-            "одиночество": ["один", "одиночеств", "пустот", "никого", "один на один", "тишин", "бросил", "сам"],
-            "предательство": ["преда", "нож в спину", "верност", "предатель", "измен", "верил", "подставил", "крыс"],
-            "семья": ["семь", "брат", "отец", "сын", "дочь", "родн", "дом", "дети", "мать", "защит", "кров"]
-        ]
-
-        for (key, list) in semanticThematicMap {
-            if wordLower.contains(key) || key.contains(wordLower) {
-                for item in list { keywords.insert(item) }
-            }
-        }
-
-        let fullContext = "\(concept.tagline) \(concept.philosophicalPremise) \(concept.suggestedTitle)"
-        let tokens = fullContext.lowercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { $0.count >= 4 }
-
-        for token in tokens.prefix(12) {
-            let stem = String(token.prefix(5))
-            keywords.insert(stem)
-        }
-
-        return Array(keywords)
-    }
-
-    private func actDramaticKeywords(for actType: LongformActType) -> [String] {
-        switch actType {
-        case .hook:
-            return [
-                "всегда", "никогда", "знаешь", "правило", "в этом мире", "жизнь", "выбор", "кто ты", "запомни", "смысл", "смотри", "слушай",
-                "игра", "игре", "вещь", "усвоил", "понял", "помню", "первое", "единственный", "способ", "человек", "мир", "закон", "соперник", "враг", "начало", "история", "правда"
-            ]
-        case .downfall:
-            return ["нет", "нельзя", "проиграл", "ошибка", "уходи", "почему ты", "ложь", "черт", "уничтож", "хватит", "поздно", "пропал"]
-        case .struggle:
-            return ["стреляй", "попробуй", "смотри", "мы", "против", "я не сдамся", "выход", "делай", "бей", "стой", "держись", "вперед"]
-        case .catharsis:
-            return ["теперь", "понимаю", "всё кончено", "свободен", "жизнь", "выбор", "правда", "на самом деле", "конец", "прости", "отпусти"]
-        }
-    }
-
-    /// Адаптивные драматургические названия и задачи актов под тему и фильм в стиле @prrodan
-    private func adaptiveActDescriptors(
+    /// Названия и драматургические задачи 4 актов. Берутся из `actDescriptors`,
+    /// которые LLM сгенерировала под конкретный фильм и тему (Шаг 2). Если модель
+    /// их не вернула — единый generic-набор без захардкоженных bucket-ов под тайтлы.
+    private func actDescriptors(
         for concept: ThematicConcept,
         movieTitle: String
     ) -> [(title: String, beat: String)] {
-        let w = concept.word.lowercased()
-        let t = movieTitle.lowercased()
-
-        if w.contains("иллюзи") || w.contains("эго") || w.contains("обман") || t.contains("револьвер") || t.contains("revolver") {
-            return [
-                ("Шахматная партия", "Правила игры, в которой ты думаешь, что контролируешь ситуацию."),
-                ("Голос, которому ты веришь", "Разрушение уверенности: главный враг говорит твоим голосом."),
-                ("Смерть своего эго", "Предел страха: признать ложь и встретиться с истинным врагом."),
-                ("Кто дёргает за ниточки", "Катарсис: освобождение от власти иллюзии и победа над собой.")
-            ]
-        } else if w.contains("деньг") || w.contains("успех") || w.contains("жадност") || w.contains("власт") {
-            return [
-                ("Правила игры", "Открывающий конфликт: цена власти и первый крупный куш."),
-                ("Голод без насыщения", "Разрушение принципов, потеря контроля и растущие аппетиты."),
-                ("Точка невозврата", "Пик давления: когда система начинает пожирать тебя самого."),
-                ("Пустота на вершине", "Катарсис: что остаётся, когда всё куплено, но ничего не спасает.")
-            ]
-        } else if w.contains("дисциплин") || w.contains("терпен") || w.contains("характер") || w.contains("вол") || w.contains("сил") {
-            return [
-                ("Вызов и амбиция", "Исходная точка: готовность пойти дальше, чем готовы пойти другие."),
-                ("Кровь и сомнения", "Падение: когда кажется, что все усилия были напрасны."),
-                ("Предел прочности", "Кульминация борьбы: способность терпеть боль и продолжать идти."),
-                ("Триумф характера", "Катарсис: победа не над соперником, а над собственной слабостью.")
-            ]
-        } else if w.contains("одиночеств") || w.contains("пустот") || w.contains("страх") || w.contains("груст") || t.contains("сопрано") || t.contains("soprano") {
-            return [
-                ("Тяжесть фасада", "Внешняя сила и внутренняя трещина, которую никто не видит."),
-                ("Круг сужается", "Одиночество среди людей: потеря доверия и страх ошибки."),
-                ("Один на один с тьмой", "Пик экзистенциального кризиса: от чего не спасают статус и влияние."),
-                ("Момент тишины", "Катарсис: осознание правды о себе, когда всё лишнее отброшено.")
-            ]
-        } else {
-            let cleanWord = concept.word.trimmingCharacters(in: .whitespacesAndNewlines).capitalized
-            return [
-                ("Зарождение «\(cleanWord)»", "Открывающий вызов и первый шаг навстречу неизвестности."),
-                ("Испытание сомнением", "Кризис и столкновение с суровой реальностью."),
-                ("Точка слома", "Борьба на пределе сил вопреки всем обстоятельствам."),
-                ("Прозрение", "Катарсис: обретение подлинного смысла и цены пройденного пути.")
-            ]
+        let order: [LongformActType] = [.hook, .downfall, .struggle, .catharsis]
+        let provided = concept.actDescriptors
+        if provided.count == 4 {
+            let mapped = order.compactMap { type in provided.first { $0.type == type } }
+            if mapped.count == 4 {
+                return mapped.map { (title: $0.title, beat: $0.beat) }
+            }
         }
+        let cleanWord = concept.word.trimmingCharacters(in: .whitespacesAndNewlines).capitalized
+        return [
+            ("Зарождение «\(cleanWord)»", "Открывающий вызов и первый шаг навстречу неизвестности."),
+            ("Испытание сомнением", "Кризис и столкновение с суровой реальностью."),
+            ("Точка слома", "Борьба на пределе сил вопреки всем обстоятельствам."),
+            ("Прозрение", "Катарсис: обретение подлинного смысла и цены пройденного пути.")
+        ]
     }
 
     /// Синтетическая арка при отсутствии детального транскрипта
@@ -640,7 +527,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         let durAct3 = targetDuration * 0.35
         let durAct4 = targetDuration * 0.20
 
-        let descriptors = adaptiveActDescriptors(for: concept, movieTitle: movieTitle)
+        let descriptors = actDescriptors(for: concept, movieTitle: movieTitle)
 
         var currentStart = 0.0
         let act1 = LongformAct(

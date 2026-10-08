@@ -19,9 +19,6 @@ protocol ThematicConceptDiscovering: Sendable {
         forceAI: Bool,
         modelManager: ModelManager?
     ) async throws -> [ThematicConcept]
-
-    /// Возвращает качественные темы по умолчанию, если модель недоступна или запрос завершился сбоем
-    func fallbackConcepts(for movieTitle: String) -> [ThematicConcept]
 }
 
 extension ThematicConceptDiscovering {

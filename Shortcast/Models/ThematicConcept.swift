@@ -25,6 +25,10 @@ struct ThematicConcept: Codable, Identifiable, Equatable, Hashable, Sendable {
     /// Обоснование выбора от лица режиссера-ИИ на основе сценария
     var aiReasoning: String?
 
+    /// Драматургические названия/задачи 4 актов, сгенерированные LLM под этот
+    /// фильм. Пусто — значит модель их не вернула, и монтаж использует generic-описание.
+    var actDescriptors: [LongformActDescriptor]
+
     init(
         word: String,
         tagline: String,
@@ -32,7 +36,8 @@ struct ThematicConcept: Codable, Identifiable, Equatable, Hashable, Sendable {
         suggestedTitle: String,
         accentColorHex: String = "#F5D020",
         isPrimaryChoice: Bool = false,
-        aiReasoning: String? = nil
+        aiReasoning: String? = nil,
+        actDescriptors: [LongformActDescriptor] = []
     ) {
         self.word = word
         self.tagline = tagline
@@ -41,6 +46,7 @@ struct ThematicConcept: Codable, Identifiable, Equatable, Hashable, Sendable {
         self.accentColorHex = accentColorHex
         self.isPrimaryChoice = isPrimaryChoice
         self.aiReasoning = aiReasoning
+        self.actDescriptors = actDescriptors
     }
 }
 

@@ -380,6 +380,35 @@ final class AppSettings {
         workingDirectory != nil
     }
 
+    /// Folder holding the user's local movie collection (MKV/MP4/…) surfaced by
+    /// the Library tab. Persisted as a security-scoped bookmark, mirroring
+    /// `workingDirectory`; callers must start security-scoped access before use.
+    var movieLibraryURL: URL? {
+        get {
+            guard let data = defaults.data(forKey: Keys.movieLibraryBookmark) else { return nil }
+            var isStale = false
+            guard let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale)
+            else { return nil }
+            if isStale, let newData = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
+                defaults.set(newData, forKey: Keys.movieLibraryBookmark)
+            }
+            return url
+        }
+        set {
+            if let url = newValue {
+                let data = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+                defaults.set(data, forKey: Keys.movieLibraryBookmark)
+            } else {
+                defaults.removeObject(forKey: Keys.movieLibraryBookmark)
+            }
+        }
+    }
+
+    /// Human-readable path of the movie library folder (or a "not set" hint).
+    var movieLibraryLabel: String {
+        movieLibraryURL?.path(percentEncoded: false) ?? String(localized: "Folder not chosen")
+    }
+
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -494,6 +523,7 @@ final class AppSettings {
         static let subtitleAppearance = "shortcast.subtitleAppearance"
         static let hookAppearance = "shortcast.hookAppearance"
         static let workingDirectoryBookmark = "shortcast.workingDirectoryBookmark"
+        static let movieLibraryBookmark = "shortcast.movieLibraryBookmark"
         static let watermark = "shortcast.watermarkEnabled"
         static let watermarkFullVideo = "shortcast.watermarkFullVideoEnabled"
         static let watermarkText = "shortcast.watermarkText"

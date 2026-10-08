@@ -22,6 +22,7 @@ struct ShortcastApp: App {
     @State private var workspace = WorkspaceModel()
     @State private var languageManager = LanguageManager()
     @State private var movieShorts = MovieShortsBrowserModel()
+    @State private var movieLibrary = MovieLibraryService()
 
     var body: some Scene {
         WindowGroup {
@@ -31,6 +32,7 @@ struct ShortcastApp: App {
                 .environment(workspace)
                 .environment(languageManager)
                 .environment(movieShorts)
+                .environment(movieLibrary)
                 .task {
                     workspace.cleanUpOrphanedInputFiles(settings: settings)
                     await FontDownloadService.shared.ensureFontsInstalled()

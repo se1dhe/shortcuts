@@ -207,6 +207,29 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Movie Library") {
+                HStack(spacing: 8) {
+                    Image(systemName: "film.stack")
+                        .foregroundStyle(.secondary)
+                    Text(settings.movieLibraryLabel)
+                        .font(.callout)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    Button("Choose…") { selectMovieLibraryFolder() }
+                        .buttonStyle(.borderless)
+                    Button { settings.movieLibraryURL = nil } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(settings.movieLibraryURL == nil)
+                }
+                Text("Папка с локальной коллекцией фильмов. Вкладка «Библиотека фильмов» сканирует её, находит MKV/MP4/MOV/AVI/WebM и нормализует контейнер до MP4 перед обработкой.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Background Music folder") {
                 HStack(spacing: 8) {
                     Image(systemName: "music.note")
@@ -640,6 +663,20 @@ struct SettingsView: View {
         panel.begin { response in
             if response == .OK, let url = panel.url {
                 settings.customMusicDirectory = url
+            }
+        }
+    }
+
+    private func selectMovieLibraryFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Выберите папку с коллекцией фильмов"
+        panel.begin { response in
+            if response == .OK, let url = panel.url {
+                settings.movieLibraryURL = url
             }
         }
     }

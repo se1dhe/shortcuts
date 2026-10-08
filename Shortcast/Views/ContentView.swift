@@ -6,6 +6,7 @@ enum AppNavigationTab: String, CaseIterable, Identifiable {
     case create = "Создание шортсов"
     case longform = "Кино-эссе (YouTube 16:9)"
     case clips = "Студия шортсов"
+    case library = "Библиотека фильмов"
     case music = "Фоновая музыка"
     case publish = "Выгрузка в соцсети"
     case history = "История видео"
@@ -18,6 +19,7 @@ enum AppNavigationTab: String, CaseIterable, Identifiable {
         case .create: "scissors"
         case .longform: "film.fill"
         case .clips: "film.stack"
+        case .library: "externaldrive.fill"
         case .music: "music.note"
         case .publish: "paperplane.fill"
         case .history: "clock.arrow.circlepath"
@@ -125,6 +127,10 @@ struct ContentView: View {
                         }
                     }
                 }
+
+                NavigationLink(value: AppNavigationTab.library) {
+                    Label(AppNavigationTab.library.rawValue, systemImage: AppNavigationTab.library.symbol)
+                }
             }
 
             Section("Медиа и продакшн") {
@@ -209,6 +215,8 @@ struct ContentView: View {
                 createSectionContent
             case .clips:
                 clipsSectionContent
+            case .library:
+                MovieLibraryView()
             case .music:
                 MusicLibraryView()
             case .publish:

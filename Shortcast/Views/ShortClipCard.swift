@@ -22,6 +22,27 @@ struct ShortClipCard: View {
     @State private var showBrowserPublish = false
     @State private var showSubtitleEditor = false
     @State private var previewPlatform: SocialPlatform = .tiktok
+    @State private var editorTab: EditorTab = .publish
+
+    /// The four editing surfaces of a ready short, surfaced as a segmented
+    /// picker so the trim/audio tools are no longer buried in a disclosure.
+    enum EditorTab: String, CaseIterable, Identifiable {
+        case video = "Видео"
+        case subtitles = "Субтитры"
+        case audio = "Аудио"
+        case publish = "Публикация"
+
+        var id: String { rawValue }
+
+        var systemImage: String {
+            switch self {
+            case .video: "film"
+            case .subtitles: "captions.bubble"
+            case .audio: "waveform"
+            case .publish: "paperplane.fill"
+            }
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -34,8 +55,13 @@ struct ShortClipCard: View {
                 failed(message)
             case .ready:
                 mainContentEditor
-                quickFinish
-                advancedOptions
+                editorTabPicker
+                switch editorTab {
+                case .video: videoTab
+                case .subtitles: subtitlesTab
+                case .audio: audioTab
+                case .publish: publishTab
+                }
                 footer
             }
         }
@@ -432,8 +458,8 @@ struct ShortClipCard: View {
             })
     }
 
-    /// Master content editor section (Main Card).
-    /// Displays film name, release year, TMDB search, hook, and combined description + hashtags in ONE beautiful window.
+    /// Movie identity card — always visible above the editing tabs so the user
+    /// can see and correct which film/scene this short is about.
     @ViewBuilder
     private var mainContentEditor: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -485,7 +511,83 @@ struct ShortClipCard: View {
                     .textSelection(.enabled)
             }
 
-            Divider()
+            if let url = clip.sourceMetadata?.webpageURL {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.right.square").font(.caption2)
+                    Text("Open on YouTube").font(.caption)
+                }
+                .foregroundStyle(.tint)
+                .contentShape(Rectangle())
+                .onTapGesture { NSWorkspace.shared.open(url) }
+            }
+        }
+        .padding(14)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+        .onAppear { seedMovieFieldsFromSource() }
+    }
+
+    /// Segmented picker choosing which editing surface is shown below.
+    private var editorTabPicker: some View {
+        Picker("", selection: $editorTab) {
+            ForEach(EditorTab.allCases) { tab in
+                Label(tab.rawValue, systemImage: tab.systemImage).tag(tab)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+    }
+
+    /// Видео: превью + трим + конвертация/оверлеи/улучшение.
+    @ViewBuilder
+    private var videoTab: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            previews
+            trimEditor
+            if clip.isLandscape { reframeEditor }
+            overlayEditor
+            watermarkEditor
+            promoEditor
+            enhancementEditor
+        }
+        .padding(12)
+        .background(.quinary, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// Субтитры: внешний вид + открытие полноэкранного редактора текста.
+    @ViewBuilder
+    private var subtitlesTab: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            subtitleEditor
+        }
+        .padding(12)
+        .background(.quinary, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// Аудио: музыка/озвучка клипа.
+    @ViewBuilder
+    private var audioTab: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            musicEditor
+        }
+        .padding(12)
+        .background(.quinary, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// Публикация: хук, описания, хэштеги, антикопирайт, префлайт.
+    @ViewBuilder
+    private var publishTab: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            publishCopyEditor
+            AntiCopyrightEditor(clip: clip)
+            tiktokPreflight
+        }
+    }
+
+    /// Хук + объединённое описание/хэштеги по платформам.
+    @ViewBuilder
+    private var publishCopyEditor: some View {
+        VStack(alignment: .leading, spacing: 12) {
 
             // ── Hook ───────────────────────────────────────────────────
             VStack(alignment: .leading, spacing: 6) {
@@ -547,59 +649,14 @@ struct ShortClipCard: View {
                     .background(.background, in: RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
             }
-
-            if let url = clip.sourceMetadata?.webpageURL {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.up.right.square").font(.caption2)
-                    Text("Open on YouTube").font(.caption)
-                }
-                .foregroundStyle(.tint)
-                .contentShape(Rectangle())
-                .onTapGesture { NSWorkspace.shared.open(url) }
-            }
         }
         .padding(14)
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
-        .onAppear { seedMovieFieldsFromSource() }
     }
 
 
     // MARK: - Footer (per-clip publish)
-
-    /// The common path for a downloaded YouTube Short: optionally add subtitles
-    /// and a watermark, inspect TikTok risks, then export or publish from the
-    /// tile/footer.
-    private var quickFinish: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Finish this Short")
-                .font(.headline)
-            subtitleEditor
-            watermarkEditor
-            musicEditor
-            AntiCopyrightEditor(clip: clip)
-            tiktokPreflight
-        }
-    }
-
-    @ViewBuilder
-    private var advancedOptions: some View {
-        DisclosureGroup("Advanced editing") {
-            VStack(alignment: .leading, spacing: 14) {
-                trimEditor
-                if clip.isLandscape { reframeEditor }
-                overlayEditor
-                promoEditor
-                enhancementEditor
-                previews
-            }
-            .padding(.top, 12)
-        }
-        .font(.callout.weight(.medium))
-        .padding(12)
-        .background(.quinary, in: RoundedRectangle(cornerRadius: 10))
-    }
-
 
     @ViewBuilder
     private var tiktokPreflight: some View {

@@ -23,6 +23,38 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         """
     }
 
+    /// LLM-монтаж 4-актной арки (Шаг 1): сжимает полный транскрипт и просит
+    /// модель-режиссёра выбрать конкретные таймкоды для каждого акта. При любом
+    /// отказе LLM (нет модели, невалидный JSON, провал) transparently падает на
+    /// алгоритмический `buildArc()` (keyword scoring), чтобы пайплайн не вставал.
+    @MainActor
+    static func buildArcWithLLM(
+        from transcript: Transcript,
+        concept: ThematicConcept,
+        movieTitle: String,
+        targetDuration: Double = 520.0,
+        modelManager: ModelManager
+    ) async throws -> LongformNarrativeArc {
+        let sample = LongformThematicService.stratifiedThematicSample(from: transcript)
+        if !sample.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            await modelManager.prepareDirectorIfNeeded()
+            if let llmArc = await modelManager.momentFinder.buildNarrativeArc(
+                transcriptSample: sample,
+                movieTitle: movieTitle,
+                concept: concept,
+                targetDuration: targetDuration
+            ) {
+                return llmArc
+            }
+        }
+        return try await LongformNarrativeDirector().buildArc(
+            from: transcript,
+            concept: concept,
+            movieTitle: movieTitle,
+            targetDuration: targetDuration
+        )
+    }
+
     func buildArc(
         from transcript: Transcript,
         concept: ThematicConcept,

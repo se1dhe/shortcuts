@@ -275,7 +275,8 @@ struct LongformResultsView: View {
                         workspace.regenerateLongformFromScratch(
                             concept: result.arc.concept,
                             movieTitle: movieTitle,
-                            settings: settings
+                            settings: settings,
+                            modelManager: modelManager
                         )
                     } label: {
                         HStack(spacing: 6) {

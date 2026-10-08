@@ -646,7 +646,8 @@ final class WorkspaceModel {
     /// Подтверждение отредактированных субтитров и запуск пайплайна генерации
     func confirmLongformSubtitlesAndBuild(
         updatedSegments: [TranscriptSegment],
-        settings: AppSettings
+        settings: AppSettings,
+        modelManager: ModelManager? = nil
     ) {
         if let stored = storedTranscript {
             self.storedTranscript = Transcript(segments: updatedSegments, language: stored.language)
@@ -656,7 +657,8 @@ final class WorkspaceModel {
             concept,
             confirmedMovieTitle: stagedConfirmedMovieTitle,
             audioSettings: audioSettings,
-            settings: settings
+            settings: settings,
+            modelManager: modelManager
         )
     }
 
@@ -664,9 +666,10 @@ final class WorkspaceModel {
         _ concept: ThematicConcept,
         confirmedMovieTitle: String? = nil,
         audioSettings: LongformAudioSettings = LongformAudioSettings(),
-        settings: AppSettings
+        settings: AppSettings,
+        modelManager: ModelManager? = nil
     ) {
-        confirmLongformConceptInternal(concept, confirmedMovieTitle: confirmedMovieTitle, audioSettings: audioSettings, settings: settings)
+        confirmLongformConceptInternal(concept, confirmedMovieTitle: confirmedMovieTitle, audioSettings: audioSettings, settings: settings, modelManager: modelManager)
     }
 
     func confirmLongformConcept(
@@ -675,14 +678,15 @@ final class WorkspaceModel {
         backgroundMusicURL: URL? = nil,
         musicVolume: Float = 0.28,
         duckingEnabled: Bool = true,
-        settings: AppSettings
+        settings: AppSettings,
+        modelManager: ModelManager? = nil
     ) {
         let audioSettings = LongformAudioSettings(
             backgroundMusicURL: backgroundMusicURL,
             musicVolume: musicVolume,
             duckingEnabled: duckingEnabled
         )
-        confirmLongformConceptInternal(concept, confirmedMovieTitle: confirmedMovieTitle, audioSettings: audioSettings, settings: settings)
+        confirmLongformConceptInternal(concept, confirmedMovieTitle: confirmedMovieTitle, audioSettings: audioSettings, settings: settings, modelManager: modelManager)
     }
 
     /// Перерендер готового кино-эссе с исправленными субтитрами (сохраняя тот же монтаж сцен и звук)
@@ -707,7 +711,8 @@ final class WorkspaceModel {
     func regenerateLongformFromScratch(
         concept: ThematicConcept,
         movieTitle: String,
-        settings: AppSettings
+        settings: AppSettings,
+        modelManager: ModelManager? = nil
     ) {
         pipelineTask?.cancel()
         Self.log("regenerateLongformFromScratch: concept=\(concept.word) movie=\(movieTitle)")
@@ -715,7 +720,8 @@ final class WorkspaceModel {
             concept,
             confirmedMovieTitle: movieTitle,
             audioSettings: stagedAudioSettings ?? LongformAudioSettings(),
-            settings: settings
+            settings: settings,
+            modelManager: modelManager
         )
     }
 
@@ -787,7 +793,8 @@ final class WorkspaceModel {
         _ concept: ThematicConcept,
         confirmedMovieTitle: String? = nil,
         audioSettings: LongformAudioSettings,
-        settings: AppSettings
+        settings: AppSettings,
+        modelManager: ModelManager? = nil
     ) {
         guard let currentJob = job, let transcript = storedTranscript else { return }
         self.selectedConcept = concept
@@ -833,6 +840,16 @@ final class WorkspaceModel {
 
         pipelineTask = Task {
             do {
+                var arc: LongformNarrativeArc?
+                if let modelManager {
+                    phase = .buildingLongform(fraction: 0.08, step: "LLM-монтаж 4-актной арки «\(concept.word)»...")
+                    arc = try await LongformNarrativeDirector.buildArcWithLLM(
+                        from: transcript,
+                        concept: concept,
+                        movieTitle: finalMovieTitle,
+                        modelManager: modelManager
+                    )
+                }
                 let coordinator = LongformPipelineCoordinator()
                 let result = try await coordinator.buildLongformVideo(
                     sourceURL: currentJob.url,
@@ -840,6 +857,7 @@ final class WorkspaceModel {
                     transcript: transcript,
                     concept: concept,
                     audioSettings: audioSettings,
+                    existingArc: arc,
                     workingDirectory: workDir
                 ) { [weak self] frac, step in
                     Task { @MainActor in

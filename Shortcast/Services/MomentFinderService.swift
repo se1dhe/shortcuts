@@ -594,6 +594,197 @@ final class MomentFinderService {
         }
     }
 
+    /// LLM-монтаж: модель получает сжатый транскрипт с таймкодами и САМА выбирает
+    /// 4 хронологических отрезка — по одному на каждый акт 4-актной структуры.
+    /// Возвращает nil, если модель недоступна или ответ не распарсился, чтобы
+    /// вызывающий код мог откатиться на алгоритмический `buildArc`.
+    func buildNarrativeArc(
+        transcriptSample: String,
+        movieTitle: String,
+        concept: ThematicConcept,
+        targetDuration: Double
+    ) async -> LongformNarrativeArc? {
+        guard let container else {
+            Self.log("buildNarrativeArc skipped: no model loaded")
+            return nil
+        }
+        let sample = transcriptSample.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sample.isEmpty else { return nil }
+
+        let s = profile.sampling
+        var params = GenerateParameters(
+            maxTokens: 1200,
+            temperature: 0.3,
+            topP: s.topP,
+            topK: s.topK,
+            minP: s.minP,
+            repetitionPenalty: s.repetitionPenalty)
+        params.maxKVSize = s.maxKVSize
+        params.kvBits = s.kvBits
+
+        let clampedTarget = min(max(targetDuration, 300.0), 600.0)
+        let hookS = Int(clampedTarget * LongformActType.hook.targetDurationRatio)
+        let downfallS = Int(clampedTarget * LongformActType.downfall.targetDurationRatio)
+        let struggleS = Int(clampedTarget * LongformActType.struggle.targetDurationRatio)
+        let catharsisS = Int(clampedTarget * LongformActType.catharsis.targetDurationRatio)
+
+        let instructions = """
+        Ты — монтажёр кинематографического видео-эссе. Тебе дают полный сжатый транскрипт фильма с таймкодами формата [MM:SS].
+        Твоя задача — выбрать ровно 4 непрерывных диалоговых/монологических отрезка, по одному на каждый акт драматургической структуры.
+
+        ЖЁСТКИЕ ПРАВИЛА:
+        1. Акты ОБЯЗАНЫ идти строго хронологически: конец акта N раньше начала акта N+1. Пересечения запрещены.
+        2. Каждый отрезок — это непрерывная сцена (или плотно соседние сцены), а не склейка далёких кусков.
+        3. start и end задавай ВРЕМЕНЕМ из транскрипта в формате "MM:SS" (или "HH:MM:SS").
+        4. Выбирай сцены, которые раскрывают тему эссе и несут драматургию своего акта.
+
+        СТРУКТУРА АКТОВ (типы строго: hook, downfall, struggle, catharsis):
+        - hook (~\(hookS)с): сильнейший монолог/диалог, задающий тему и конфликт.
+        - downfall (~\(downfallS)с): кризис, падение, сомнения, потеря контроля.
+        - struggle (~\(struggleS)с): борьба вопреки всему, пик напряжения, кульминация.
+        - catharsis (~\(catharsisS)с): финальное откровение, триумф духа или экзистенциальный итог.
+
+        Ответь СТРОГО валидным JSON-объектом без markdown и без пояснений:
+        {"acts":[{"type":"hook","start":"01:23","end":"02:45","title":"Название акта","dramaticBeat":"О чём этот акт","reasoning":"Почему выбрана эта сцена"},{"type":"downfall","start":"...","end":"...","title":"...","dramaticBeat":"...","reasoning":"..."},{"type":"struggle","start":"...","end":"...","title":"...","dramaticBeat":"...","reasoning":"..."},{"type":"catharsis","start":"...","end":"...","title":"...","dramaticBeat":"...","reasoning":"..."}]}
+        """
+
+        let session = ChatSession(
+            container,
+            instructions: instructions,
+            generateParameters: params,
+            additionalContext: ["enable_thinking": false])
+
+        let userPrompt = """
+        Фильм: «\(movieTitle)»
+        Тема эссе: «\(concept.word)» — \(concept.philosophicalPremise)
+
+        Транскрипт (сжатый, с таймкодами):
+        \(sample)
+
+        Выбери 4 хронологических отрезка по актам и верни JSON.
+        """
+
+        do {
+            var raw = ""
+            for try await chunk in session.streamResponse(to: userPrompt) {
+                raw += chunk
+            }
+            Self.log("buildNarrativeArc output (\(raw.count) chars)")
+            return Self.parseNarrativeArc(
+                from: raw,
+                movieTitle: movieTitle,
+                concept: concept,
+                transcriptEnd: Self.lastTimestamp(in: sample)
+            )
+        } catch {
+            Self.log("buildNarrativeArc failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// Находит последний таймкод [MM:SS] в сжатом транскрипте, чтобы ограничить
+    /// длительность последнего акта реальной границей фильма.
+    nonisolated private static func lastTimestamp(in sample: String) -> Double {
+        guard let regex = try? NSRegularExpression(pattern: #"\[(\d{1,2}):(\d{2})(?::(\d{2}))?\]"#) else { return 0 }
+        let ns = NSRange(sample.startIndex..<sample.endIndex, in: sample)
+        var last: Double = 0
+        regex.enumerateMatches(in: sample, range: ns) { match, _, _ in
+            guard let match, let r = Range(match.range, in: sample) else { return }
+            last = max(last, Self.seconds(fromTimecode: String(sample[r])))
+        }
+        return last
+    }
+
+    /// Парсит "MM:SS", "HH:MM:SS" или число секунд в Double.
+    nonisolated static func seconds(fromTimecode text: String) -> Double {
+        let cleaned = text.trimmingCharacters(in: CharacterSet(charactersIn: "[] "))
+        let parts = cleaned.split(separator: ":").compactMap { Double($0) }
+        switch parts.count {
+        case 1: return parts[0]
+        case 2: return parts[0] * 60 + parts[1]
+        case 3: return parts[0] * 3600 + parts[1] * 60 + parts[2]
+        default: return 0
+        }
+    }
+
+    nonisolated private static func parseNarrativeArc(
+        from raw: String,
+        movieTitle: String,
+        concept: ThematicConcept,
+        transcriptEnd: Double
+    ) -> LongformNarrativeArc? {
+        guard let jsonString = JSONVariantParser.extractJSONObject(from: raw) ?? Optional(raw),
+              let root = JSONVariantParser.deserializeTolerant(jsonString) as? [String: Any],
+              let actsRaw = root["acts"] as? [[String: Any]],
+              !actsRaw.isEmpty
+        else {
+            Self.log("parseNarrativeArc: no acts array in response")
+            return nil
+        }
+
+        func actType(from value: String) -> LongformActType? {
+            switch value.trimmingCharacters(in: .whitespaces).lowercased() {
+            case "hook": return .hook
+            case "downfall": return .downfall
+            case "struggle": return .struggle
+            case "catharsis": return .catharsis
+            default: return nil
+            }
+        }
+
+        var parsed: [(LongformActType, TimeSegment, String, String)] = []
+        for entry in actsRaw {
+            guard let typeStr = entry["type"] as? String,
+                  let type = actType(from: typeStr) else { continue }
+            let start: Double
+            let end: Double
+            if let s = entry["start"] as? String { start = seconds(fromTimecode: s) }
+            else if let s = entry["start"] as? Double { start = s }
+            else { continue }
+            if let e = entry["end"] as? String { end = seconds(fromTimecode: e) }
+            else if let e = entry["end"] as? Double { end = e }
+            else { continue }
+            guard end > start else { continue }
+            let title = (entry["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? type.rawValue
+            let beat = (entry["dramaticBeat"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            parsed.append((type, TimeSegment(start: start, end: end), title, beat))
+        }
+
+        // Требуем все 4 акта, идущие строго хронологически без перекрытий.
+        let order: [LongformActType] = [.hook, .downfall, .struggle, .catharsis]
+        var acts: [LongformAct] = []
+        var lastEnd: Double = -1
+        for expected in order {
+            guard let match = parsed.first(where: { $0.0 == expected }) else {
+                Self.log("parseNarrativeArc: missing act \(expected.rawValue)")
+                return nil
+            }
+            var segment = match.1
+            if transcriptEnd > 0 { segment.end = min(segment.end, transcriptEnd) }
+            guard segment.end > segment.start, segment.start >= lastEnd else {
+                Self.log("parseNarrativeArc: act \(expected.rawValue) violates chronology")
+                return nil
+            }
+            lastEnd = segment.end
+            acts.append(LongformAct(
+                type: expected,
+                title: match.2,
+                dramaticBeat: match.3,
+                segments: [segment]
+            ))
+        }
+
+        guard acts.count == 4 else { return nil }
+
+        return LongformNarrativeArc(
+            movieTitle: movieTitle,
+            concept: concept,
+            acts: acts,
+            summary: "LLM-монтаж 4-актного эссе «\(concept.word)» по фильму «\(movieTitle)»",
+            mood: "dramatic"
+        )
+    }
+
     /// Generates deep philosophical themes/concepts for a film using the Director model (backward compatibility).
     func generateThematicConcepts(transcriptSample: String, movieTitle: String, movieOverview: String? = nil) async -> [ThematicConcept] {
         if let analysis = await analyzeThematicCore(

@@ -154,6 +154,15 @@ enum CinemaContentGenerator {
                     .filter { !$0.isEmpty }
                 clip.variants[index].hashtags = tags.map { $0.lowercased() }
             }
+
+            // Шаг 11d: ролик ≤ 60с обязан иметь #Shorts В ЗАГОЛОВКЕ (hook), а не
+            // только в описании — иначе YouTube не относит его к ленте Shorts.
+            if platform == .youtube, effectiveClipDuration(clip) <= 60.0 {
+                let title = clip.variants[index].hook.trimmed
+                if !title.lowercased().contains("#shorts") {
+                    clip.variants[index].hook = title.isEmpty ? "#Shorts" : "\(title) #Shorts"
+                }
+            }
         }
 
         if replaceHook {
@@ -169,6 +178,17 @@ enum CinemaContentGenerator {
     }
 
     // MARK: - Saving to history
+
+    /// Реальная длительность клипа с учётом пользовательской обрезки (trim).
+    /// Если клип ещё не нарезан (clipJob == nil), возвращает 0.
+    @MainActor
+    private static func effectiveClipDuration(_ clip: ShortClip) -> Double {
+        let full = clip.clipJob?.durationSeconds ?? 0
+        let start = clip.trimStartSeconds
+        let end = clip.trimEndSeconds > 0 ? clip.trimEndSeconds : full
+        let trimmed = end - start
+        return trimmed > 0 ? trimmed : full
+    }
 
     @MainActor
     private static func saveProcessedRecord(tiktok: GeneratedContent, clip: ShortClip, settings: AppSettings) {

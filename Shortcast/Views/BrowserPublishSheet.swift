@@ -383,13 +383,15 @@ struct BrowserPublishSheet: View {
         // 1. Publish to Telegram independently
         if postToTelegram {
             if !settings.telegramBotToken.trimmed.isEmpty {
-                logs.append("📢 [Telegram] Отправка поста в канал @telonyx_club...")
+                let channelLabel = settings.telegramChannelId.trimmed.isEmpty ? "канал" : settings.telegramChannelId.trimmed
+                logs.append("📢 [Telegram] Отправка поста в канал \(channelLabel)...")
                 telegramStatus = .inProgress("Отправка в канал...")
                 do {
                     let msgId = try await TelegramPublishingService.shared.publishMoviePost(
                         clip: clip,
                         botToken: settings.telegramBotToken,
-                        channelId: settings.telegramChannelId
+                        channelId: settings.telegramChannelId,
+                        compressLargeVideo: true
                     )
                     telegramStatus = .success("Опубликовано (#\(msgId))", nil)
                     logs.append("✅ [Telegram] Карточка успешно опубликована в канале (сообщение #\(msgId))")

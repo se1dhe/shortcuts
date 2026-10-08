@@ -3,7 +3,7 @@ import Foundation
 /// Protocol defining Telegram publishing capabilities, following Interface Segregation and Dependency Inversion.
 protocol TelegramPublishingProtocol: Sendable {
     func testConnection(botToken: String, channelId: String) async throws -> (botUsername: String, channelTitle: String)
-    func publishMoviePost(clip: ShortClip, botToken: String, channelId: String) async throws -> Int
+    func publishMoviePost(clip: ShortClip, botToken: String, channelId: String, compressLargeVideo: Bool) async throws -> Int
     func publishLongformPost(
         result: LongformBuildResult,
         movieTitle: String,
@@ -20,19 +20,26 @@ enum TelegramPublishError: LocalizedError {
     case apiError(String)
     case networkError(Error)
     case decodingError
+    case fileTooLarge(bytes: Int64)
+    case compressionFailed
 
     var errorDescription: String? {
         switch self {
         case .emptyCredentials:
-            "Токен бота или ID канала Telegram не указаны."
+            return "Токен бота или ID канала Telegram не указаны."
         case .invalidURL:
-            "Некорректный адрес запроса к Telegram API."
+            return "Некорректный адрес запроса к Telegram API."
         case .apiError(let msg):
-            "Ошибка Telegram API: \(msg)"
+            return "Ошибка Telegram API: \(msg)"
         case .networkError(let err):
-            "Сетевая ошибка Telegram: \(err.localizedDescription)"
+            return "Сетевая ошибка Telegram: \(err.localizedDescription)"
         case .decodingError:
-            "Не удалось разобрать ответ от Telegram API."
+            return "Не удалось разобрать ответ от Telegram API."
+        case .fileTooLarge(let bytes):
+            let mb = Double(bytes) / (1024.0 * 1024.0)
+            return "Видео \(String(format: "%.0f", mb)) МБ превышает лимит Telegram Bot API (48 МБ), а сжатие до 720p не помогло."
+        case .compressionFailed:
+            return "Не удалось сжать видео до 720p: FFmpeg недоступен или завершился с ошибкой."
         }
     }
 }
@@ -92,8 +99,13 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
     }
 
     /// Publishes a movie post with poster/video and formatted description to the channel.
+    ///
+    /// - Parameter compressLargeVideo: when the rendered clip exceeds the Telegram Bot API
+    ///   48 MB direct-upload limit, re-encode it to 720p via FFmpeg and upload the smaller
+    ///   file. When `false`, a too-large clip throws `.fileTooLarge` instead of silently
+    ///   falling back to a text-only post (which would drop the video entirely).
     @MainActor
-    func publishMoviePost(clip: ShortClip, botToken: String, channelId: String) async throws -> Int {
+    func publishMoviePost(clip: ShortClip, botToken: String, channelId: String, compressLargeVideo: Bool = true) async throws -> Int {
         let token = botToken.trimmed
         let channel = channelId.trimmed
         guard !token.isEmpty, !channel.isEmpty else {
@@ -116,20 +128,41 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
             caption = String(caption.prefix(1020)) + "..."
         }
 
-        // 2. If a video clip exists, send video directly; otherwise send photo or message
+        // 2. If a video clip exists, send video directly; otherwise send a text-only message.
+        let byteLimit: Int64 = 48 * 1024 * 1024
         if let videoURL = clip.clipJob?.url, FileManager.default.fileExists(atPath: videoURL.path) {
-            let fileSize = (try? FileManager.default.attributesOfItem(atPath: videoURL.path)[.size] as? Int64) ?? 0
-            // Bot API direct upload limit is 50MB
-            if fileSize > 0 && fileSize < 48 * 1024 * 1024 {
+            let fileSize = (try? FileManager.default.attributesOfItem(atPath: videoURL.path)[.size] as? NSNumber)?.int64Value ?? 0
+
+            if fileSize > 0 && fileSize < byteLimit {
                 return try await sendVideoMultipart(
                     videoURL: videoURL,
                     caption: caption,
                     botToken: token,
                     channelId: cleanChannel)
             }
+
+            // Слишком большой файл: сжимаем до 720p вместо молчаливого text-only fallback.
+            guard fileSize > 0 else {
+                return try await sendMessageJSON(text: caption, botToken: token, channelId: cleanChannel)
+            }
+            guard compressLargeVideo else {
+                throw TelegramPublishError.fileTooLarge(bytes: fileSize)
+            }
+
+            let compressedURL = try await compressVideoTo720p(sourceURL: videoURL)
+            defer { try? FileManager.default.removeItem(at: compressedURL) }
+            let compressedSize = (try? FileManager.default.attributesOfItem(atPath: compressedURL.path)[.size] as? NSNumber)?.int64Value ?? 0
+            guard compressedSize > 0 && compressedSize < byteLimit else {
+                throw TelegramPublishError.fileTooLarge(bytes: compressedSize > 0 ? compressedSize : fileSize)
+            }
+            return try await sendVideoMultipart(
+                videoURL: compressedURL,
+                caption: caption,
+                botToken: token,
+                channelId: cleanChannel)
         }
 
-        // Fallback: Send message via JSON
+        // Нет видеофайла — отправляем только текст.
         return try await sendMessageJSON(
             text: caption,
             botToken: token,
@@ -220,6 +253,55 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
             botToken: token,
             channelId: cleanChannel
         )
+    }
+
+    // MARK: - Video compression
+
+    /// Re-encodes a video to 720p H.264 so it fits under the Telegram Bot API upload limit.
+    /// Returns a temporary file the caller is responsible for deleting.
+    private func compressVideoTo720p(sourceURL: URL) async throws -> URL {
+        guard let ffmpegURL = resolveFFmpegBinary() else {
+            throw TelegramPublishError.compressionFailed
+        }
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tg-720p-\(UUID().uuidString).mp4")
+        let arguments = [
+            "-y",
+            "-i", sourceURL.path,
+            "-vf", "scale=-2:min(720\\,ih)",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "26",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-movflags", "+faststart",
+            outputURL.path
+        ]
+        do {
+            let result = try await ProcessRunner.shared.run(executableURL: ffmpegURL, arguments: arguments, environment: nil)
+            guard result.isSuccess, FileManager.default.fileExists(atPath: outputURL.path) else {
+                try? FileManager.default.removeItem(at: outputURL)
+                throw TelegramPublishError.compressionFailed
+            }
+            return outputURL
+        } catch let error as TelegramPublishError {
+            throw error
+        } catch {
+            try? FileManager.default.removeItem(at: outputURL)
+            throw TelegramPublishError.compressionFailed
+        }
+    }
+
+    private func resolveFFmpegBinary() -> URL? {
+        if let bin = BinaryDownloadService.resolveBinary("ffmpeg", workingDirectory: nil) {
+            return bin
+        }
+        for path in ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"] {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return URL(fileURLWithPath: path)
+            }
+        }
+        return nil
     }
 
     // MARK: - Private API helpers

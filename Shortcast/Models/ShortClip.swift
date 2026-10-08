@@ -596,6 +596,7 @@ final class ShortClip: Identifiable {
 
     func publishToTelegram(
         settings: AppSettings,
+        compressLargeVideo: Bool = true,
         service: TelegramPublishingProtocol = TelegramPublishingService.shared
     ) async {
         guard !isPublishingToTelegram else { return }
@@ -607,7 +608,8 @@ final class ShortClip: Identifiable {
             let msgId = try await service.publishMoviePost(
                 clip: self,
                 botToken: settings.telegramBotToken,
-                channelId: settings.telegramChannelId
+                channelId: settings.telegramChannelId,
+                compressLargeVideo: compressLargeVideo
             )
             let channelClean = settings.telegramChannelId.trimmingCharacters(in: CharacterSet(charactersIn: "@"))
             self.telegramPostURL = "https://t.me/\(channelClean)/\(msgId)"

@@ -104,13 +104,13 @@ final class TranscriptionService {
     /// "es", "Spanish") forces Whisper's decode language; empty = auto-detect.
     /// `modelCacheDir` — if set, WhisperKit downloads its model to this directory
     /// instead of the default `~/Documents/huggingface/`.
-    func transcript(for videoURL: URL, languageHint: String = "", modelCacheDir: URL? = nil, progress: (@Sendable (Double) -> Void)? = nil) async throws -> Transcript {
+    func transcript(for videoURL: URL, languageHint: String = "", modelCacheDir: URL? = nil, correctionsService: TranscriptionCorrectionsService? = TranscriptionCorrectionsService.shared, progress: (@Sendable (Double) -> Void)? = nil) async throws -> Transcript {
         if let sidecar = Self.findSidecar(for: videoURL),
            let parsed = Self.parseSubtitles(at: sidecar) {
             phase = .ready
             return parsed
         }
-        return try await transcribeOnDevice(videoURL, languageHint: languageHint, modelCacheDir: modelCacheDir, progress: progress)
+        return try await transcribeOnDevice(videoURL, languageHint: languageHint, modelCacheDir: modelCacheDir, correctionsService: correctionsService, progress: progress)
     }
 
     /// True when a usable transcript exists without needing Whisper.
@@ -120,7 +120,7 @@ final class TranscriptionService {
 
     // MARK: - WhisperKit path
 
-    private func transcribeOnDevice(_ videoURL: URL, languageHint: String = "", modelCacheDir: URL? = nil, progress: (@Sendable (Double) -> Void)? = nil) async throws -> Transcript {
+    private func transcribeOnDevice(_ videoURL: URL, languageHint: String = "", modelCacheDir: URL? = nil, correctionsService: TranscriptionCorrectionsService? = nil, progress: (@Sendable (Double) -> Void)? = nil) async throws -> Transcript {
         // Full audio (no cap) → temp .m4a.
         guard let audioURL = try await MediaExtractor.extractAudio(from: videoURL, maxSeconds: nil) else {
             throw TranscriptionError.noAudio
@@ -178,6 +178,16 @@ final class TranscriptionService {
         } else {
             options.detectLanguage = true
         }
+
+        // Self-learning: bias the decoder toward vocabulary the user previously
+        // corrected. WhisperKit 0.18 has no `initialPrompt` string, so we
+        // tokenize the prompt ourselves and pass `promptTokens`.
+        if let prompt = correctionsService?.buildInitialPrompt(), !prompt.isEmpty,
+           let tokens = whisper.tokenizer?.encode(text: prompt), !tokens.isEmpty {
+            options.promptTokens = tokens
+            Self.log("applying \(tokens.count) correction-prompt tokens")
+        }
+
         let results = try await whisper.transcribe(audioPath: audioURL.path, decodeOptions: options) { @Sendable state in
             let windowSecs = Double(state.windowId) * 30.0
             progress?(windowSecs)

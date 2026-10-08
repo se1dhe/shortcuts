@@ -592,6 +592,13 @@ struct LongformSubtitleEditorView: View {
                 words: orig.words
             )
         }
+        // Self-learning: remember every manual fix so Whisper is biased toward
+        // the corrected vocabulary on future transcriptions.
+        for phrase in phrases where phrase.isEdited {
+            TranscriptionCorrectionsService.shared.recordCorrection(
+                original: phrase.originalText,
+                corrected: phrase.text)
+        }
         onConfirm(updated)
     }
 }

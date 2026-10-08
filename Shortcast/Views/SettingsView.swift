@@ -30,6 +30,8 @@ struct SettingsView: View {
     }
     @State private var telegramConnection: TelegramConnectionState = .idle
 
+    @State private var showCorrectionsDictionary = false
+
     var body: some View {
         @Bindable var settings = settings
 
@@ -228,6 +230,23 @@ struct SettingsView: View {
                 Text("Папка с локальной коллекцией фильмов. Вкладка «Библиотека фильмов» сканирует её, находит MKV/MP4/MOV/AVI/WebM и нормализует контейнер до MP4 перед обработкой.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("Транскрибация") {
+                HStack(spacing: 8) {
+                    Image(systemName: "text.badge.checkmark")
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Словарь исправлений Whisper")
+                            .font(.callout)
+                        Text("Правки субтитров накапливаются и передаются в Whisper как контекст — самообучение модели.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Открыть словарь…") { showCorrectionsDictionary = true }
+                        .buttonStyle(.borderless)
+                }
             }
 
             Section("Background Music folder") {
@@ -490,6 +509,9 @@ struct SettingsView: View {
         }
         .task {
             checkBrowserAuth()
+        }
+        .sheet(isPresented: $showCorrectionsDictionary) {
+            CorrectionsDictionaryView()
         }
     }
 

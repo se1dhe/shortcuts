@@ -1618,7 +1618,15 @@ final class WorkspaceModel {
             tmdbAPIKey: settings.tmdbAPIKey,
             descriptionMode: .movie,   // show the movie synopsis in the description
             textAd: settings.textAdEnabled,
+            channelHandle: settings.telegramChannelId,
             sceneDescriptionProvider: nil,
+            hookProvider: {
+                await modelManager.prepareDirectorIfNeeded()
+                return await modelManager.momentFinder.generateSocialHooks(
+                    transcriptSlice: clip.transcriptSlice,
+                    movieTitle: searchQuery.title,
+                    language: language) ?? [:]
+            },
             fallbackMovieProvider: {
                 await modelManager.prepareDirectorIfNeeded()
                 return await modelManager.momentFinder.inferMovie(query: searchQuery, sourceText: sourceText)

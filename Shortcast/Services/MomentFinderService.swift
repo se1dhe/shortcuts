@@ -378,7 +378,7 @@ final class MomentFinderService {
             generateParameters: params,
             additionalContext: ["enable_thinking": false])
 
-        let userPrompt = "Транскрипция клипа\(titlePart):\n\(transcript.prefix(2000))"
+        let userPrompt = "Транскрипция клипа\(titlePart):\n\(transcript.prefix(4000))"
 
         do {
             var raw = ""
@@ -393,6 +393,80 @@ final class MomentFinderService {
             return cleaned.isEmpty ? nil : cleaned
         } catch {
             Self.log("describeScene failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// Generates platform-specific viral hooks from the clip's transcript. Each
+    /// platform gets its own tone and hard length cap so the same clip does not
+    /// carry an identical hardcoded teaser everywhere. Returns nil when no model
+    /// is loaded or parsing fails, letting the caller fall back to a neutral hook.
+    func generateSocialHooks(transcriptSlice: String, movieTitle: String, language: String?) async -> [SocialPlatform: String]? {
+        let transcript = transcriptSlice.trimmed
+        guard let container, !transcript.isEmpty else {
+            Self.log("generateSocialHooks skipped: \(container == nil ? "no model" : "empty transcript")")
+            return nil
+        }
+
+        let s = profile.sampling
+        var params = GenerateParameters(
+            maxTokens: 300,
+            temperature: 0.7,
+            topP: s.topP,
+            topK: s.topK,
+            minP: s.minP,
+            repetitionPenalty: s.repetitionPenalty)
+        params.maxKVSize = s.maxKVSize
+        params.kvBits = s.kvBits
+
+        let resolved = Self.resolvedPromptLanguage(language)
+        let langName: String
+        switch resolved {
+        case .ru: langName = "по-русски"
+        case .uk: langName = "українською"
+        case .en: langName = "in English"
+        }
+        let titlePart = movieTitle.trimmed.isEmpty ? "" : "Фильм: «\(movieTitle.trimmed)».\n"
+
+        let instructions = """
+        Ты — SMM-копирайтер киноканала. Напиши цепляющий хук (первую строку-завлекалку) для короткого клипа из фильма под три разные площадки. Пиши \(langName).
+        Требования по тону и длине:
+        - tiktok: дерзко, провокационно, вопрос или вызов зрителю, ДО 150 символов.
+        - instagram: визуал и эмоция, «сохрани/посмотри до конца», ДО 300 символов.
+        - youtube: интрига с глубоким контекстом сцены, ДО 500 символов.
+        Без спойлеров финала. Без хэштегов. Без кавычек вокруг текста.
+        \(titlePart)Ответь СТРОГО валидным JSON без markdown: {"tiktok":"...","instagram":"...","youtube":"..."}
+        """
+
+        let session = ChatSession(
+            container,
+            instructions: instructions,
+            generateParameters: params,
+            additionalContext: ["enable_thinking": false])
+
+        let userPrompt = "Транскрипция клипа:\n\(transcript.prefix(4000))\n\nВерни JSON."
+
+        do {
+            var raw = ""
+            for try await chunk in session.streamResponse(to: userPrompt) {
+                raw += chunk
+            }
+            guard let jsonString = JSONVariantParser.extractJSONObject(from: raw),
+                  let root = JSONVariantParser.deserializeTolerant(jsonString) as? [String: Any] else {
+                Self.log("generateSocialHooks: could not parse JSON")
+                return nil
+            }
+            let limits: [SocialPlatform: Int] = [.tiktok: 150, .instagram: 300, .youtube: 500]
+            var hooks: [SocialPlatform: String] = [:]
+            for platform in [SocialPlatform.tiktok, .instagram, .youtube] {
+                guard let value = (root[platform.rawValue] as? String)?.trimmed, !value.isEmpty else { continue }
+                let limit = limits[platform] ?? 500
+                hooks[platform] = value.count > limit ? String(value.prefix(limit)).trimmed : value
+            }
+            Self.log("generateSocialHooks output: \(hooks.count) platforms")
+            return hooks.isEmpty ? nil : hooks
+        } catch {
+            Self.log("generateSocialHooks failed: \(error.localizedDescription)")
             return nil
         }
     }

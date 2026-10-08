@@ -146,7 +146,7 @@ struct LongformYouTubePublishSheet: View {
                         }
 
                         VStack(alignment: .leading, spacing: 4) {
-                            Toggle("Автопостинг анонса и видео/ссылки в Telegram (\(settings.telegramChannelId.isEmpty ? "@telonyx_club" : settings.telegramChannelId))", isOn: $autoPostToTelegram)
+                            Toggle("Автопостинг анонса и видео/ссылки в Telegram (\(settings.telegramChannelId.isEmpty ? "канал не задан" : settings.telegramChannelId))", isOn: $autoPostToTelegram)
                                 .font(.subheadline)
 
                             if let tgStatus = telegramPostMessage {

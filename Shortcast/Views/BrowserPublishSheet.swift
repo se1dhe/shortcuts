@@ -139,7 +139,7 @@ struct BrowserPublishSheet: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "paperplane.fill")
                                     .foregroundStyle(Color(hex: "2AABEE"))
-                                Text("Опубликовать карточку фильма в Telegram (@telonyx_club)")
+                                Text("Опубликовать карточку фильма в Telegram (\(settings.telegramChannelId.trimmed.isEmpty ? "канал не задан" : settings.telegramChannelId.trimmed))")
                                     .font(.callout.weight(.medium))
                             }
                         }
@@ -298,7 +298,7 @@ struct BrowserPublishSheet: View {
                 .foregroundStyle(Color(hex: "2AABEE"))
                 .frame(width: 20)
 
-            Text("Telegram (@telonyx_club)")
+            Text("Telegram-канал")
                 .font(.callout.weight(.medium))
 
             Spacer()

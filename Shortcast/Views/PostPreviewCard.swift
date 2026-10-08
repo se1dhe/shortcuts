@@ -790,7 +790,7 @@ private struct PlatformSkin {
                 audioLabel: "original sound")
         case .telegram:
             PlatformSkin(
-                username: "@telonyx_club",
+                username: "@your_channel",
                 cornerBadge: "Channel",
                 topTrailingIcon: "paperplane.fill",
                 railItems: [

@@ -664,7 +664,7 @@ struct ShortClipCard: View {
                 .buttonStyle(.borderedProminent)
                 .tint(Color(hex: "2AABEE"))
                 .disabled(clip.isPublishingToTelegram || settings.telegramBotToken.trimmed.isEmpty)
-                .help(settings.telegramBotToken.trimmed.isEmpty ? "Укажите токен бота в Настройках (⌘,)" : "Опубликовать карточку фильма в @telonyx_club")
+                .help(settings.telegramBotToken.trimmed.isEmpty ? "Укажите токен бота в Настройках (⌘,)" : "Опубликовать карточку фильма в \(settings.telegramChannelId.trimmed.isEmpty ? "Telegram-канал" : settings.telegramChannelId.trimmed)")
 
                 Spacer()
 
@@ -812,11 +812,18 @@ struct ShortClipCard: View {
                 descriptionMode: mode,
                 textAd: settings.textAdEnabled,
                 preselectedMovie: preselected,
+                channelHandle: settings.telegramChannelId,
                 sceneDescriptionProvider: {
                     await modelManager.momentFinder.describeScene(
                         transcriptSlice: clip.transcriptSlice,
                         movieTitle: title,
                         language: effectiveDescriptionLanguage)
+                },
+                hookProvider: {
+                    await modelManager.momentFinder.generateSocialHooks(
+                        transcriptSlice: clip.transcriptSlice,
+                        movieTitle: title,
+                        language: effectiveDescriptionLanguage) ?? [:]
                 },
                 fallbackMovieProvider: {
                     await modelManager.momentFinder.inferMovie(query: query, sourceText: sourceText)
@@ -858,11 +865,18 @@ struct ShortClipCard: View {
                 descriptionMode: mode,
                 textAd: settings.textAdEnabled,
                 preselectedMovie: movie,
+                channelHandle: settings.telegramChannelId,
                 sceneDescriptionProvider: {
                     await modelManager.momentFinder.describeScene(
                         transcriptSlice: clip.transcriptSlice,
                         movieTitle: movie.title,
                         language: effectiveDescriptionLanguage)
+                },
+                hookProvider: {
+                    await modelManager.momentFinder.generateSocialHooks(
+                        transcriptSlice: clip.transcriptSlice,
+                        movieTitle: movie.title,
+                        language: effectiveDescriptionLanguage) ?? [:]
                 })
 
             detectedMovie = result.movie

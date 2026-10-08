@@ -179,7 +179,7 @@ struct LongformResultsView: View {
                                 Image(systemName: "checkmark")
                                 Text("Опубликовано в Telegram ✓")
                             } else {
-                                Text("Пост в Telegram (\(settings.telegramChannelId.isEmpty ? "@telonyx_club" : settings.telegramChannelId))")
+                                Text("Пост в Telegram (\(settings.telegramChannelId.isEmpty ? "канал не задан" : settings.telegramChannelId))")
                             }
                         }
                         .font(.caption.weight(.medium))

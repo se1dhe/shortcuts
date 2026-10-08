@@ -81,13 +81,13 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Telegram-канал (@telonyx_club)") {
+            Section("Telegram-канал") {
                 SecureField("Токен бота Telegram", text: $settings.telegramBotToken)
                 TextField("Канал (username или ID)", text: $settings.telegramChannelId)
 
                 Toggle("Автопубликация при экспорте", isOn: $settings.autoPostToTelegram)
 
-                Text("Для автоматической публикации шортсов и карточек фильмов в канал @telonyx_club создайте бота в @BotFather, скопируйте токен и добавьте бота администратором в ваш канал с правом публикации сообщений.")
+                Text("Для автоматической публикации шортсов и карточек фильмов в ваш Telegram-канал создайте бота в @BotFather, скопируйте токен и добавьте бота администратором в ваш канал с правом публикации сообщений.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

@@ -114,7 +114,7 @@ final class AppSettings {
         }
     }
 
-    /// Telegram Channel ID/username (e.g. "@telonyx_club").
+    /// Telegram Channel ID/username the user configures in Settings (e.g. "@mychannel").
     var telegramChannelId: String {
         didSet { defaults.set(telegramChannelId, forKey: Keys.telegramChannelId) }
     }
@@ -390,7 +390,7 @@ final class AppSettings {
         self.youtubeCookiesPath = defaults.string(forKey: Keys.youtubeCookies) ?? ""
         self.telegramBotToken = defaults.string(forKey: Keys.telegramBotToken) ?? ""
 
-        self.telegramChannelId = defaults.string(forKey: Keys.telegramChannelId) ?? "@telonyx_club"
+        self.telegramChannelId = defaults.string(forKey: Keys.telegramChannelId) ?? ""
         self.autoPostToTelegram = defaults.object(forKey: Keys.autoPostToTelegram) as? Bool ?? true
         self.profileName = defaults.string(forKey: Keys.profile) ?? ""
         self.languageOverride = defaults.string(forKey: Keys.language) ?? ""

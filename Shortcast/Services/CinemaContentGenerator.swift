@@ -55,7 +55,9 @@ enum CinemaContentGenerator {
         descriptionMode: DescriptionMode = .scene,
         textAd: Bool = false,
         preselectedMovie: TMDBMovie? = nil,
+        channelHandle: String = "",
         sceneDescriptionProvider: (() async -> String?)? = nil,
+        hookProvider: (() async -> [SocialPlatform: String])? = nil,
         fallbackMovieProvider: (() async -> TMDBMovie?)? = nil
     ) async -> (movie: TMDBMovie?, candidates: [TMDBMovie], query: MovieSearchQuery, content: [SocialPlatform: GeneratedContent], error: String?) {
 
@@ -87,6 +89,12 @@ enum CinemaContentGenerator {
             sceneDescription = (await sceneDescriptionProvider())?.trimmed
         }
 
+        // LLM-written, platform-specific hooks. Empty in text-ad mode (there we only
+        // advertise the channel) or when no model is available — the builders then
+        // fall back to a neutral scene-derived hook instead of a hardcoded teaser.
+        let llmHooks: [SocialPlatform: String] = textAd ? [:] : (await hookProvider?() ?? [:])
+        let channel = channelParts(channelHandle)
+
         let content: [SocialPlatform: GeneratedContent]
         let resolvedQuery: MovieSearchQuery
         if let movie {
@@ -97,7 +105,9 @@ enum CinemaContentGenerator {
                 movie: movie,
                 descriptionMode: descriptionMode,
                 textAd: textAd,
-                sceneDescription: sceneDescription)
+                sceneDescription: sceneDescription,
+                llmHooks: llmHooks,
+                channel: channel)
         } else {
             resolvedQuery = query
             content = cinemaPlatformContent(
@@ -105,13 +115,27 @@ enum CinemaContentGenerator {
                 sourceText: sourceText,
                 descriptionMode: descriptionMode,
                 textAd: textAd,
-                sceneDescription: sceneDescription)
+                sceneDescription: sceneDescription,
+                llmHooks: llmHooks,
+                channel: channel)
             if !tmdbAPIKey.trimmed.isEmpty {
                 error = String(localized: "TMDB did not find this movie. Generated from entered title and year.")
             }
         }
 
         return (movie, candidates, resolvedQuery, content, error)
+    }
+
+    /// Normalizes a user-configured Telegram channel (from Settings) into a display
+    /// mention and a t.me link. Returns nil when no channel is configured, so the
+    /// funnel lines are omitted entirely rather than falling back to a hardcoded one.
+    private static func channelParts(_ handle: String) -> (mention: String, link: String)? {
+        let cleaned = handle.trimmed
+            .replacingOccurrences(of: "https://t.me/", with: "")
+            .replacingOccurrences(of: "http://t.me/", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "@/ "))
+        guard !cleaned.isEmpty else { return nil }
+        return (mention: "@\(cleaned)", link: "https://t.me/\(cleaned)")
     }
 
     /// Applies generated cinema content to a clip's variants and overlay text.
@@ -414,7 +438,9 @@ enum CinemaContentGenerator {
         movie: TMDBMovie,
         descriptionMode: DescriptionMode,
         textAd: Bool,
-        sceneDescription: String?
+        sceneDescription: String?,
+        llmHooks: [SocialPlatform: String],
+        channel: (mention: String, link: String)?
     ) -> [SocialPlatform: GeneratedContent] {
         let yearPart = movie.year.isEmpty ? "" : " (\(movie.year))"
         let title = movie.title
@@ -423,29 +449,24 @@ enum CinemaContentGenerator {
             descriptionMode: descriptionMode,
             sceneDescription: sceneDescription)
 
-        // Viral hooks (intrigue without spoiling the movie title)
-        let viralVideoHook = "Такой развязки никто не ожидал... 😳"
-        let youtubeHook = "Такой развязки точно никто не ожидал... 😳 #Shorts"
         let telegramHook = "🎬 \(title)\(yearPart)"
 
-        // Viral platform-specific descriptions with @telonyx_club funnel
-        let tiktokDesc = tiktokViralDescription(synopsis: synopsis, textAd: textAd)
-        let instaDesc = instagramViralDescription(synopsis: synopsis, textAd: textAd)
-        let youtubeDesc = youtubeViralDescription(synopsis: synopsis, textAd: textAd)
-        let telegramDesc = telegramCardDescription(title: title, yearPart: yearPart, synopsis: synopsis, movie: movie)
+        let tiktokDesc = tiktokViralDescription(synopsis: synopsis, textAd: textAd, hook: llmHooks[.tiktok], channel: channel)
+        let instaDesc = instagramViralDescription(synopsis: synopsis, textAd: textAd, hook: llmHooks[.instagram], channel: channel)
+        let youtubeDesc = youtubeViralDescription(synopsis: synopsis, textAd: textAd, hook: llmHooks[.youtube], channel: channel)
+        let telegramDesc = telegramCardDescription(title: title, yearPart: yearPart, synopsis: synopsis, movie: movie, channel: channel)
 
-        // Viral hashtags (genres and trends only, no movie title in video platforms!)
         let movieGenresAndCast = baseCinemaHashtags(movie: movie, includeTitle: false)
         let telegramMovieTags = baseCinemaHashtags(movie: movie, includeTitle: true)
 
-        let tiktokTags = buildViralHashtags(base: movieGenresAndCast, trending: tiktokViralHashtags, maxCount: 12, textAd: textAd)
-        let instaTags = buildViralHashtags(base: movieGenresAndCast, trending: instagramViralHashtags, maxCount: 15, textAd: textAd)
-        let youtubeTags = buildViralHashtags(base: movieGenresAndCast, trending: youtubeShortsViralHashtags, maxCount: 10, textAd: textAd)
+        let tiktokTags = buildViralHashtags(base: movieGenresAndCast, trending: tiktokViralHashtags, maxCount: 12, textAd: textAd, channel: channel)
+        let instaTags = buildViralHashtags(base: movieGenresAndCast, trending: instagramViralHashtags, maxCount: 15, textAd: textAd, channel: channel)
+        let youtubeTags = buildViralHashtags(base: movieGenresAndCast, trending: youtubeShortsViralHashtags, maxCount: 10, textAd: textAd, channel: channel)
 
         return [
-            .tiktok: GeneratedContent(hook: viralVideoHook, description: tiktokDesc, hashtags: tiktokTags.joined(separator: " ")),
-            .instagram: GeneratedContent(hook: viralVideoHook, description: instaDesc, hashtags: instaTags.joined(separator: " ")),
-            .youtube: GeneratedContent(hook: youtubeHook, description: youtubeDesc, hashtags: youtubeTags.joined(separator: " ")),
+            .tiktok: GeneratedContent(hook: hook(for: .tiktok, llmHooks: llmHooks, fallback: synopsis), description: tiktokDesc, hashtags: tiktokTags.joined(separator: " ")),
+            .instagram: GeneratedContent(hook: hook(for: .instagram, llmHooks: llmHooks, fallback: synopsis), description: instaDesc, hashtags: instaTags.joined(separator: " ")),
+            .youtube: GeneratedContent(hook: hook(for: .youtube, llmHooks: llmHooks, fallback: synopsis), description: youtubeDesc, hashtags: youtubeTags.joined(separator: " ")),
             .telegram: GeneratedContent(hook: telegramHook, description: telegramDesc, hashtags: telegramMovieTags.joined(separator: " "))
         ]
     }
@@ -455,34 +476,47 @@ enum CinemaContentGenerator {
         sourceText: String,
         descriptionMode: DescriptionMode,
         textAd: Bool,
-        sceneDescription: String?
+        sceneDescription: String?,
+        llmHooks: [SocialPlatform: String],
+        channel: (mention: String, link: String)?
     ) -> [SocialPlatform: GeneratedContent] {
         let yearPart = query.year?.trimmed.isEmpty == false ? " (\(query.year!.trimmed))" : ""
         let title = query.title
         let synopsis = sceneDescription?.trimmed ?? ""
 
-        let viralVideoHook = "Такой развязки никто не ожидал... 😳"
-        let youtubeHook = "Такой развязки точно никто не ожидал... 😳 #Shorts"
         let telegramHook = "🎬 \(title)\(yearPart)"
 
-        let tiktokDesc = tiktokViralDescription(synopsis: synopsis, textAd: textAd)
-        let instaDesc = instagramViralDescription(synopsis: synopsis, textAd: textAd)
-        let youtubeDesc = youtubeViralDescription(synopsis: synopsis, textAd: textAd)
-        let telegramDesc = telegramCardDescription(title: title, yearPart: yearPart, synopsis: synopsis, movie: nil)
+        let tiktokDesc = tiktokViralDescription(synopsis: synopsis, textAd: textAd, hook: llmHooks[.tiktok], channel: channel)
+        let instaDesc = instagramViralDescription(synopsis: synopsis, textAd: textAd, hook: llmHooks[.instagram], channel: channel)
+        let youtubeDesc = youtubeViralDescription(synopsis: synopsis, textAd: textAd, hook: llmHooks[.youtube], channel: channel)
+        let telegramDesc = telegramCardDescription(title: title, yearPart: yearPart, synopsis: synopsis, movie: nil, channel: channel)
 
         let plainTags = baseCinemaHashtags(title: title, sourceText: sourceText, includeTitle: false)
         let telegramTags = baseCinemaHashtags(title: title, sourceText: sourceText, includeTitle: true)
 
-        let tiktokTags = buildViralHashtags(base: plainTags, trending: tiktokViralHashtags, maxCount: 12, textAd: textAd)
-        let instaTags = buildViralHashtags(base: plainTags, trending: instagramViralHashtags, maxCount: 15, textAd: textAd)
-        let youtubeTags = buildViralHashtags(base: plainTags, trending: youtubeShortsViralHashtags, maxCount: 10, textAd: textAd)
+        let tiktokTags = buildViralHashtags(base: plainTags, trending: tiktokViralHashtags, maxCount: 12, textAd: textAd, channel: channel)
+        let instaTags = buildViralHashtags(base: plainTags, trending: instagramViralHashtags, maxCount: 15, textAd: textAd, channel: channel)
+        let youtubeTags = buildViralHashtags(base: plainTags, trending: youtubeShortsViralHashtags, maxCount: 10, textAd: textAd, channel: channel)
 
         return [
-            .tiktok: GeneratedContent(hook: viralVideoHook, description: tiktokDesc, hashtags: tiktokTags.joined(separator: " ")),
-            .instagram: GeneratedContent(hook: viralVideoHook, description: instaDesc, hashtags: instaTags.joined(separator: " ")),
-            .youtube: GeneratedContent(hook: youtubeHook, description: youtubeDesc, hashtags: youtubeTags.joined(separator: " ")),
+            .tiktok: GeneratedContent(hook: hook(for: .tiktok, llmHooks: llmHooks, fallback: synopsis), description: tiktokDesc, hashtags: tiktokTags.joined(separator: " ")),
+            .instagram: GeneratedContent(hook: hook(for: .instagram, llmHooks: llmHooks, fallback: synopsis), description: instaDesc, hashtags: instaTags.joined(separator: " ")),
+            .youtube: GeneratedContent(hook: hook(for: .youtube, llmHooks: llmHooks, fallback: synopsis), description: youtubeDesc, hashtags: youtubeTags.joined(separator: " ")),
             .telegram: GeneratedContent(hook: telegramHook, description: telegramDesc, hashtags: telegramTags.joined(separator: " "))
         ]
+    }
+
+    /// Chooses the hook for a video platform: the LLM-written one when available,
+    /// otherwise a neutral line derived from the scene caption (never a hardcoded teaser).
+    private static func hook(for platform: SocialPlatform, llmHooks: [SocialPlatform: String], fallback synopsis: String) -> String {
+        if let llm = llmHooks[platform]?.trimmed, !llm.isEmpty {
+            return llm
+        }
+        let brief = synopsis.trimmed
+        if !brief.isEmpty {
+            return brief.count > 90 ? String(brief.prefix(90).trimmingCharacters(in: .whitespacesAndNewlines)) + "…" : brief
+        }
+        return "Момент, который стоит досмотреть до конца 🍿"
     }
 
     private static func resolvedBodyText(
@@ -502,51 +536,84 @@ enum CinemaContentGenerator {
 
     private static func tiktokViralDescription(
         synopsis: String,
-        textAd: Bool
+        textAd: Bool,
+        hook: String?,
+        channel: (mention: String, link: String)?
     ) -> String {
+        let leadIn = (hook?.trimmed.isEmpty == false) ? hook!.trimmed : "Этой развязки ты не ждёшь… 😳"
         if textAd {
-            return "Такой развязки никто не ожидал... 😳\n\n🎬 Название фильма и где смотреть уже в Telegram: @telonyx_club\n\n\(botAdMessage())\n\nСмотри до конца 👇"
+            var text = leadIn
+            if let channel {
+                text += "\n\n🎬 Название фильма и где смотреть — в Telegram: \(channel.mention)"
+                text += "\n\n\(botAdMessage(channel: channel))"
+            }
+            text += "\n\nСмотри до конца 👇"
+            return text
         }
-        let leadIn = "Такой развязки точно никто не ожидал... 😳"
-        let brief = synopsis.count > 140 ? String(synopsis.prefix(140).trimmingCharacters(in: .whitespacesAndNewlines)) + "..." : synopsis
+        let brief = synopsis.count > 140 ? String(synopsis.prefix(140).trimmingCharacters(in: .whitespacesAndNewlines)) + "…" : synopsis
         var text = leadIn
         if !brief.isEmpty {
             text += "\n\n\(brief)"
         }
         text += "\n\nКак бы ты поступил на его месте? Напиши в комменты 👇"
-        text += "\n\n🍿 Название фильма и где посмотреть уже выложили в наш Telegram: @telonyx_club (активная ссылка в шапке профиля 👆)"
+        if let channel {
+            text += "\n\n🍿 Название фильма и где посмотреть — в нашем Telegram: \(channel.mention) (ссылка в шапке профиля 👆)"
+        }
         return text
     }
 
     private static func instagramViralDescription(
         synopsis: String,
-        textAd: Bool
+        textAd: Bool,
+        hook: String?,
+        channel: (mention: String, link: String)?
     ) -> String {
+        let leadIn = (hook?.trimmed.isEmpty == false) ? hook!.trimmed : "Этот момент пробирает до мурашек… 🍿"
         if textAd {
-            return "Этот момент пробирает до мурашек... 🍿\n\n🎬 Название фильма в шапке профиля 👆 (Telegram: @telonyx_club)\n\n\(botAdMessage())\n\n📌 Сохраняй в закладки!"
+            var text = leadIn
+            if let channel {
+                text += "\n\n🎬 Название фильма — в шапке профиля 👆 (Telegram: \(channel.mention))"
+                text += "\n\n\(botAdMessage(channel: channel))"
+            }
+            text += "\n\n📌 Сохраняй в закладки!"
+            return text
         }
-        var text = "Этот момент пробирает до мурашек... 🍿"
+        var text = leadIn
         if !synopsis.isEmpty {
             text += "\n\n\(synopsis)"
         }
         text += "\n\n📌 Сохраняй, чтобы не потерять на вечер!\nОцени этот момент от 1 до 10 в комментариях 👇"
-        text += "\n\n🎬 Название фильма и где посмотреть — в шапке профиля 👆 (Telegram: @telonyx_club)"
+        if let channel {
+            text += "\n\n🎬 Название фильма и где посмотреть — в шапке профиля 👆 (Telegram: \(channel.mention))"
+        }
         return text
     }
 
     private static func youtubeViralDescription(
         synopsis: String,
-        textAd: Bool
+        textAd: Bool,
+        hook: String?,
+        channel: (mention: String, link: String)?
     ) -> String {
+        let baseHook = (hook?.trimmed.isEmpty == false) ? hook!.trimmed : "Сцена, которую стоит досмотреть до конца 😳"
         if textAd {
-            return "Такой развязки никто не ожидал... 😳 #Shorts\n\n🎬 Название фильма в Telegram: https://t.me/telonyx_club\n\n\(botAdMessage())\n\n#Shorts #кино #фильмы"
+            var text = "\(baseHook) #Shorts"
+            if let channel {
+                text += "\n\n🎬 Название фильма в Telegram: \(channel.link)"
+                text += "\n\n\(botAdMessage(channel: channel))"
+            }
+            text += "\n\n#Shorts #кино #фильмы"
+            return text
         }
-        var text = "Такой развязки точно никто не ожидал... 😳"
+        var text = baseHook
         if !synopsis.isEmpty {
             text += "\n\n\(synopsis)"
         }
-        text += "\n\n🎬 Название фильма и где посмотреть выложили в наш Telegram: https://t.me/telonyx_club (ссылка в описании канала и в закрепленном комментарии) 👇"
-        text += "\n\n🔔 Подписывайся на канал, чтобы не пропустить лучшие моменты из кино!\n\n#Shorts #кино #фильмы"
+        if let channel {
+            text += "\n\n🎬 Название фильма и где посмотреть — в нашем Telegram: \(channel.link) 👇"
+            text += "\n\n🔔 Подписывайся на канал, чтобы не пропустить лучшие моменты из кино!"
+        }
+        text += "\n\n#Shorts #кино #фильмы"
         return text
     }
 
@@ -554,7 +621,8 @@ enum CinemaContentGenerator {
         title: String,
         yearPart: String,
         synopsis: String,
-        movie: TMDBMovie?
+        movie: TMDBMovie?,
+        channel: (mention: String, link: String)?
     ) -> String {
         var lines: [String] = []
         lines.append("🎬 «\(title)»\(yearPart)")
@@ -580,31 +648,39 @@ enum CinemaContentGenerator {
         }
 
         lines.append("🍿 Приятного просмотра!")
-        lines.append("Канал: @telonyx_club")
+        if let channel {
+            lines.append("Канал: \(channel.mention)")
+        }
         return lines.joined(separator: "\n")
     }
 
-    /// The channel hashtag, placed right after the movie-title hashtag.
-    private static func withBotHashtag(_ tags: [String]) -> [String] {
-        let channelTag = "#telonyx_club"
-        var out = tags.filter { $0.lowercased() != channelTag }
+    /// The channel hashtag (derived from the user's configured channel), placed
+    /// right after the movie-title hashtag. No-op when no channel is configured.
+    private static func withChannelHashtag(_ tags: [String], channel: (mention: String, link: String)?) -> [String] {
+        guard let channel else { return tags }
+        let channelTag = hashtag(channel.mention)
+        guard !channelTag.isEmpty else { return tags }
+        var out = tags.filter { $0.lowercased() != channelTag.lowercased() }
         out.insert(channelTag, at: min(1, out.count))
         return out
     }
 
-    /// A rotating pool of catchy Russian promos for the @telonyx_club Telegram channel,
+    /// A rotating pool of catchy Russian promos for the user's Telegram channel,
     /// used as the post description in text-ad mode.
-    private static func botAdMessage() -> String {
-        channelAdMessages.randomElement() ?? channelAdMessages[0]
+    private static func botAdMessage(channel: (mention: String, link: String)) -> String {
+        channelAdMessages(channel: channel).randomElement() ?? ""
     }
 
-    private static let channelAdMessages: [String] = [
-        "Ищешь, что посмотреть вечером? 🍿 Эксклюзивные подборки шедевров кино, скрытые бриллианты и премьеры — каждый день в нашем закрытом клубе: https://t.me/telonyx_club 🎬",
-        "Название фильма, обзор и лучшие моменты без цензуры уже в нашем Telegram: https://t.me/telonyx_club 🍿 Переходи и подписывайся!",
-        "Хочешь больше мощных сцен и топовых фильмов на вечер? Присоединяйся к киноманам в Telegram: https://t.me/telonyx_club 🍿",
-        "Вся информация об этом фильме и тысячи других рекомендаций — в нашем Telegram-канале https://t.me/telonyx_club 🎬 Жми и смотри!",
-        "Кино без спойлеров и скучных списков. Только лучшее кино со всего мира: https://t.me/telonyx_club 🍿"
-    ]
+    private static func channelAdMessages(channel: (mention: String, link: String)) -> [String] {
+        let l = channel.link
+        return [
+            "Ищешь, что посмотреть вечером? 🍿 Подборки шедевров кино и скрытые бриллианты — каждый день в нашем канале: \(l) 🎬",
+            "Название фильма, обзор и лучшие моменты уже в нашем Telegram: \(l) 🍿 Переходи и подписывайся!",
+            "Хочешь больше мощных сцен и топовых фильмов на вечер? Присоединяйся к киноманам в Telegram: \(l) 🍿",
+            "Вся информация об этом фильме и тысячи других рекомендаций — в нашем Telegram-канале \(l) 🎬 Жми и смотри!",
+            "Кино без спойлеров и скучных списков. Только лучшее кино со всего мира: \(l) 🍿"
+        ]
+    }
 
     private static func baseCinemaHashtags(movie: TMDBMovie, includeTitle: Bool) -> [String] {
         var tags: [String] = []
@@ -667,9 +743,9 @@ enum CinemaContentGenerator {
         ]
     }
 
-    private static func buildViralHashtags(base: [String], trending: [String], maxCount: Int, textAd: Bool) -> [String] {
+    private static func buildViralHashtags(base: [String], trending: [String], maxCount: Int, textAd: Bool, channel: (mention: String, link: String)?) -> [String] {
         let combined = combineHashtags(base: base, trending: trending)
-        let withAd = textAd ? withBotHashtag(combined) : combined
+        let withAd = textAd ? withChannelHashtag(combined, channel: channel) : combined
         return Array(withAd.prefix(maxCount))
     }
 

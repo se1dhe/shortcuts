@@ -563,7 +563,12 @@ final class WorkspaceModel {
 
             // 3. Выявление философских тем и автономный выбор ОДНОЙ главной темы (Shortcast Thematic Engine)
             let analysis: ThematicAnalysisResult
-            if let existing = self.thematicAnalysis ?? self.currentProject?.thematicAnalysis {
+            // Сохранённый аварийный фолбэк («Характер / Модель недоступна») НЕ считаем
+            // легитимным результатом: берём только настоящий анализ, иначе пересчитываем.
+            let savedAnalysis = [self.thematicAnalysis, self.currentProject?.thematicAnalysis]
+                .compactMap { $0 }
+                .first { !$0.isGenericFallback }
+            if let existing = savedAnalysis {
                 analysis = existing
                 self.thematicAnalysis = existing
                 self.thematicReasoning = existing.aiReasoning

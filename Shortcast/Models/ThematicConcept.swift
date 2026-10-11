@@ -61,6 +61,14 @@ struct ThematicAnalysisResult: Codable, Sendable, Equatable {
     /// Альтернативные философские грани и темы, выявленные в диалогах
     var alternativeConcepts: [ThematicConcept]
 
+    /// Признак аварийного универсального концепта, сохранённого без участия Director-модели.
+    /// Такой результат нельзя выдавать за легитимный: при повторном открытии фильма его
+    /// нужно пересчитать, иначе пользователь вечно видит «Характер / Модель недоступна».
+    var isGenericFallback: Bool {
+        primaryConcept.word.caseInsensitiveCompare("Характер") == .orderedSame
+            && alternativeConcepts.isEmpty
+    }
+
     /// Все концепты в едином списке, где главный выбор всегда идет первым
     var allConcepts: [ThematicConcept] {
         var list = [primaryConcept]

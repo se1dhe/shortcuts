@@ -117,11 +117,28 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
             ) {
                 return aiResult
             }
+
+            // AI-путь не удался — показываем РЕАЛЬНУЮ причину вместо одинакового
+            // «модель недоступна» для разных классов отказа (краш-репорт 2026-10-11).
+            if case .failed(let loadError) = await mm.momentFinder.phase {
+                return Self.genericFallback(
+                    reasoning: "Модель недоступна — Director не загрузился: \(loadError). Проверьте сеть и место на диске, затем нажмите «Пересчитать темы с AI».")
+            }
+            if await mm.momentFinder.isReady {
+                return Self.genericFallback(
+                    reasoning: "Director-модель ответила, но результат не распознался как валидный JSON. Нажмите «Пересчитать темы с AI» ещё раз.")
+            }
         }
 
         // 2. Если модель недоступна или запрос не вернул структуру — один generic-эталон.
         //    Никаких захардкоженных тем под конкретные тайтлы: LLM — единственный
         //    источник смысловых ядер, а это лишь аварийный минимум.
+        return Self.genericFallback(
+            reasoning: "Модель недоступна — предложен универсальный концепт преодоления. Запустите анализ снова, когда Director-модель загрузится, чтобы получить тему, выявленную из диалогов фильма.")
+    }
+
+    /// Аварийный универсальный концепт с указанной причиной фолбэка.
+    private static func genericFallback(reasoning: String) -> ThematicAnalysisResult {
         let defaultConcept = ThematicConcept(
             word: "Характер",
             tagline: "Способность стоять до конца, когда весь мир против тебя.",
@@ -132,7 +149,7 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         )
         return ThematicAnalysisResult(
             primaryConcept: defaultConcept,
-            aiReasoning: "Модель недоступна — предложен универсальный концепт преодоления. Запустите анализ снова, когда Director-модель загрузится, чтобы получить тему, выявленную из диалогов фильма.",
+            aiReasoning: reasoning,
             alternativeConcepts: []
         )
     }

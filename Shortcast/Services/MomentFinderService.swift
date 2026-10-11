@@ -157,7 +157,8 @@ final class MomentFinderService {
             sceneMap: sceneMap,
             isComedy: isComedy)
         
-        let maxChunkSize = 35000
+        // Чанк больше префилльного бюджета = тот же OOM-крэш в TokenIterator.prepare.
+        let maxChunkSize = DirectorPromptBudget.maxPromptChars
         let chunks: [String]
         if transcript.count > maxChunkSize {
             Self.log("Transcript too long (\(transcript.count) chars), chunking into \(maxChunkSize) character parts")
@@ -635,21 +636,12 @@ final class MomentFinderService {
         if let overview = movieOverview?.trimmingCharacters(in: .whitespacesAndNewlines), !overview.isEmpty {
             promptParts.append("Синопсис/сюжет фильма:\n\"\"\"\n\(overview)\n\"\"\"")
         }
-        // Отправляем ВЕСЬ сжатый транскрипт. Безопасный лимит ~40k символов
-        // (~35k токенов) покрывает префилл Qwen. Для очень длинных фильмов
-        // прореживаем строки равномерно по всей хронологии, а не обрезаем хвост,
-        // чтобы сохранить покрытие всех актов.
-        let maxContextChars = 40_000
-        let fullDialogueSample: String
-        if sample.count <= maxContextChars {
-            fullDialogueSample = sample
-        } else {
-            let lines = sample.components(separatedBy: "\n")
-            let targetLines = max(1, lines.count * maxContextChars / sample.count)
-            let step = max(1, lines.count / targetLines)
-            let sampled = stride(from: 0, to: lines.count, by: step).map { lines[$0] }
-            fullDialogueSample = String(sampled.joined(separator: "\n").prefix(maxContextChars))
-            Self.log("analyzeThematicCore: transcript \(sample.count) chars > \(maxContextChars), downsampled to \(fullDialogueSample.count) chars (step \(step))")
+        // Префилл больше бюджета убивает процесс (_mlx_error → SIGTRAP): логиты
+        // и активации за один eval на всей последовательности не влезают в RAM.
+        // Прореживаем строки равномерно по хронологии — покрытие всех актов сохраняется.
+        let fullDialogueSample = DirectorPromptBudget.downsample(sample)
+        if fullDialogueSample.count < sample.count {
+            Self.log("analyzeThematicCore: transcript \(sample.count) chars downsampled to \(fullDialogueSample.count) (Director prefill budget)")
         }
         promptParts.append("Срез ключевых диалогов фильма (хронологически по всему сюжету):\n\"\"\"\n\(fullDialogueSample)\n\"\"\"")
         promptParts.append("Выбери ОДНУ ГЛАВНУЮ тему эссе (primaryConcept), подробно обоснуй выбор (aiReasoning) и предложи альтернативные грани (alternativeConcepts). Верни СТРОГО валидный JSON-объект:")
@@ -684,6 +676,9 @@ final class MomentFinderService {
         }
         let sample = transcriptSample.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !sample.isEmpty else { return nil }
+        // Полный сжатый сэмпл длинного фильма — сотни тысяч символов; префилл
+        // обязан уложиться в DirectorPromptBudget, иначе OOM-крэш (_mlx_error).
+        let clampedSample = DirectorPromptBudget.downsample(sample)
 
         let s = profile.sampling
         var params = GenerateParameters(
@@ -733,7 +728,7 @@ final class MomentFinderService {
         Тема эссе: «\(concept.word)» — \(concept.philosophicalPremise)
 
         Транскрипт (сжатый, с таймкодами):
-        \(sample)
+        \(clampedSample)
 
         Выбери 4 хронологических отрезка по актам и верни JSON.
         """
@@ -748,7 +743,7 @@ final class MomentFinderService {
                 from: raw,
                 movieTitle: movieTitle,
                 concept: concept,
-                transcriptEnd: Self.lastTimestamp(in: sample)
+                transcriptEnd: Self.lastTimestamp(in: clampedSample)
             )
         } catch {
             Self.log("buildNarrativeArc failed: \(error.localizedDescription)")

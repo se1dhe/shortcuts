@@ -128,9 +128,17 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
                 return Self.genericFallback(
                     reasoning: "Director-модель ответила, но результат не распознался как валидный JSON. Нажмите «Пересчитать темы с AI» ещё раз.")
             }
+
+            // Модель не загрузилась и не в ошибке (idle/loading/downloading) — раньше
+            // это молча давало одинаковый текст. Сообщаем фактическую фазу, чтобы
+            // причину было видно и в UI, и в логе.
+            let phase = await mm.momentFinder.phase
+            MomentFinderService.log("discoverThematicAnalysis fallback: director not ready, phase=\(phase)")
+            return Self.genericFallback(
+                reasoning: "Модель ещё не готова (состояние: \(phase)). Обычно это нехватка памяти или незавершённая загрузка Director-модели. Закройте тяжёлые приложения и нажмите «Пересчитать темы с AI».")
         }
 
-        // 2. Если модель недоступна или запрос не вернул структуру — один generic-эталон.
+        // 2. modelManager не передан или сэмпл пуст — один generic-эталон.
         //    Никаких захардкоженных тем под конкретные тайтлы: LLM — единственный
         //    источник смысловых ядер, а это лишь аварийный минимум.
         return Self.genericFallback(

@@ -29,6 +29,10 @@ final class MomentFinderService {
 
     private(set) var phase: Phase = .idle
     private var container: ModelContainer?
+    /// Текущая загрузка модели. Повторные вызовы `prepareIfNeeded()` дожидаются её,
+    /// а не возвращаются мгновенно с `container == nil` (иначе вызывающий код молча
+    /// скатывается в фолбэк «модель недоступна», хотя загрузка просто ещё не кончилась).
+    private var loadTask: Task<Void, Never>?
 
     /// Which model plays the Director. Defaults to Qwen 3.5 9B; switched to match
     /// the user's pick via `setProfile(_:)` before the model loads.
@@ -55,14 +59,28 @@ final class MomentFinderService {
     /// unloaded so the next `prepareIfNeeded()` brings up the new one.
     func setProfile(_ newProfile: ChatModelProfile) {
         guard newProfile.modelID != profile.modelID else { return }
-        if container != nil { unload() }
+        // Отменяем незавершённую загрузку старой модели и сбрасываем контейнер,
+        // иначе старая модель догрузится уже под новым профилем.
+        unload()
         profile = newProfile
     }
 
     /// Downloads (if needed) and loads the selected Director model. Safe to call
     /// repeatedly. Loaded lazily on the first long-video drop — not at app launch.
     func prepareIfNeeded() async {
-        guard container == nil, !isBusy else { return }
+        if container != nil { return }
+        // Если загрузка уже идёт — дожидаемся её, а не выходим с container == nil.
+        if let loadTask {
+            await loadTask.value
+            return
+        }
+        let task = Task { await self.performLoad() }
+        loadTask = task
+        await task.value
+        loadTask = nil
+    }
+
+    private func performLoad() async {
         phase = .downloading(fraction: 0)
 
         do {
@@ -108,6 +126,8 @@ final class MomentFinderService {
     /// Frees the loaded model and its Metal cache. Used by ModelManager to make
     /// room for the Gemma copywriter on memory-constrained Macs.
     func unload() {
+        loadTask?.cancel()
+        loadTask = nil
         container = nil
         phase = .idle
         MLX.Memory.clearCache()
@@ -234,7 +254,27 @@ final class MomentFinderService {
     }
 
     nonisolated static func log(_ message: String) {
-        FileHandle.standardError.write(Data("[shortcast/director] \(message)\n".utf8))
+        let line = "[shortcast/director] \(message)\n"
+        FileHandle.standardError.write(Data(line.utf8))
+        // stderr не виден, когда приложение запущено через `open` (без Xcode/терминала).
+        // Дублируем в файл, чтобы причину отказа Director можно было прочитать постфактум.
+        let url = Self.logFileURL
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(Data(line.utf8))
+            try? handle.close()
+        } else {
+            try? line.write(to: url, atomically: false, encoding: .utf8)
+        }
+    }
+
+    /// Файл диагностики Director: ~/Library/Application Support/Shortcast/Logs/director.log
+    nonisolated static var logFileURL: URL {
+        let base = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Shortcast/Logs", isDirectory: true)
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base.appendingPathComponent("director.log")
     }
 
     /// Captions one clip from its transcript slice (the text-only Copywriter

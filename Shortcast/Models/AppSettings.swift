@@ -302,14 +302,7 @@ final class AppSettings {
 
     /// User-selected folder for custom background music. Uses a security-scoped bookmark.
     var customMusicDirectory: URL? {
-        didSet {
-            if let url = customMusicDirectory {
-                let data = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
-                defaults.set(data, forKey: Keys.customMusicDirectoryBookmark)
-            } else {
-                defaults.removeObject(forKey: Keys.customMusicDirectoryBookmark)
-            }
-        }
+        didSet { persistFolderBookmark(customMusicDirectory, forKey: Keys.customMusicDirectoryBookmark) }
     }
     
     /// Human-readable path of the custom music directory.
@@ -317,27 +310,10 @@ final class AppSettings {
         customMusicDirectory?.path(percentEncoded: false) ?? String(localized: "None")
     }
 
-    /// User-selected output folder for downloads and exports. Uses a security-scoped
+    /// User-selected output folder for downloads and exports. Persisted as a
     /// bookmark so the app keeps access across launches. nil → use temp directory.
     var outputDirectory: URL? {
-        get {
-            guard let data = defaults.data(forKey: Keys.outputDirectoryBookmark) else { return nil }
-            var isStale = false
-            guard let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale)
-            else { return nil }
-            if isStale, let newData = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
-                defaults.set(newData, forKey: Keys.outputDirectoryBookmark)
-            }
-            return url
-        }
-        set {
-            if let url = newValue {
-                let data = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
-                defaults.set(data, forKey: Keys.outputDirectoryBookmark)
-            } else {
-                defaults.removeObject(forKey: Keys.outputDirectoryBookmark)
-            }
-        }
+        didSet { persistFolderBookmark(outputDirectory, forKey: Keys.outputDirectoryBookmark) }
     }
 
     /// Human-readable path of the output directory (or "Temporary folder").
@@ -349,24 +325,7 @@ final class AppSettings {
     /// so every consumer (AVAsset, Gemma4VideoProcessor) has unrestricted access.
     /// Falls back to the system temp directory when nil.
     var workingDirectory: URL? {
-        get {
-            guard let data = defaults.data(forKey: Keys.workingDirectoryBookmark) else { return nil }
-            var isStale = false
-            guard let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale)
-            else { return nil }
-            if isStale, let newData = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
-                defaults.set(newData, forKey: Keys.workingDirectoryBookmark)
-            }
-            return url
-        }
-        set {
-            if let url = newValue {
-                let data = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
-                defaults.set(data, forKey: Keys.workingDirectoryBookmark)
-            } else {
-                defaults.removeObject(forKey: Keys.workingDirectoryBookmark)
-            }
-        }
+        didSet { persistFolderBookmark(workingDirectory, forKey: Keys.workingDirectoryBookmark) }
     }
 
     /// Human-readable path of the working directory (or "System temporary folder").
@@ -384,24 +343,7 @@ final class AppSettings {
     /// the Library tab. Persisted as a security-scoped bookmark, mirroring
     /// `workingDirectory`; callers must start security-scoped access before use.
     var movieLibraryURL: URL? {
-        get {
-            guard let data = defaults.data(forKey: Keys.movieLibraryBookmark) else { return nil }
-            var isStale = false
-            guard let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale)
-            else { return nil }
-            if isStale, let newData = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
-                defaults.set(newData, forKey: Keys.movieLibraryBookmark)
-            }
-            return url
-        }
-        set {
-            if let url = newValue {
-                let data = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
-                defaults.set(data, forKey: Keys.movieLibraryBookmark)
-            } else {
-                defaults.removeObject(forKey: Keys.movieLibraryBookmark)
-            }
-        }
+        didSet { persistFolderBookmark(movieLibraryURL, forKey: Keys.movieLibraryBookmark) }
     }
 
     /// Human-readable path of the movie library folder (or a "not set" hint).
@@ -476,17 +418,11 @@ final class AppSettings {
         self.youtubeMaxDurationMinutes = defaults.object(forKey: Keys.youtubeMax) as? Int ?? 120
         self.movieShortsSearchQueries = defaults.string(forKey: Keys.movieShortsSearchQueries)
             ?? MovieShortsSearchDefaults.queryText
-            
-        // Initialize customMusicDirectory from bookmark
-        if let data = defaults.data(forKey: Keys.customMusicDirectoryBookmark) {
-            var isStale = false
-            if let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale) {
-                self.customMusicDirectory = url
-                if isStale, let newData = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
-                    defaults.set(newData, forKey: Keys.customMusicDirectoryBookmark)
-                }
-            }
-        }
+
+        self.workingDirectory = Self.loadFolderURL(forKey: Keys.workingDirectoryBookmark, defaults: defaults)
+        self.outputDirectory = Self.loadFolderURL(forKey: Keys.outputDirectoryBookmark, defaults: defaults)
+        self.movieLibraryURL = Self.loadFolderURL(forKey: Keys.movieLibraryBookmark, defaults: defaults)
+        self.customMusicDirectory = Self.loadFolderURL(forKey: Keys.customMusicDirectoryBookmark, defaults: defaults)
     }
 
     /// True once the app has enough to publish.
@@ -496,6 +432,38 @@ final class AppSettings {
 
     private func persistAPIKey() {
         defaults.set(apiKey.trimmed, forKey: Keys.apiKey)
+    }
+
+    /// `.withSecurityScope` resolution requires the sandbox app-scope bookmarks
+    /// entitlement; unsandboxed builds always throw here, which made every saved
+    /// folder read back as nil. Plain resolution reads the same data, so fall back.
+    static func resolveFolderBookmark(_ data: Data) -> (url: URL, isStale: Bool)? {
+        var isStale = false
+        if let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale) {
+            return (url, isStale)
+        }
+        var fallbackStale = false
+        guard let url = try? URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &fallbackStale)
+        else { return nil }
+        return (url, fallbackStale)
+    }
+
+    private static func loadFolderURL(forKey key: String, defaults: UserDefaults) -> URL? {
+        guard let data = defaults.data(forKey: key), let (url, isStale) = resolveFolderBookmark(data) else { return nil }
+        if isStale, let fresh = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
+            defaults.set(fresh, forKey: key)
+        }
+        return url
+    }
+
+    private func persistFolderBookmark(_ url: URL?, forKey key: String) {
+        guard let url else {
+            defaults.removeObject(forKey: key)
+            return
+        }
+        if let data = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
+            defaults.set(data, forKey: key)
+        }
     }
 
     private enum Keys {

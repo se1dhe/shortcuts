@@ -891,9 +891,17 @@ final class WorkspaceModel {
         self.phase = .selectingLongformConcept
     }
 
+    /// True, пока идёт пересчёт тем: каждый повторный клик иначе ставит новую
+    /// многоминутную генерацию в очередь на тот же ModelContainer, и экран
+    /// «ничего не меняется», пока очередь не отработает (инцидент 2026-10-11).
+    private(set) var isRegeneratingThemes = false
+
     /// Повторный запуск генерации альтернативных тем с помощью нейросети Director
     func regenerateThematicConcepts(modelManager: ModelManager) async {
-        guard let transcript = storedTranscript else { return }
+        guard !isRegeneratingThemes, let transcript = storedTranscript else { return }
+        isRegeneratingThemes = true
+        defer { isRegeneratingThemes = false }
+
         let effectiveTitle = detectedMovie?.title ?? job?.effectiveTitle ?? "Фильм"
         let overview = detectedMovie?.overview
         let thematicService = LongformThematicService()

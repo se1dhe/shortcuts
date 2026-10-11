@@ -273,6 +273,7 @@ struct ContentView: View {
                 movieTitle: workspace.detectedMovie?.title ?? workspace.job?.effectiveTitle ?? "Фильм",
                 concepts: workspace.discoveredConcepts,
                 aiReasoning: workspace.thematicReasoning,
+                isRegenerating: workspace.isRegeneratingThemes,
                 onSelect: { concept, confirmedTitle, audioSettings in
                     workspace.confirmLongformConcept(
                         concept,

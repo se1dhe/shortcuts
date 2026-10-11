@@ -6,6 +6,9 @@ struct ThematicConceptSelectionSheet: View {
     let initialMovieTitle: String
     let concepts: [ThematicConcept]
     let aiReasoning: String?
+    /// Реальное состояние пересчёта из WorkspaceModel — спиннер и блокировка
+    /// кнопки отражают фактическую работу, а не фиксированные 1.2 с.
+    let isRegenerating: Bool
     let onSelect: (ThematicConcept, String, LongformAudioSettings) -> Void
     let onCancel: () -> Void
     let onRegenerate: (() -> Void)?
@@ -16,7 +19,6 @@ struct ThematicConceptSelectionSheet: View {
     @State private var customWord: String = ""
     @State private var customTitle: String = ""
     @State private var showCustomInput: Bool = false
-    @State private var isRegenerating: Bool = false
 
     // Аудиомастеринг и звукорежиссура Shortcast Cinema (автоматически сохраняются в UserDefaults)
     @AppStorage("shortcast.longform.dialogueFocusEnabled") private var dialogueFocusEnabled: Bool = true
@@ -52,6 +54,7 @@ struct ThematicConceptSelectionSheet: View {
         movieTitle: String,
         concepts: [ThematicConcept],
         aiReasoning: String? = nil,
+        isRegenerating: Bool = false,
         onSelect: @escaping (ThematicConcept, String, LongformAudioSettings) -> Void,
         onCancel: @escaping () -> Void,
         onRegenerate: (() -> Void)? = nil
@@ -60,6 +63,7 @@ struct ThematicConceptSelectionSheet: View {
         self._editedMovieTitle = State(initialValue: movieTitle)
         self.concepts = concepts
         self.aiReasoning = aiReasoning
+        self.isRegenerating = isRegenerating
         self.onSelect = onSelect
         self.onCancel = onCancel
         self.onRegenerate = onRegenerate
@@ -124,11 +128,7 @@ struct ThematicConceptSelectionSheet: View {
 
                     if let onRegenerate {
                         Button {
-                            isRegenerating = true
                             onRegenerate()
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                                isRegenerating = false
-                            }
                         } label: {
                             HStack(spacing: 5) {
                                 if isRegenerating {

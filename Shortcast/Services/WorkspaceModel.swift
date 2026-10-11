@@ -582,7 +582,8 @@ final class WorkspaceModel {
                     from: transcript,
                     movieTitle: effectiveMovieTitle,
                     movieOverview: movie?.overview,
-                    modelManager: modelManager
+                    modelManager: modelManager,
+                    avoidThemeWords: await usedThemeWordsExcludingCurrent()
                 )
                 self.thematicAnalysis = analysis
                 self.thematicReasoning = analysis.aiReasoning
@@ -901,6 +902,25 @@ final class WorkspaceModel {
     /// «ничего не меняется», пока очередь не отработает (инцидент 2026-10-11).
     private(set) var isRegeneratingThemes = false
 
+    /// Темы, уже занятые ДРУГИМИ сохранёнными эссе канала (текущий проект исключён).
+    /// Передаются Director как запрет, чтобы разные фильмы не получали одну и ту же
+    /// тему и ролики на YouTube не повторялись. Аварийный «Характер» не считается темой.
+    private func usedThemeWordsExcludingCurrent() async -> [String] {
+        let projects = (try? await filmProjectService.listRecentProjects()) ?? []
+        var words: [String] = []
+        for project in projects where project.id != self.currentProject?.id {
+            let raw = project.selectedConcept?.word
+                ?? project.thematicAnalysis?.primaryConcept.word
+            guard let word = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !word.isEmpty,
+                  word.caseInsensitiveCompare("Характер") != .orderedSame,
+                  !words.contains(where: { $0.caseInsensitiveCompare(word) == .orderedSame })
+            else { continue }
+            words.append(word)
+        }
+        return words
+    }
+
     /// Повторный запуск генерации альтернативных тем с помощью нейросети Director
     func regenerateThematicConcepts(modelManager: ModelManager) async {
         guard !isRegeneratingThemes, let transcript = storedTranscript else { return }
@@ -916,7 +936,8 @@ final class WorkspaceModel {
                 from: transcript,
                 movieTitle: effectiveTitle,
                 movieOverview: overview,
-                modelManager: modelManager
+                modelManager: modelManager,
+                avoidThemeWords: await usedThemeWordsExcludingCurrent()
             )
             self.thematicAnalysis = freshAnalysis
             self.thematicReasoning = freshAnalysis.aiReasoning

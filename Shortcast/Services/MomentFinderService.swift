@@ -640,11 +640,14 @@ final class MomentFinderService {
         }
     }
 
-    /// Глубоко анализирует полный срез сценария по всем 4 актам и выбирает ОДНУ главную тему эссе с разбором ИИ
+    /// Глубоко анализирует полный срез сценария по всем 4 актам и выбирает ОДНУ главную тему эссе с разбором ИИ.
+    /// `avoidThemeWords` — темы, уже использованные в других эссе канала: модель обязана
+    /// предложить новую, чтобы ролики не повторялись.
     func analyzeThematicCore(
         transcriptSample: String,
         movieTitle: String,
-        movieOverview: String? = nil
+        movieOverview: String? = nil,
+        avoidThemeWords: [String] = []
     ) async -> ThematicAnalysisResult? {
         guard let container else {
             Self.log("analyzeThematicCore skipped: no model loaded")
@@ -684,6 +687,13 @@ final class MomentFinderService {
             Self.log("analyzeThematicCore: transcript \(sample.count) chars downsampled to \(fullDialogueSample.count) (Director prefill budget)")
         }
         promptParts.append("Срез ключевых диалогов фильма (хронологически по всему сюжету):\n\"\"\"\n\(fullDialogueSample)\n\"\"\"")
+        // Защита от повторов на канале: темы, уже использованные в других эссе,
+        // модель обязана обойти и предложить новую смысловую грань.
+        let avoided = avoidThemeWords.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if !avoided.isEmpty {
+            promptParts.append("ВАЖНО: на канале уже выходили эссе с темами: \(avoided.joined(separator: ", ")). НЕ выбирай ни одну из них ни как primaryConcept, ни как alternativeConcepts. Предложи новую, отличную от перечисленных, философскую грань этого фильма.")
+        }
         promptParts.append("Выбери ОДНУ ГЛАВНУЮ тему эссе (primaryConcept), подробно обоснуй выбор (aiReasoning) и предложи альтернативные грани (alternativeConcepts). Верни СТРОГО валидный JSON-объект:")
         let userPrompt = promptParts.joined(separator: "\n\n")
 

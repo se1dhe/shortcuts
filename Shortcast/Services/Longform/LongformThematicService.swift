@@ -98,12 +98,31 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         formatCompressedLine(start: seg.start, text: seg.text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    /// Глубоко анализирует полный сценарий фильма и возвращает структурированный результат с ОДНОЙ главной темой
+    /// Протокольный вход (без защиты от повторов): делегирует полной версии.
     func discoverThematicAnalysis(
         from transcript: Transcript,
         movieTitle: String,
         movieOverview: String? = nil,
         modelManager: ModelManager? = nil
+    ) async throws -> ThematicAnalysisResult {
+        try await discoverThematicAnalysis(
+            from: transcript,
+            movieTitle: movieTitle,
+            movieOverview: movieOverview,
+            modelManager: modelManager,
+            avoidThemeWords: []
+        )
+    }
+
+    /// Глубоко анализирует полный сценарий фильма и возвращает структурированный результат с ОДНОЙ главной темой.
+    /// `avoidThemeWords` — темы, уже занятые другими эссе канала: модель обязана обойти их,
+    /// чтобы ролики не повторялись.
+    func discoverThematicAnalysis(
+        from transcript: Transcript,
+        movieTitle: String,
+        movieOverview: String? = nil,
+        modelManager: ModelManager? = nil,
+        avoidThemeWords: [String]
     ) async throws -> ThematicAnalysisResult {
         let sampleText = Self.stratifiedThematicSample(from: transcript)
 
@@ -113,7 +132,8 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
             if let aiResult = await mm.momentFinder.analyzeThematicCore(
                 transcriptSample: sampleText,
                 movieTitle: movieTitle,
-                movieOverview: movieOverview
+                movieOverview: movieOverview,
+                avoidThemeWords: avoidThemeWords
             ) {
                 return aiResult
             }

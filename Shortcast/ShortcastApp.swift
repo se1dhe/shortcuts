@@ -36,7 +36,6 @@ struct ShortcastApp: App {
                 .task {
                     workspace.cleanUpOrphanedInputFiles(settings: settings)
                     await FontDownloadService.shared.ensureFontsInstalled()
-                    await modelManager.prepareIfNeeded()
                 }
         }
         .windowResizability(.contentMinSize)

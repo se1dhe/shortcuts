@@ -179,9 +179,11 @@ struct ContentView: View {
             
             HStack(spacing: 8) {
                 Circle()
-                    .fill(modelManager.isReady ? Color.green : Color.orange)
+                    .fill(modelManager.isReady ? Color.green : (modelManager.isBusy ? Color.orange : Color.secondary))
                     .frame(width: 8, height: 8)
-                Text(modelManager.isReady ? "MLX Движок готов" : "Инициализация…")
+                Text(modelManager.isReady
+                     ? "MLX Движок готов"
+                     : (modelManager.isBusy ? "Загрузка модели…" : "Модель загрузится при обработке"))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

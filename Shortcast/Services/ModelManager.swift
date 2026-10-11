@@ -46,8 +46,11 @@ final class ModelManager {
     /// captioning) to avoid swapping/OOM.
     var canKeepBothResident: Bool { systemRAMGB >= 24 }
 
+    /// True only when a model is actually resident. Deliberately NOT derived
+    /// from RAM size: the engine loads lazily now (launch preload repeatedly
+    /// OOMed smaller Macs), so "ready" must mean "loaded", not "would fit".
     var isReady: Bool {
-        momentFinder.isReady || engine != nil || hasEnoughRAM
+        momentFinder.isReady || engine != nil
     }
     var isBusy: Bool {
         switch phase {

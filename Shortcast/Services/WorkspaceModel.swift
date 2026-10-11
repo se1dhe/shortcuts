@@ -970,6 +970,13 @@ final class WorkspaceModel {
     // MARK: - Single-video flow (unchanged behaviour)
 
     private func processSingleVideo(job newJob: VideoJob, modelManager: ModelManager, settings: AppSettings) async {
+        // Lazy engine load: the ~5 GB model is no longer preloaded at app
+        // launch (it repeatedly OOMed 16–18 GB Macs during startup). First use
+        // triggers download/load here; if that failed, surface the same
+        // not-ready message as before.
+        if modelManager.engine == nil {
+            await modelManager.prepareIfNeeded()
+        }
         guard let engine = modelManager.engine else {
             errorMessage = "The model is still getting ready — give it a moment, then drop the video again."
             return
@@ -1437,6 +1444,11 @@ final class WorkspaceModel {
             // Шаг 11c: рендерим до 2 клипов параллельно. Тяжёлая работа (FFmpeg
             // нарезка/сабы) приостанавливает задачу вне main actor, поэтому два
             // рендера реально перекрываются во времени.
+            // Копирайтер gemmaE4B капшионит через движок — подгружаем его лениво
+            // здесь (на старте приложения модель больше не грузится вообще).
+            if settings.copywriterModel == .gemmaE4B, modelManager.engine == nil {
+                await modelManager.prepareIfNeeded()
+            }
             progressTracker.startRendering(totalClips: clips.count)
 
             let renderTargets = clips

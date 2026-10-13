@@ -9,10 +9,10 @@ enum LongformActType: String, Codable, CaseIterable, Sendable {
 
     var targetDurationRatio: Double {
         switch self {
-        case .hook: return 0.12       // ~40-50s
-        case .downfall: return 0.33   // ~120-140s
-        case .struggle: return 0.35   // ~130-150s
-        case .catharsis: return 0.20  // ~70-90s
+        case .hook: return 0.13       // ~70-90s
+        case .downfall: return 0.33   // ~170-200s
+        case .struggle: return 0.35   // ~180-210s
+        case .catharsis: return 0.19  // ~90-120s
         }
     }
 }
@@ -43,7 +43,7 @@ struct LongformAct: Codable, Identifiable, Equatable, Sendable {
     }
 }
 
-/// 4-актная сквозная арка для длинного видео (хронометраж 420–600 сек / 7–10 мин)
+/// 4-актная сквозная арка для длинного видео (хронометраж 480–720 сек / 8–12 мин)
 struct LongformNarrativeArc: Codable, Identifiable, Equatable, Sendable {
     var id: String
     var movieTitle: String

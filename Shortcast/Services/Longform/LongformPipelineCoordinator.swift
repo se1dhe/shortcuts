@@ -41,19 +41,19 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
 
         // 1. Построение или переиспользование 4-актной драматургической арки
         let arc: LongformNarrativeArc
-        if let existing = existingArc, existing.totalDuration >= 280.0 && existing.totalDuration <= 750.0 {
+        if let existing = existingArc, existing.totalDuration >= 450.0 && existing.totalDuration <= 750.0 {
             progressHandler?(0.10, "Использование утвержденного монтажа «\(concept.word)»...")
             arc = existing
         } else {
             if let existing = existingArc {
-                Self.logger.warning("Existing arc duration (\(existing.totalDuration)s) is outside 5-12 min budget, regenerating arc with LongformNarrativeDirector...")
+                Self.logger.warning("Existing arc duration (\(existing.totalDuration)s) is outside 8-12 min budget, regenerating arc with LongformNarrativeDirector...")
             }
             progressHandler?(0.10, "Режиссура 4-актной арки «\(concept.word)»...")
             arc = try await director.buildArc(
                 from: transcript,
                 concept: concept,
                 movieTitle: movieTitle,
-                targetDuration: 520.0
+                targetDuration: 560.0
             )
         }
 

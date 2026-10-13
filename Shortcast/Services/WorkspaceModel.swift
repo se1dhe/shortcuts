@@ -678,6 +678,7 @@ final class WorkspaceModel {
             concept,
             confirmedMovieTitle: stagedConfirmedMovieTitle,
             audioSettings: audioSettings,
+            existingArc: self.stagedArc,
             settings: settings,
             modelManager: modelManager
         )
@@ -814,6 +815,7 @@ final class WorkspaceModel {
         _ concept: ThematicConcept,
         confirmedMovieTitle: String? = nil,
         audioSettings: LongformAudioSettings,
+        existingArc: LongformNarrativeArc? = nil,
         settings: AppSettings,
         modelManager: ModelManager? = nil
     ) {
@@ -862,12 +864,15 @@ final class WorkspaceModel {
         pipelineTask = Task {
             do {
                 var arc: LongformNarrativeArc?
-                if let modelManager {
+                if let existingArc, existingArc.totalDuration >= 450.0 && existingArc.totalDuration <= 750.0 {
+                    arc = existingArc
+                } else if let modelManager {
                     phase = .buildingLongform(fraction: 0.08, step: "LLM-монтаж 4-актной арки «\(concept.word)»...")
                     arc = try await LongformNarrativeDirector.buildArcWithLLM(
                         from: transcript,
                         concept: concept,
                         movieTitle: finalMovieTitle,
+                        targetDuration: 560.0,
                         modelManager: modelManager
                     )
                 }

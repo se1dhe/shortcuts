@@ -417,7 +417,7 @@ struct SentenceBoundaryTests {
             from: mockJSON,
             movieTitle: "Тестовый фильм",
             concept: concept,
-            targetDuration: 520.0,
+            targetDuration: 560.0,
             transcriptEnd: 3600.0,
             transcriptSegments: transcriptSegments
         )
@@ -425,20 +425,20 @@ struct SentenceBoundaryTests {
         #expect(arc != nil)
         if let arc {
             #expect(arc.acts.count == 4)
-            // Even though LLM gave 42 minutes of intervals, the resulting arc MUST be clamped to 5-12 min
-            #expect(arc.totalDuration >= 280.0)
+            // Even though LLM gave 42 minutes of intervals, the resulting arc MUST be clamped to 8-12 min
+            #expect(arc.totalDuration >= 450.0)
             #expect(arc.totalDuration <= 720.0)
-            // Act 1 (hook) should be bounded around ~60-90s, NOT 7 minutes (420s)
-            #expect(arc.acts[0].duration <= 100.0)
+            // Act 1 (hook) should be bounded around ~70-90s, NOT 7 minutes (420s)
+            #expect(arc.acts[0].duration <= 110.0)
             // Act 2 & 3 should be bounded around ~170-220s, NOT 12 minutes (720s)
             #expect(arc.acts[1].duration <= 240.0)
             #expect(arc.acts[2].duration <= 240.0)
-            // Act 4 should be bounded around ~100-140s, NOT 10 minutes (600s)
+            // Act 4 should be bounded around ~90-130s, NOT 10 minutes (600s)
             #expect(arc.acts[3].duration <= 150.0)
         }
     }
 
-    @Test("LongformNarrativeDirector buildArc maintains strict 5-12 min duration on 2-hour movie transcript")
+    @Test("LongformNarrativeDirector buildArc maintains strict 8-12 min duration on 2-hour movie transcript")
     func testLongformDirectorBuildArcStaysWithinBudgetOnFullMovie() async throws {
         let concept = ThematicConcept(
             word: "Иллюзия",
@@ -471,12 +471,41 @@ struct SentenceBoundaryTests {
             from: transcript,
             concept: concept,
             movieTitle: "Двухчасовой фильм",
-            targetDuration: 520.0
+            targetDuration: 560.0
         )
 
         #expect(arc.acts.count == 4)
-        // Must strictly stay in the 5 to 12 minutes budget (300s to 720s), target ~520s (8.6 min)
-        #expect(arc.totalDuration >= 300.0)
+        // Must strictly stay in the 8 to 12 minutes budget (450s to 720s), target ~560s (9.3 min)
+        #expect(arc.totalDuration >= 450.0)
+        #expect(arc.totalDuration <= 720.0)
+    }
+
+    @Test("Fight Club real SRT transcript produces arc within 8-12 min budget")
+    @MainActor
+    func testFightClubRealSRTArcDuration() async throws {
+        let srtURL = URL(fileURLWithPath: "/Users/se1dhe/projects/shortcast/input/shortcast-normalized-Fight_Club__1999__1080p__HEVC__10_bit-12689873227_a1.srt")
+        guard FileManager.default.fileExists(atPath: srtURL.path) else { return }
+        guard let transcript = try TranscriptionService.parseSubtitles(at: srtURL) else { return }
+        let concept = ThematicConcept(
+            word: "Иллюзия",
+            tagline: "Твоя реальность — это лишь сценарий, который кто-то другой написал для тебя.",
+            philosophicalPremise: "Истинное освобождение возможно только тогда, когда мы перестаем верить в то, что контролируем свою жизнь, и признаем, что мы — лишь марионетки в чужих руках.",
+            suggestedTitle: "Ты живешь в чужом сценарии. Философия Бойцовского клуба.",
+            accentColorHex: "#E50914"
+        )
+        let director = LongformNarrativeDirector()
+        let arc = try await director.buildArc(
+            from: transcript,
+            concept: concept,
+            movieTitle: "Бойцовский клуб",
+            targetDuration: 560.0
+        )
+        print("FIGHT CLUB ARC DURATION: \(arc.totalDuration)s (\(arc.totalDuration / 60.0) min)")
+        for (i, act) in arc.acts.enumerated() {
+            print("Act \(i+1) (\(act.type.rawValue)): \(act.duration)s, segments: \(act.segments.count), times: \(act.segments.map { "\($0.start)-\($0.end)" })")
+        }
+        #expect(arc.totalDuration >= 450.0)
         #expect(arc.totalDuration <= 720.0)
     }
 }
+

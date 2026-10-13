@@ -11,14 +11,14 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
     ) -> String {
         """
         Ты — главный режиссер монтажа глубоких кинематографических эссе Shortcast Cinema.
-        Твоя задача — из полного фильма "\(movieTitle)" смонтировать 4-актный ролик хронометражем \(Int(targetDuration)) секунд (7-10 минут) вокруг темы: "\(concept.word)".
+        Твоя задача — из полного фильма "\(movieTitle)" смонтировать 4-актный ролик хронометражем \(Int(targetDuration)) секунд (8-12 минут) вокруг темы: "\(concept.word)".
         
         Смысловой посыл: "\(concept.philosophicalPremise)"
 
         СТРОГАЯ 4-АКТНАЯ СТРУКТУРА:
-        1. Акт 1: "Хук и Тезис" (~50-70с). Сильнейший диалог или монолог, задающий главный конфликт.
-        2. Акт 2: "Падение и Испытание" (~150-180с). Разрушение стабильности, потеря, кризис, сомнения героя.
-        3. Акт 3: "Борьба и Упорство" (~160-190с). Пик напряжения, борьба вопреки всему, способность терпеть боль.
+        1. Акт 1: "Хук и Тезис" (~70-90с). Сильнейший диалог или монолог, задающий главный конфликт.
+        2. Акт 2: "Падение и Испытание" (~170-200с). Разрушение стабильности, потеря, кризис, сомнения героя.
+        3. Акт 3: "Борьба и Упорство" (~180-210с). Пик напряжения, борьба вопреки всему, способность терпеть боль.
         4. Акт 4: "Катарсис и Прорыв" (~90-120с). Финальное откровение, триумф духа или пронзительное экзистенциальное одиночество.
         """
     }
@@ -32,7 +32,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         from transcript: Transcript,
         concept: ThematicConcept,
         movieTitle: String,
-        targetDuration: Double = 520.0,
+        targetDuration: Double = 560.0,
         modelManager: ModelManager
     ) async throws -> LongformNarrativeArc {
         let sample = LongformThematicService.stratifiedThematicSample(from: transcript)
@@ -45,7 +45,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                 targetDuration: targetDuration,
                 transcriptSegments: transcript.segments
             ) {
-                if llmArc.totalDuration >= 280.0 && llmArc.totalDuration <= 720.0 {
+                if llmArc.totalDuration >= 450.0 && llmArc.totalDuration <= 720.0 {
                     return llmArc
                 }
             }
@@ -62,9 +62,9 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         from transcript: Transcript,
         concept: ThematicConcept,
         movieTitle: String,
-        targetDuration: Double = 520.0
+        targetDuration: Double = 560.0
     ) async throws -> LongformNarrativeArc {
-        let clampedTarget = min(max(targetDuration, 300.0), 600.0)
+        let clampedTarget = min(max(targetDuration, 480.0), 660.0)
         let segments = transcript.segments
 
         guard !segments.isEmpty else {
@@ -226,7 +226,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             var calmIntroBonus = 0.0
             var panicPenalty = 0.0
 
-            let maxSceneGap: Double = (actType == .hook) ? 3.4 : 4.5
+            let maxSceneGap: Double = (actType == .hook) ? 4.2 : 5.0
 
             while j < candidates.count && currDur < targetDuration {
                 let seg = candidates[j]
@@ -446,12 +446,14 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
 
         var resultSegments = [refined]
 
-        // Для Актов 2 и 3: если главная сцена короче 65% от целевого хронометража (например, 70с из 170с),
-        // дополняем ее второй смысловой сценой из того же окна сюжета без наложения для выхода на хронометраж 7-10 минут.
-        // Минимальная дистанция 90 секунд исключает взятие реплик из той же самой сцены фильма.
-        if allowChaining && (actType == .downfall || actType == .struggle) && refined.duration < (targetDuration * 0.65) {
+        // Если главная сцена короче целевого порога (80% для драматических актов 2 и 3, 65% для 1 и 4),
+        // дополняем ее второй смысловой сценой из того же окна сюжета без наложения для выхода на хронометраж 8-12 минут.
+        // Минимальная дистанция 60 секунд исключает взятие реплик из той же самой сцены фильма.
+        let chainThreshold = (actType == .hook || actType == .catharsis) ? 0.65 : 0.80
+        if allowChaining && refined.duration < (targetDuration * chainThreshold) {
             let remainingBudget = targetDuration - refined.duration
-            let secondaryMinStartTime = refined.end + 90.0
+            let secondaryMinDistance = (actType == .catharsis) ? 45.0 : 60.0
+            let secondaryMinStartTime = refined.end + secondaryMinDistance
             var extendedUsed = usedRanges
             extendedUsed.append(refined)
 
@@ -469,7 +471,8 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                     actType: actType,
                     allowChaining: false
                 )
-                if let secFirst = secondarySegments.first, secFirst.duration >= 18.0, !overlapsAny(range: secFirst, in: extendedUsed) {
+                let minSecondaryDur = (actType == .catharsis) ? 10.0 : 18.0
+                if let secFirst = secondarySegments.first, secFirst.duration >= minSecondaryDur, !overlapsAny(range: secFirst, in: extendedUsed) {
                     resultSegments.append(secFirst)
                 }
             }

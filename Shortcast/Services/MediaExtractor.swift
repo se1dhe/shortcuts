@@ -88,15 +88,17 @@ enum MediaExtractor {
         let baseCleanName = sourceURL.deletingPathExtension().lastPathComponent
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .joined(separator: "_")
-        let streamSuffix = selectedAudioStreamIndex.map { "_a\($0)" } ?? ""
+        let resolvedStreamId = selectedAudioStreamIndex ?? selectedTrack?.id
+        let streamSuffix = resolvedStreamId.map { "_a\($0)" } ?? ""
         let deterministicName = "shortcast-normalized-\(baseCleanName.prefix(40))-\(sourceSize)\(streamSuffix).mp4"
         let outputURL = inputDirectory.appendingPathComponent(deterministicName)
 
-        if FileManager.default.fileExists(atPath: outputURL.path) {
-            if await isPlayableMP4(outputURL) {
-                return outputURL
-            }
-            try? FileManager.default.removeItem(at: outputURL)
+        if let cached = await existingNormalizedMP4(
+            for: sourceURL,
+            workingDirectory: workingDirectory,
+            selectedAudioStreamIndex: resolvedStreamId
+        ) {
+            return cached
         }
 
         let ffmpeg: URL
@@ -336,16 +338,57 @@ enum MediaExtractor {
         return args
     }
 
+    private static let logger = Logger(subsystem: "app.shortcast", category: "MediaExtractor")
+
+    /// Checks `<workingDirectory>/input/` for an already-normalized playable MP4 for `sourceURL`.
+    static func existingNormalizedMP4(
+        for sourceURL: URL,
+        workingDirectory: URL?,
+        selectedAudioStreamIndex: Int? = nil
+    ) async -> URL? {
+        guard let workingDirectory else { return nil }
+        let inputDirectory = workingDirectory.appendingPathComponent("input", isDirectory: true)
+        let sourceSize = (try? sourceURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        let baseCleanName = sourceURL.deletingPathExtension().lastPathComponent
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .joined(separator: "_")
+        let prefix = "shortcast-normalized-\(baseCleanName.prefix(40))-\(sourceSize)"
+
+        var candidates: [URL] = []
+        if let idx = selectedAudioStreamIndex {
+            candidates.append(inputDirectory.appendingPathComponent("\(prefix)_a\(idx).mp4"))
+        }
+        candidates.append(inputDirectory.appendingPathComponent("\(prefix).mp4"))
+
+        if selectedAudioStreamIndex == nil,
+           let items = try? FileManager.default.contentsOfDirectory(at: inputDirectory, includingPropertiesForKeys: nil) {
+            for item in items where item.lastPathComponent.hasPrefix(prefix) && item.pathExtension.lowercased() == "mp4" {
+                if !candidates.contains(item) {
+                    candidates.append(item)
+                }
+            }
+        }
+
+        for candidate in candidates where FileManager.default.fileExists(atPath: candidate.path) {
+            if await isPlayableMP4(candidate) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
     private static func runFFmpeg(_ ffmpeg: URL, arguments: [String], outputURL: URL) async -> Bool {
         try? FileManager.default.removeItem(at: outputURL)
         do {
             _ = try await ProcessRunner.shared.run(executableURL: ffmpeg, arguments: arguments)
         } catch {
+            logger.error("FFmpeg normalization step failed for \(outputURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
             try? FileManager.default.removeItem(at: outputURL)
             return false
         }
         let playable = await isPlayableMP4(outputURL)
         if !playable {
+            logger.error("FFmpeg output failed playability check for \(outputURL.lastPathComponent, privacy: .public)")
             try? FileManager.default.removeItem(at: outputURL)
         }
         return playable
@@ -356,17 +399,7 @@ enum MediaExtractor {
         guard fileSize > 1024 * 1024 else { return false }
         let asset = AVURLAsset(url: url)
         let vTracks = (try? await asset.loadTracks(withMediaType: .video)) ?? []
-        let aTracks = (try? await asset.loadTracks(withMediaType: .audio)) ?? []
-        guard let vTrack = vTracks.first, let aTrack = aTracks.first else { return false }
-        if let vRange = try? await vTrack.load(.timeRange),
-           let aRange = try? await aTrack.load(.timeRange) {
-            let vDur = CMTimeGetSeconds(vRange.duration)
-            let aDur = CMTimeGetSeconds(aRange.duration)
-            if vDur > 10.0 && aDur > 10.0 && abs(vDur - aDur) > 1.5 {
-                return false
-            }
-        }
-        return true
+        return !vTracks.isEmpty
     }
 
     private static func inspectVideoStream(sourceURL: URL, ffprobe: URL) async -> ProbedVideoStream? {

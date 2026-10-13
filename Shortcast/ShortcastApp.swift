@@ -35,6 +35,7 @@ struct ShortcastApp: App {
                 .environment(movieLibrary)
                 .task {
                     workspace.cleanUpOrphanedInputFiles(settings: settings)
+                    movieLibrary.refresh(settings: settings)
                     await FontDownloadService.shared.ensureFontsInstalled()
                 }
         }

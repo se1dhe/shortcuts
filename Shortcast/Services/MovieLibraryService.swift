@@ -84,6 +84,17 @@ final class MovieLibraryService {
         movies = found.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
 
         startWatching(url)
+
+        let workDir = settings.workingDirectory
+        Task { [weak self] in
+            guard let self else { return }
+            for item in self.movies where item.needsNormalization && item.status == .pending {
+                if let cached = await MediaExtractor.existingNormalizedMP4(for: item.url, workingDirectory: workDir) {
+                    self.updateStatus(for: item.url, .ready(normalizedURL: cached))
+                }
+            }
+            self.normalizeAll(settings: settings)
+        }
     }
 
     private static func title(from url: URL) -> String {

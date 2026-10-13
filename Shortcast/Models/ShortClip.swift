@@ -34,9 +34,19 @@ final class ShortClip: Identifiable {
     /// or the movie (its synopsis). Chosen in the editor, persisted across reopens.
     var descriptionMode: CinemaContentGenerator.DescriptionMode = .movie
 
-    enum Stage: Equatable {
+    enum Stage: Equatable, CustomStringConvertible {
         case pending, cutting, captioning, ready
         case failed(String)
+
+        var description: String {
+            switch self {
+            case .pending: return "pending"
+            case .cutting: return "cutting"
+            case .captioning: return "captioning"
+            case .ready: return "ready"
+            case .failed(let msg): return "failed(\(msg))"
+            }
+        }
     }
     var stage: Stage = .pending
 

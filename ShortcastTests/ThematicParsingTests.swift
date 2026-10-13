@@ -107,4 +107,43 @@ struct ThematicParsingTests {
         #expect(sample.contains("Реплика номер 199 "))
         #expect(sample.count > 1000)
     }
+
+    @Test("parseThematicAnalysis parses response with conversational prefix, snake_case keys and root concept")
+    func testParseConversationalAndSnakeCaseKeys() {
+        let text = """
+        Вот глубокий анализ сценария фильма «Семь жизней»:
+        {
+          "word": "Искупление",
+          "tagline": "Семь жизней в обмен на одну фатальную ошибку.",
+          "philosophical_premise": "Человек не может простить себя сам — только через полное самопожертвование.",
+          "suggested_title": "Почему Тим Томас отдал всё? Тайна Семи жизней",
+          "ai_reasoning": "Центральный конфликт фильма — это невыносимое чувство вины и жажда искупления."
+        }
+        Надеюсь, этот анализ поможет сделать мощное эссе!
+        """
+
+        let result = LongformThematicService.parseThematicAnalysis(from: text)
+        #expect(result != nil)
+        #expect(result?.primaryConcept.word == "Искупление")
+        #expect(result?.primaryConcept.isPrimaryChoice == true)
+        #expect(result?.primaryConcept.suggestedTitle.contains("Семи жизней") == true)
+    }
+
+    @Test("parseThematicAnalysis recovers via regex when JSON has unescaped quotes in reasoning")
+    func testParseRegexFallbackOnBrokenQuotes() {
+        let broken = """
+        {
+          "primaryConcept": {
+            "word": "Жертва",
+            "tagline": "Настоящая цена прощения."
+          },
+          "aiReasoning": "Герой говорит: "Я сделаю это для них" и жертвует собой ради спасения других."
+        }
+        """
+
+        let result = LongformThematicService.parseThematicAnalysis(from: broken)
+        #expect(result != nil)
+        #expect(result?.primaryConcept.word == "Жертва")
+        #expect(result?.primaryConcept.isPrimaryChoice == true)
+    }
 }

@@ -702,8 +702,19 @@ final class MomentFinderService {
             for try await chunk in session.streamResponse(to: userPrompt) {
                 raw += chunk
             }
-            Self.log("analyzeThematicCore output (\(raw.count) chars)")
-            return LongformThematicService.parseThematicAnalysis(from: raw)
+            Self.log("analyzeThematicCore output (\(raw.count) chars):\n\(raw)")
+            if let result = LongformThematicService.parseThematicAnalysis(from: raw) {
+                return result
+            }
+
+            Self.log("analyzeThematicCore: initial parsing returned nil, requesting strict JSON repair from model...")
+            let retryPrompt = "Твой ответ не удалось разобрать как валидный JSON. Пожалуйста, верни результат СТРОГО в виде валидного JSON-объекта, начиная строго с '{' и заканчивая '}', без разметки ```json, без вступительных слов. Для цитат внутри текста используй кавычки-ёлочки « »."
+            var retryRaw = ""
+            for try await chunk in session.streamResponse(to: retryPrompt) {
+                retryRaw += chunk
+            }
+            Self.log("analyzeThematicCore retry output (\(retryRaw.count) chars):\n\(retryRaw)")
+            return LongformThematicService.parseThematicAnalysis(from: retryRaw)
         } catch {
             Self.log("analyzeThematicCore failed: \(error.localizedDescription)")
             return nil
@@ -718,7 +729,8 @@ final class MomentFinderService {
         transcriptSample: String,
         movieTitle: String,
         concept: ThematicConcept,
-        targetDuration: Double
+        targetDuration: Double,
+        transcriptSegments: [TranscriptSegment]? = nil
     ) async -> LongformNarrativeArc? {
         guard let container else {
             Self.log("buildNarrativeArc skipped: no model loaded")
@@ -793,7 +805,8 @@ final class MomentFinderService {
                 from: raw,
                 movieTitle: movieTitle,
                 concept: concept,
-                transcriptEnd: Self.lastTimestamp(in: clampedSample)
+                transcriptEnd: Self.lastTimestamp(in: clampedSample),
+                transcriptSegments: transcriptSegments
             )
         } catch {
             Self.log("buildNarrativeArc failed: \(error.localizedDescription)")
@@ -830,7 +843,8 @@ final class MomentFinderService {
         from raw: String,
         movieTitle: String,
         concept: ThematicConcept,
-        transcriptEnd: Double
+        transcriptEnd: Double,
+        transcriptSegments: [TranscriptSegment]? = nil
     ) -> LongformNarrativeArc? {
         guard let jsonString = JSONVariantParser.extractJSONObject(from: raw) ?? Optional(raw),
               let root = JSONVariantParser.deserializeTolerant(jsonString) as? [String: Any],
@@ -873,6 +887,8 @@ final class MomentFinderService {
         let order: [LongformActType] = [.hook, .downfall, .struggle, .catharsis]
         var acts: [LongformAct] = []
         var lastEnd: Double = -1
+        let detector = SentenceBoundaryDetector()
+
         for expected in order {
             guard let match = parsed.first(where: { $0.0 == expected }) else {
                 Self.log("parseNarrativeArc: missing act \(expected.rawValue)")
@@ -880,6 +896,20 @@ final class MomentFinderService {
             }
             var segment = match.1
             if transcriptEnd > 0 { segment.end = min(segment.end, transcriptEnd) }
+
+            // Выравниваем границы сцены по естественным паузам и границам предложений
+            if let transcriptSegments, !transcriptSegments.isEmpty {
+                let maxActDuration = max(180.0, segment.duration + 30.0)
+                let refined = detector.refineSceneBoundary(
+                    range: segment,
+                    maxAllowedDuration: maxActDuration,
+                    in: transcriptSegments
+                )
+                if refined.end > refined.start && refined.start >= lastEnd {
+                    segment = refined
+                }
+            }
+
             guard segment.end > segment.start, segment.start >= lastEnd else {
                 Self.log("parseNarrativeArc: act \(expected.rawValue) violates chronology")
                 return nil

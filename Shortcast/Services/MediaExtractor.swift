@@ -109,8 +109,8 @@ enum MediaExtractor {
 
         let canCopyAudio = !mustDownmix && Self.copyableAudioCodecs.contains(selectedTrack?.codec ?? "")
         let audioFilter: String? = mustDownmix
-            ? "pan=stereo|c0=c2|c1=c2,aresample=async=1:first_pts=0"
-            : (canCopyAudio ? nil : "aresample=async=1:first_pts=0")
+            ? "pan=stereo|c0=c2|c1=c2,aresample=async=1"
+            : (canCopyAudio ? nil : "aresample=async=1")
 
         if videoStream?.canStreamCopyToMP4 != false {
             let copyOK = await runFFmpeg(
@@ -248,6 +248,7 @@ enum MediaExtractor {
         audioFilter: String?
     ) -> [String] {
         var args = ffmpegQuietPrefix + [
+            "-reinit_filter", "0",
             "-i", source.path,
             "-map", "0:v:0",
             "-map", audioMap,
@@ -283,6 +284,7 @@ enum MediaExtractor {
             args += ["-hwaccel", "videotoolbox"]
         }
         args += ffmpegQuietPrefix + [
+            "-reinit_filter", "0",
             "-i", source.path,
             "-map", "0:v:0",
             "-map", audioMap,
@@ -355,7 +357,16 @@ enum MediaExtractor {
         let asset = AVURLAsset(url: url)
         let vTracks = (try? await asset.loadTracks(withMediaType: .video)) ?? []
         let aTracks = (try? await asset.loadTracks(withMediaType: .audio)) ?? []
-        return !vTracks.isEmpty && !aTracks.isEmpty
+        guard let vTrack = vTracks.first, let aTrack = aTracks.first else { return false }
+        if let vRange = try? await vTrack.load(.timeRange),
+           let aRange = try? await aTrack.load(.timeRange) {
+            let vDur = CMTimeGetSeconds(vRange.duration)
+            let aDur = CMTimeGetSeconds(aRange.duration)
+            if vDur > 10.0 && aDur > 10.0 && abs(vDur - aDur) > 1.5 {
+                return false
+            }
+        }
+        return true
     }
 
     private static func inspectVideoStream(sourceURL: URL, ffprobe: URL) async -> ProbedVideoStream? {

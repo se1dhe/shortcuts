@@ -18,6 +18,112 @@ struct TranscriptSegment: Codable, Sendable, Equatable {
         self.text = text.cleanedTranscriptText
         self.words = words
     }
+
+    /// Returns word-level timestamps, or synthesizes character-proportional word timestamps
+    /// across `[start, end]` when `words` is empty (e.g., loaded from a legacy `.srt`).
+    func resolvedWords() -> [WordTimestamp] {
+        let validWords = words.filter {
+            !$0.word.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.end >= $0.start
+        }
+        if !validWords.isEmpty {
+            return validWords
+        }
+        return Self.synthesizeProportionalWords(text: text, start: start, end: end)
+    }
+
+    static func synthesizeProportionalWords(text: String, start: Double, end: Double) -> [WordTimestamp] {
+        let clean = text
+            .replacingOccurrences(of: "<yellow>", with: "")
+            .replacingOccurrences(of: "</yellow>", with: "")
+            .replacingOccurrences(of: "<red>", with: "")
+            .replacingOccurrences(of: "</red>", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty, end > start else { return [] }
+        let tokens = clean.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !tokens.isEmpty else { return [] }
+
+        let weights = tokens.map { max(Double($0.count), 2.0) }
+        let totalWeight = max(weights.reduce(0.0, +), 1.0)
+        let totalDuration = end - start
+        var current = start
+        var result: [WordTimestamp] = []
+        result.reserveCapacity(tokens.count)
+
+        for (idx, token) in tokens.enumerated() {
+            let isLast = (idx == tokens.count - 1)
+            let dur = totalDuration * (weights[idx] / totalWeight)
+            let wEnd = isLast ? end : min(end, current + dur)
+            result.append(WordTimestamp(word: token, start: current, end: max(current, wEnd)))
+            current = wEnd
+        }
+        return result
+    }
+
+    /// Slices the segment to `[windowStart, windowEnd]` and shifts timestamps to `timelineOffset`.
+    /// When a segment straddles a cut boundary, only the words spoken within `[windowStart, windowEnd]`
+    /// are kept, preventing earlier/later sentences from bleeding across scene cuts.
+    func sliced(windowStart: Double, windowEnd: Double, timelineOffset: Double = 0.0) -> TranscriptSegment? {
+        let windowDuration = windowEnd - windowStart
+        guard windowDuration > 0, end > windowStart, start < windowEnd else { return nil }
+
+        let isClipped = (start < windowStart - 0.05) || (end > windowEnd + 0.05)
+        let allWords = resolvedWords()
+
+        if !isClipped {
+            let shiftedWords: [WordTimestamp] = allWords.compactMap { w in
+                let wStart = w.start - windowStart
+                let wEnd = w.end - windowStart
+                guard wEnd > 0 && wStart < windowDuration else { return nil }
+                return WordTimestamp(
+                    word: w.word,
+                    start: max(0.0, wStart) + timelineOffset,
+                    end: min(windowDuration, wEnd) + timelineOffset
+                )
+            }
+            let sStart = max(0.0, start - windowStart) + timelineOffset
+            let sEnd = min(windowDuration, end - windowStart) + timelineOffset
+            guard sEnd > sStart else { return nil }
+            return TranscriptSegment(
+                start: sStart,
+                end: sEnd,
+                text: text.trimmed,
+                words: shiftedWords
+            )
+        }
+
+        // Segment straddles a cut boundary: keep only words whose active interval overlaps the window
+        let keptWords = allWords.filter { w in
+            let overlapStart = max(w.start, windowStart)
+            let overlapEnd = min(w.end, windowEnd)
+            let wordDur = max(w.end - w.start, 0.01)
+            let overlap = overlapEnd - overlapStart
+            return overlap > 0.03 || (overlap / wordDur) >= 0.4
+        }
+        guard !keptWords.isEmpty else { return nil }
+
+        let shiftedWords: [WordTimestamp] = keptWords.map { w in
+            WordTimestamp(
+                word: w.word,
+                start: max(0.0, w.start - windowStart) + timelineOffset,
+                end: min(windowDuration, w.end - windowStart) + timelineOffset
+            )
+        }
+        let sStart = shiftedWords.first?.start ?? (max(0.0, start - windowStart) + timelineOffset)
+        let rawEnd = shiftedWords.last?.end ?? (min(windowDuration, end - windowStart) + timelineOffset)
+        let sEnd = min(timelineOffset + windowDuration, max(sStart + 0.25, rawEnd))
+        guard sEnd > sStart else { return nil }
+
+        let slicedText = (keptWords.count < allWords.count)
+            ? keptWords.map(\.word).joined(separator: " ")
+            : text.trimmed
+
+        return TranscriptSegment(
+            start: sStart,
+            end: sEnd,
+            text: slicedText,
+            words: shiftedWords
+        )
+    }
 }
 
 /// A full transcript with timestamps. Fed to the Director to pick moments, and
@@ -231,16 +337,25 @@ final class TranscriptionService {
     private static func saveSidecar(transcript: Transcript, for videoURL: URL) {
         let srtContent = formatAsSRT(transcript: transcript)
         let candidate = videoURL.deletingPathExtension().appendingPathExtension("srt")
+        let jsonCandidate = videoURL.deletingPathExtension().appendingPathExtension("words.json")
+        let jsonData = try? JSONEncoder().encode(transcript)
         
         do {
             try srtContent.write(to: candidate, atomically: true, encoding: .utf8)
-            Self.log("saved SRT sidecar to \(candidate.path)")
+            if let jsonData {
+                try? jsonData.write(to: jsonCandidate, options: .atomic)
+            }
+            Self.log("saved SRT sidecar (+words.json) to \(candidate.path)")
         } catch {
             Self.log("failed to save sidecar next to video: \(error)")
             // Fallback to cache directory
             if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
                 let fallback = caches.appendingPathComponent(videoURL.lastPathComponent + ".srt")
                 try? srtContent.write(to: fallback, atomically: true, encoding: .utf8)
+                if let jsonData {
+                    let jsonFallback = caches.appendingPathComponent(videoURL.lastPathComponent + ".words.json")
+                    try? jsonData.write(to: jsonFallback, options: .atomic)
+                }
                 Self.log("saved SRT to fallback cache: \(fallback.path)")
             }
         }
@@ -292,7 +407,15 @@ final class TranscriptionService {
 
     /// Parses an `.srt` or `.vtt` file into a `Transcript`. Tolerant of both
     /// `,` and `.` millisecond separators and optional cue indices/headers.
+    /// If a companion `.words.json` exists with matching segment count, merges word-level timestamps.
     static func parseSubtitles(at url: URL) -> Transcript? {
+        let jsonCompanion = url.deletingPathExtension().appendingPathExtension("words.json")
+        if let data = try? Data(contentsOf: jsonCompanion),
+           let decoded = try? JSONDecoder().decode(Transcript.self, from: data),
+           !decoded.segments.isEmpty {
+            return decoded
+        }
+
         guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return nil }
 
         var segments: [TranscriptSegment] = []

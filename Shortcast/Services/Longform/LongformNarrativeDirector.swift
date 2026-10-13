@@ -42,7 +42,8 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                 transcriptSample: sample,
                 movieTitle: movieTitle,
                 concept: concept,
-                targetDuration: targetDuration
+                targetDuration: targetDuration,
+                transcriptSegments: transcript.segments
             ) {
                 return llmArc
             }

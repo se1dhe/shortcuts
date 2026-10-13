@@ -720,6 +720,11 @@ public struct AntiCopyrightFFmpegBuilder: Sendable {
             filters.append("equalizer=f=1200:t=q:w=1.5:g=1.2,equalizer=f=350:t=q:w=1.2:g=-0.8")
         }
 
+        // Resample with async=1 to maintain monotonic audio PTS without filter reinit jumps
+        if !filters.isEmpty {
+            filters.append("aresample=async=1")
+        }
+
         return filters
     }
 
@@ -1018,6 +1023,7 @@ public struct AntiCopyrightService: AntiCopyrightTransforming, Sendable {
 
         var arguments = [
             "-y",
+            "-reinit_filter", "0",
             "-i", videoURL.path
         ]
 

@@ -609,7 +609,8 @@ final class WorkspaceModel {
         _ concept: ThematicConcept,
         confirmedMovieTitle: String? = nil,
         audioSettings: LongformAudioSettings = LongformAudioSettings(),
-        settings: AppSettings
+        settings: AppSettings,
+        modelManager: ModelManager? = nil
     ) {
         guard let transcript = storedTranscript else { return }
         self.stagedConcept = concept
@@ -630,12 +631,22 @@ final class WorkspaceModel {
 
         Task {
             do {
-                let narrativeDirector = LongformNarrativeDirector()
-                let arc = try await narrativeDirector.buildArc(
-                    from: transcript,
-                    concept: concept,
-                    movieTitle: finalMovieTitle
-                )
+                let arc: LongformNarrativeArc
+                if let modelManager {
+                    arc = try await LongformNarrativeDirector.buildArcWithLLM(
+                        from: transcript,
+                        concept: concept,
+                        movieTitle: finalMovieTitle,
+                        modelManager: modelManager
+                    )
+                } else {
+                    let narrativeDirector = LongformNarrativeDirector()
+                    arc = try await narrativeDirector.buildArc(
+                        from: transcript,
+                        concept: concept,
+                        movieTitle: finalMovieTitle
+                    )
+                }
                 self.stagedArc = arc
                 self.phase = .editingLongformSubtitles
             } catch {
@@ -1398,35 +1409,35 @@ final class WorkspaceModel {
                 if let cSegs = candidate.segments, cSegs.count > 1 {
                     var timelineOffset: Double = 0
                     for cSeg in cSegs.sorted(by: { $0.start < $1.start }) {
-                        let inside = transcript.segments.filter { $0.end > cSeg.start && $0.start < cSeg.end }
-                        for seg in inside {
-                            let sStart = max(0, seg.start - cSeg.start) + timelineOffset
-                            let sEnd = max(sStart, seg.end - cSeg.start) + timelineOffset
-                            let wordTimings = seg.words.map {
-                                WordTimestamp(
-                                    word: $0.word,
-                                    start: max(0, $0.start - cSeg.start) + timelineOffset,
-                                    end: max(0, $0.end - cSeg.start) + timelineOffset
-                                )
+                        let cDur = cSeg.end - cSeg.start
+                        for seg in transcript.segments {
+                            if let sliced = seg.sliced(
+                                windowStart: cSeg.start,
+                                windowEnd: cSeg.end,
+                                timelineOffset: timelineOffset
+                            ) {
+                                mappedSegs.append(SubtitleSegment(
+                                    start: sliced.start,
+                                    end: sliced.end,
+                                    text: sliced.text,
+                                    words: sliced.words
+                                ))
                             }
-                            mappedSegs.append(SubtitleSegment(start: sStart, end: sEnd, text: seg.text.trimmed, words: wordTimings))
                         }
-                        timelineOffset += (cSeg.end - cSeg.start)
+                        timelineOffset += cDur
                     }
                 } else {
-                    mappedSegs = transcript.segments
-                        .filter { $0.end > clipStart && $0.start < clipEnd }
-                        .map { seg in
-                            let wordTimings = seg.words.map {
-                                WordTimestamp(word: $0.word, start: max(0, $0.start - clipStart), end: max(0, $0.end - clipStart))
-                            }
-                            return SubtitleSegment(
-                                start: max(0, seg.start - clipStart),
-                                end: max(0, seg.end - clipStart),
-                                text: seg.text.trimmed,
-                                words: wordTimings
-                            )
+                    mappedSegs = transcript.segments.compactMap { seg in
+                        guard let sliced = seg.sliced(windowStart: clipStart, windowEnd: clipEnd) else {
+                            return nil
                         }
+                        return SubtitleSegment(
+                            start: sliced.start,
+                            end: sliced.end,
+                            text: sliced.text,
+                            words: sliced.words
+                        )
+                    }
                 }
                 
                 var appearance = SubtitleAppearance.cinemaPremium

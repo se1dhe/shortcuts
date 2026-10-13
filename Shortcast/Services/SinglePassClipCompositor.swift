@@ -224,22 +224,8 @@ final class SinglePassClipCompositor: SinglePassClipCompositing {
         // Субтитры (с учетом смещения тримминга startSec)
         let wantSubtitles = clip.isCinemaMode ? !clip.subtitleSegments.isEmpty : (clip.burnSubtitles && !clip.subtitleSegments.isEmpty)
         if wantSubtitles {
-            let shiftedSegments = clip.subtitleSegments.compactMap { seg -> SubtitleSegment? in
-                let segStart = seg.start - startSec
-                let segEnd = seg.end - startSec
-                guard segEnd > 0 && segStart < clipDurationSec else { return nil }
-                return SubtitleSegment(
-                    start: max(0, segStart),
-                    end: min(clipDurationSec, segEnd),
-                    text: seg.text,
-                    words: seg.words.map {
-                        WordTimestamp(
-                            word: $0.word,
-                            start: max(0, $0.start - startSec),
-                            end: min(clipDurationSec, $0.end - startSec)
-                        )
-                    }
-                )
+            let shiftedSegments = clip.subtitleSegments.compactMap { seg in
+                seg.sliced(windowStart: startSec, windowEnd: startSec + clipDurationSec)
             }
 
             let subtitleContainer = await SubtitleRenderer.buildKineticSubtitleLayer(

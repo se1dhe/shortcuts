@@ -33,7 +33,8 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         timedPhrases: [TimedSubtitlePhrase],
         acts: [LongformAct] = [],
         actStartTimes: [Double] = [],
-        totalDuration: Double = 0.0
+        totalDuration: Double = 0.0,
+        introPadding: Double = 0.0
     ) async -> CALayer {
         let rootLayer = CALayer()
         rootLayer.frame = CGRect(origin: .zero, size: renderSize)
@@ -57,16 +58,18 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             concept: concept,
             conceptY: conceptY,
             timedPhrases: timedPhrases,
-            totalDuration: calculatedTotalDuration
+            totalDuration: calculatedTotalDuration,
+            introPadding: introPadding
         )
         rootLayer.addSublayer(subtitlePhrasesLayer)
 
-        // 3. Вступительная золотая линия и философский слоган (0.0с – 4.2с)
+        // 3. Вступительная золотая линия и философский слоган (0.0с – introPadding)
         let introTaglineLayer = buildIntroTaglineLayer(
             renderSize: renderSize,
             concept: concept,
             conceptY: conceptY,
-            totalDuration: calculatedTotalDuration
+            totalDuration: calculatedTotalDuration,
+            introPadding: introPadding
         )
         rootLayer.addSublayer(introTaglineLayer)
 
@@ -192,13 +195,65 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         for phrase in phrases {
             let clean = phrase.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !clean.isEmpty, phrase.end > phrase.start else { continue }
+
+            // 1. Если у фразы есть пословные таймкоды WhisperKit: группируем слова по естественным паузам и ритму речи
+            if !phrase.words.isEmpty {
+                let validWords = phrase.words.filter { !$0.word.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.end >= $0.start }
+                if !validWords.isEmpty {
+                    var wordGroups: [[WordTimestamp]] = []
+                    var currentGroup: [WordTimestamp] = []
+                    var currentChars = 0
+
+                    for w in validWords {
+                        let wordText = w.word.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let isPauseBreak: Bool
+                        if let prev = currentGroup.last {
+                            isPauseBreak = (w.start - prev.end) >= 0.65
+                        } else {
+                            isPauseBreak = false
+                        }
+
+                        if !currentGroup.isEmpty && (currentGroup.count >= 4 || currentChars + wordText.count + 1 > 34 || isPauseBreak) {
+                            wordGroups.append(currentGroup)
+                            currentGroup = [w]
+                            currentChars = wordText.count
+                        } else {
+                            currentGroup.append(w)
+                            currentChars += (currentGroup.count == 1 ? wordText.count : wordText.count + 1)
+                        }
+                    }
+                    if !currentGroup.isEmpty {
+                        wordGroups.append(currentGroup)
+                    }
+
+                    for (idx, group) in wordGroups.enumerated() {
+                        guard let firstWord = group.first, let lastWord = group.last else { continue }
+                        let text = group.map(\.word).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+                        let groupStart = firstWord.start
+                        let nextStart = (idx + 1 < wordGroups.count) ? wordGroups[idx + 1].first?.start : nil
+                        let rawEnd = lastWord.end + 0.20
+                        let groupEnd: Double
+                        if let nextStart {
+                            groupEnd = min(max(groupStart + 0.35, rawEnd), nextStart - 0.05)
+                        } else {
+                            groupEnd = min(max(groupStart + 0.35, rawEnd), phrase.end)
+                        }
+                        if groupEnd > groupStart {
+                            result.append(TimedSubtitlePhrase(start: groupStart, end: groupEnd, text: text, words: group))
+                        }
+                    }
+                    continue
+                }
+            }
+
+            // 2. Резервный режим (без пословных таймкодов): делим фразу по словам пропорционально длине, без потери хвостовых фраз
             let words = clean.split(whereSeparator: { $0.isWhitespace }).map(String.init)
             if words.count <= 5 && clean.count <= 38 {
                 result.append(phrase)
                 continue
             }
 
-            // Разбиваем длинную фразу на ритмичные порции по 3-5 слов (кино-ритм)
+            // Разбиваем длинную фразу на ритмичные порции по 3-4 слова (кино-ритм)
             var chunks: [[String]] = []
             var currentChunk: [String] = []
             var currentLen = 0
@@ -210,7 +265,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
                     currentLen = word.count
                 } else {
                     currentChunk.append(word)
-                    currentLen += word.count + 1
+                    currentLen += (currentChunk.count == 1 ? word.count : (word.count + 1))
                 }
             }
             if !currentChunk.isEmpty {
@@ -221,11 +276,12 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             let totalDur = phrase.end - phrase.start
             var runningTime = phrase.start
 
-            for chunk in chunks {
+            for (idx, chunk) in chunks.enumerated() {
                 let chunkText = chunk.joined(separator: " ")
                 let chunkFraction = Double(chunkText.count) / Double(totalChars)
-                let chunkDur = max(0.45, totalDur * chunkFraction)
-                let chunkEnd = min(phrase.end, runningTime + chunkDur)
+                let chunkDur = totalDur * chunkFraction
+                let isLast = (idx == chunks.count - 1)
+                let chunkEnd = isLast ? phrase.end : min(phrase.end, runningTime + chunkDur)
                 if chunkEnd > runningTime {
                     result.append(TimedSubtitlePhrase(start: runningTime, end: chunkEnd, text: chunkText))
                 }
@@ -240,7 +296,8 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         concept: ThematicConcept,
         conceptY: CGFloat,
         timedPhrases: [TimedSubtitlePhrase],
-        totalDuration: Double
+        totalDuration: Double,
+        introPadding: Double = 0.0
     ) -> CALayer {
         let container = CALayer()
         container.frame = CGRect(origin: .zero, size: renderSize)
@@ -273,11 +330,13 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         let maxTextWidth = min(W * 0.75, 960.0)
         let chunked = chunkTimedPhrases(timedPhrases)
 
+        let minSubtitleTime = max(0.0, introPadding)
+
         for phrase in chunked {
             let cleanText = phrase.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanText.isEmpty, phrase.end > phrase.start else { continue }
-            // Не показываем субтитры во время вступительной заставки (0.0-4.5с), чтобы не перекрывать тезис
-            guard phrase.end > 4.5 else { continue }
+            // Не показываем субтитры во время Cold Open интро, чтобы они не накладывались на затемнение
+            guard phrase.end > minSubtitleTime else { continue }
 
             let subStr = NSAttributedString(string: cleanText.uppercased(), attributes: subAttrs)
             let boundingRect = subStr.boundingRect(
@@ -297,8 +356,8 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             phraseLayer.contents = renderAttributedText(subStr, size: phraseLayer.frame.size)
             phraseLayer.opacity = 0.0
 
-            // Если фраза началась до окончания заставки, плавно включаем ее сразу после исчезновения заставки (4.55с)
-            let pStart = max(phrase.start, 4.55)
+            // Если фраза началась до окончания интро-затемнения, плавно включаем ее сразу с появлением кадра (minSubtitleTime)
+            let pStart = max(phrase.start, minSubtitleTime)
             let maxEndTime = max(pStart + 0.35, totalDuration - 2.0)
             let pEnd = min(max(phrase.end, pStart + 0.35), maxEndTime)
             guard pEnd > pStart else { continue }
@@ -338,7 +397,8 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         renderSize: CGSize,
         concept: ThematicConcept,
         conceptY: CGFloat,
-        totalDuration: Double
+        totalDuration: Double,
+        introPadding: Double = 0.0
     ) -> CALayer {
         let container = CALayer()
         container.frame = CGRect(origin: .zero, size: renderSize)
@@ -398,10 +458,14 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             container.addSublayer(subLayer)
         }
 
-        // Анимация: плавно появляется (0.0-0.8с), держится до 3.2с, плавно затухает к 4.2с
-        let tFadeIn = 0.8 / t
-        let tHold = 3.2 / t
-        let tFadeOut = 4.2 / t
+        // Анимация вступительного слогана:
+        // Если introPadding задан (например 2.5с), слоган держится во время темного Cold Open
+        // и плавно затухает ровно к выходу первого кадра (introPadding).
+        let effectiveIntroDuration = introPadding > 0.0 ? introPadding : 4.2
+        let fadeOutDuration = min(0.6, effectiveIntroDuration * 0.25)
+        let tFadeIn = min(0.8, effectiveIntroDuration * 0.35) / t
+        let tHold = max(0.0, effectiveIntroDuration - fadeOutDuration) / t
+        let tFadeOut = effectiveIntroDuration / t
 
         let anim = CAKeyframeAnimation(keyPath: "opacity")
         anim.values = [0.0, 1.0, 1.0, 0.0, 0.0]

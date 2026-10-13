@@ -131,17 +131,20 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
                 }
 
                 let insertedStart = insertTime.seconds
-                let insertedEnd = insertedStart + segment.duration
 
-                // Сопоставляем фразы из транскрипта с новым таймлайном
-                let matchingSegments = transcript.segments.filter {
-                    $0.end > segment.start && $0.start < segment.end
-                }
-                for s in matchingSegments {
-                    let phraseStart = max(insertedStart, insertedStart + (s.start - segment.start))
-                    let phraseEnd = min(insertedEnd, insertedStart + (s.end - segment.start))
-                    if phraseEnd > phraseStart {
-                        timedPhrases.append(TimedSubtitlePhrase(start: phraseStart, end: phraseEnd, text: s.text))
+                // Сопоставляем фразы из транскрипта с новым таймлайном (с точной пословной обрезкой на границах склеек)
+                for s in transcript.segments {
+                    if let sliced = s.sliced(
+                        windowStart: segment.start,
+                        windowEnd: segment.end,
+                        timelineOffset: insertedStart
+                    ) {
+                        timedPhrases.append(TimedSubtitlePhrase(
+                            start: sliced.start,
+                            end: sliced.end,
+                            text: sliced.text,
+                            words: sliced.words
+                        ))
                     }
                 }
 
@@ -317,7 +320,8 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             timedPhrases: timedPhrases,
             acts: arc.acts,
             actStartTimes: actStartTimes,
-            totalDuration: totalDuration
+            totalDuration: totalDuration,
+            introPadding: introPadding
         )
 
         // Подложка глубокого чёрного цвета (YUV Black Fix — предотвращает появление зелёных полос)

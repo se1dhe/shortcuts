@@ -18,7 +18,8 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         5. Сформулируй драматургические названия и задачи ЧЕТЫРЁХ актов эссе (actDescriptors) — индивидуально под ЭТОТ фильм и ЭТУ тему, без шаблонов. Типы актов строго: "hook", "downfall", "struggle", "catharsis". Для каждого дай короткое кинематографичное название (title) и одну фразу о драматургической задаче акта (beat).
 
         ФОРМАТ ВЫВОДА:
-        Ответь СТРОГО валидным JSON-объектом без лишних предисловий и комментариев:
+        Ответь СТРОГО валидным JSON-объектом. Начинай ответ сразу с открывающей фигурной скобки '{' и заканчивай закрывающей '}' без обрамления ```json и без каких-либо вводных слов или рассуждений.
+        КРИТИЧЕСКИ ВАЖНО: Внутри строковых значений (aiReasoning, philosophicalPremise, tagline, suggestedTitle) для цитат и названий используй русские кавычки «елочки», а не обычные двойные кавычки, чтобы JSON оставался валидным.
         {
           "primaryConcept": {
             "word": "Эго",
@@ -200,88 +201,63 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
 
     /// Парсит структурированный ответ модели в ThematicAnalysisResult
     static func parseThematicAnalysis(from jsonText: String) -> ThematicAnalysisResult? {
-        var clean = jsonText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let clean = jsonText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return nil }
 
-        // Снимаем markdown обертки ```json ... ```
-        if clean.hasPrefix("```") {
-            let lines = clean.components(separatedBy: "\n")
-            let filtered = lines.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("```") }
-            clean = filtered.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        // 1. Попытка десериализации напрямую (работает для чистого JSON: и массива [...], и объекта {...})
+        if let root = JSONVariantParser.deserializeTolerant(clean) {
+            if let result = parseFromObject(root) {
+                return result
+            }
         }
 
-        // 1. Попытка распарсить как объект { "primaryConcept": ..., "aiReasoning": ..., "alternativeConcepts": ... }
-        if let startObj = clean.range(of: "{"),
-           let endObj = clean.range(of: "}", options: .backwards),
-           startObj.lowerBound <= endObj.lowerBound {
-            let objJSON = String(clean[startObj.lowerBound..<endObj.upperBound])
-            if let data = objJSON.data(using: .utf8) {
-                struct RawObjectResponse: Decodable {
-                    struct RawConcept: Decodable {
-                        let word: String?
-                        let tagline: String?
-                        let philosophicalPremise: String?
-                        let suggestedTitle: String?
-                        let accentColorHex: String?
-                    }
-                    struct RawActDescriptor: Decodable {
-                        let type: String?
-                        let title: String?
-                        let beat: String?
-                    }
-                    let primaryConcept: RawConcept?
-                    let aiReasoning: String?
-                    let actDescriptors: [RawActDescriptor]?
-                    let alternativeConcepts: [RawConcept]?
-                }
+        // 2. Очистка от markdown блоков ```json ... ``` если они есть
+        var unwrapped = clean
+        if unwrapped.contains("```") {
+            let lines = unwrapped.components(separatedBy: "\n")
+            let filtered = lines.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("```") }
+            unwrapped = filtered.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
 
-                if let parsed = try? JSONDecoder().decode(RawObjectResponse.self, from: data),
-                   let p = parsed.primaryConcept,
-                   let w = p.word?.trimmingCharacters(in: .whitespacesAndNewlines), !w.isEmpty,
-                   let tag = p.tagline?.trimmingCharacters(in: .whitespacesAndNewlines), !tag.isEmpty {
-                    
-                    let reasoning = parsed.aiReasoning?.trimmingCharacters(in: .whitespacesAndNewlines)
-                        ?? "Сценарий раскрывает этот концепт как центральную философскую мысль картины."
+        // 3. Если ответ представляет собой JSON-массив [...], находим его границы
+        let firstBracket = unwrapped.firstIndex(of: "[")
+        let firstBrace = unwrapped.firstIndex(of: "{")
 
-                    let descriptors = Self.parseActDescriptors(parsed.actDescriptors?.compactMap { d in
-                        guard let typeStr = d.type, let title = d.title, let beat = d.beat else { return nil }
-                        return (typeStr, title, beat)
-                    } ?? [])
-
-                    let primaryConcept = ThematicConcept(
-                        word: w,
-                        tagline: tag,
-                        philosophicalPremise: p.philosophicalPremise?.trimmingCharacters(in: .whitespacesAndNewlines) ?? tag,
-                        suggestedTitle: p.suggestedTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Этот фильм изменит твоё восприятие.",
-                        accentColorHex: p.accentColorHex ?? "#F5D020",
-                        isPrimaryChoice: true,
-                        aiReasoning: reasoning,
-                        actDescriptors: descriptors
-                    )
-
-                    let alts = (parsed.alternativeConcepts ?? []).compactMap { item -> ThematicConcept? in
-                        guard let iw = item.word?.trimmingCharacters(in: .whitespacesAndNewlines), !iw.isEmpty,
-                              let itag = item.tagline?.trimmingCharacters(in: .whitespacesAndNewlines), !itag.isEmpty else { return nil }
-                        return ThematicConcept(
-                            word: iw,
-                            tagline: itag,
-                            philosophicalPremise: item.philosophicalPremise?.trimmingCharacters(in: .whitespacesAndNewlines) ?? itag,
-                            suggestedTitle: item.suggestedTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Правда, которую скрывает этот фильм.",
-                            accentColorHex: item.accentColorHex ?? "#F5D020",
-                            isPrimaryChoice: false,
-                            aiReasoning: nil
-                        )
-                    }
-
-                    return ThematicAnalysisResult(
-                        primaryConcept: primaryConcept,
-                        aiReasoning: reasoning,
-                        alternativeConcepts: alts
-                    )
+        if let b = firstBracket, (firstBrace == nil || b < firstBrace!) {
+            if let endBracket = unwrapped.range(of: "]", options: .backwards),
+               b <= endBracket.lowerBound {
+                let candidate = String(unwrapped[b...endBracket.lowerBound])
+                if let root = JSONVariantParser.deserializeTolerant(candidate),
+                   let result = parseFromObject(root) {
+                    return result
                 }
             }
         }
 
-        // 2. Фолбэк на массив [ ... ] если модель вернула legacy формат
+        // 4. Попытка извлечения первого сбалансированного JSON-объекта {...}
+        if let jsonString = JSONVariantParser.extractJSONObject(from: unwrapped) ?? JSONVariantParser.extractJSONObject(from: clean) {
+            if let root = JSONVariantParser.deserializeTolerant(jsonString),
+               let result = parseFromObject(root) {
+                return result
+            }
+        }
+
+        if let startObj = unwrapped.range(of: "{"),
+           let endObj = unwrapped.range(of: "}", options: .backwards),
+           startObj.lowerBound <= endObj.lowerBound {
+            let candidate = String(unwrapped[startObj.lowerBound..<endObj.upperBound])
+            if let root = JSONVariantParser.deserializeTolerant(candidate),
+               let result = parseFromObject(root) {
+                return result
+            }
+        }
+
+        // 5. Fallback: извлечение через Regex (на случай неэкранированных кавычек внутри aiReasoning)
+        if let regexResult = parseWithRegex(clean) {
+            return regexResult
+        }
+
+        // 4. Фолбэк на массив [ ... ] если модель вернула legacy формат
         let legacyList = parseConcepts(from: clean)
         if let first = legacyList.first {
             var primary = first
@@ -297,6 +273,197 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         }
 
         return nil
+    }
+
+    private static func parseFromObject(_ root: Any) -> ThematicAnalysisResult? {
+        if let dict = root as? [String: Any] {
+            // Ищем primary concept
+            var primaryDict: [String: Any]? = (dict["primaryConcept"] as? [String: Any])
+                ?? (dict["primary_concept"] as? [String: Any])
+                ?? (dict["primary"] as? [String: Any])
+                ?? (dict["concept"] as? [String: Any])
+                ?? (dict["theme"] as? [String: Any])
+
+            // Если сам dict имеет ключ "word" (модель вернула концепт прямо в корневом объекте)
+            if primaryDict == nil && (dict["word"] != nil || dict["conceptWord"] != nil) {
+                primaryDict = dict
+            }
+
+            // Если концепты лежат в массиве "concepts" / "themes"
+            if primaryDict == nil, let list = (dict["concepts"] as? [[String: Any]] ?? dict["themes"] as? [[String: Any]]), !list.isEmpty {
+                primaryDict = list.first
+            }
+
+            guard let p = primaryDict,
+                  let w = extractString(p, keys: ["word", "conceptWord", "theme", "name", "title"])
+            else { return nil }
+
+            let tag = extractString(p, keys: ["tagline", "slogan", "subtitle", "logline", "description", "summary", "quote"])
+                ?? extractString(dict, keys: ["tagline", "slogan", "subtitle", "logline", "description"])
+                ?? "Философский лейтмотив фильма."
+            let premise = extractString(p, keys: ["philosophicalPremise", "philosophical_premise", "premise", "thesis", "idea"]) ?? tag
+            let suggestedTitle = extractString(p, keys: ["suggestedTitle", "suggested_title", "title", "youtubeTitle", "youtube_title"]) ?? "Этот фильм изменит твоё восприятие."
+            let accentColor = extractString(p, keys: ["accentColorHex", "accent_color_hex", "color"]) ?? "#F5D020"
+
+            let reasoning = extractString(dict, keys: ["aiReasoning", "ai_reasoning", "reasoning", "explanation", "analysis"])
+                ?? extractString(p, keys: ["aiReasoning", "ai_reasoning", "reasoning"])
+                ?? "Сценарий раскрывает этот концепт как центральную философскую мысль картины."
+
+            // Извлекаем actDescriptors
+            let rawActs = (dict["actDescriptors"] as? [[String: Any]])
+                ?? (dict["act_descriptors"] as? [[String: Any]])
+                ?? (dict["acts"] as? [[String: Any]])
+                ?? []
+
+            let actTuples = rawActs.compactMap { d -> (type: String, title: String, beat: String)? in
+                guard let typeStr = extractString(d, keys: ["type", "actType", "act_type"]),
+                      let title = extractString(d, keys: ["title", "name"]),
+                      let beat = extractString(d, keys: ["beat", "dramaticBeat", "dramatic_beat", "task"])
+                else { return nil }
+                return (typeStr, title, beat)
+            }
+            let descriptors = parseActDescriptors(actTuples)
+
+            let primaryConcept = ThematicConcept(
+                word: w,
+                tagline: tag,
+                philosophicalPremise: premise,
+                suggestedTitle: suggestedTitle,
+                accentColorHex: accentColor,
+                isPrimaryChoice: true,
+                aiReasoning: reasoning,
+                actDescriptors: descriptors
+            )
+
+            // Извлекаем alternativeConcepts
+            let rawAlts = (dict["alternativeConcepts"] as? [[String: Any]])
+                ?? (dict["alternative_concepts"] as? [[String: Any]])
+                ?? (dict["alternatives"] as? [[String: Any]])
+                ?? (dict["alternativeThemes"] as? [[String: Any]])
+                ?? (dict["concepts"] as? [[String: Any]])?.dropFirst().map { $0 }
+                ?? []
+
+            var altConcepts: [ThematicConcept] = []
+            for item in rawAlts {
+                guard let iw = extractString(item, keys: ["word", "conceptWord", "theme", "name"]),
+                      let itag = extractString(item, keys: ["tagline", "slogan", "subtitle"])
+                else { continue }
+                let iprem = extractString(item, keys: ["philosophicalPremise", "philosophical_premise", "premise"]) ?? itag
+                let ititle = extractString(item, keys: ["suggestedTitle", "suggested_title", "title"]) ?? "Правда, которую скрывает этот фильм."
+                let icolor = extractString(item, keys: ["accentColorHex", "accent_color_hex", "color"]) ?? "#F5D020"
+
+                altConcepts.append(ThematicConcept(
+                    word: iw,
+                    tagline: itag,
+                    philosophicalPremise: iprem,
+                    suggestedTitle: ititle,
+                    accentColorHex: icolor,
+                    isPrimaryChoice: false,
+                    aiReasoning: nil
+                ))
+            }
+
+            return ThematicAnalysisResult(
+                primaryConcept: primaryConcept,
+                aiReasoning: reasoning,
+                alternativeConcepts: altConcepts
+            )
+        } else if let array = root as? [[String: Any]], let first = array.first {
+            guard let w = extractString(first, keys: ["word", "conceptWord", "theme"]),
+                  let tag = extractString(first, keys: ["tagline", "slogan", "subtitle"])
+            else { return nil }
+            let prem = extractString(first, keys: ["philosophicalPremise", "philosophical_premise", "premise"]) ?? tag
+            let title = extractString(first, keys: ["suggestedTitle", "suggested_title", "title"]) ?? "В этом мире нельзя быть слабым."
+            let color = extractString(first, keys: ["accentColorHex", "accent_color_hex"]) ?? "#F5D020"
+            let reasoning = extractString(first, keys: ["aiReasoning", "ai_reasoning", "reasoning"])
+                ?? "Анализ диалогов фильма выявил «\(w)» как определяющий конфликт сценария."
+
+            let primary = ThematicConcept(
+                word: w,
+                tagline: tag,
+                philosophicalPremise: prem,
+                suggestedTitle: title,
+                accentColorHex: color,
+                isPrimaryChoice: true,
+                aiReasoning: reasoning
+            )
+
+            let alts = array.dropFirst().compactMap { item -> ThematicConcept? in
+                guard let iw = extractString(item, keys: ["word", "conceptWord", "theme"]),
+                      let itag = extractString(item, keys: ["tagline", "slogan", "subtitle"])
+                else { return nil }
+                return ThematicConcept(
+                    word: iw,
+                    tagline: itag,
+                    philosophicalPremise: extractString(item, keys: ["philosophicalPremise", "premise"]) ?? itag,
+                    suggestedTitle: extractString(item, keys: ["suggestedTitle", "title"]) ?? "Правда сценария.",
+                    accentColorHex: extractString(item, keys: ["accentColorHex"]) ?? "#F5D020",
+                    isPrimaryChoice: false
+                )
+            }
+
+            return ThematicAnalysisResult(
+                primaryConcept: primary,
+                aiReasoning: reasoning,
+                alternativeConcepts: alts
+            )
+        }
+        return nil
+    }
+
+    private static func extractString(_ dict: [String: Any], keys: [String]) -> String? {
+        for k in keys {
+            if let str = dict[k] as? String {
+                let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            }
+        }
+        return nil
+    }
+
+    private static func parseWithRegex(_ raw: String) -> ThematicAnalysisResult? {
+        func extractField(pattern: String) -> String? {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
+            let nsRange = NSRange(raw.startIndex..<raw.endIndex, in: raw)
+            if let match = regex.firstMatch(in: raw, options: [], range: nsRange) {
+                for i in 1..<match.numberOfRanges {
+                    let r = match.range(at: i)
+                    if r.location != NSNotFound, let range = Range(r, in: raw) {
+                        let val = String(raw[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !val.isEmpty { return val }
+                    }
+                }
+            }
+            return nil
+        }
+
+        guard let word = extractField(pattern: #""(?:word|conceptWord|theme|name)"\s*:\s*(?:"([^"\\]*(?:\\.[^"\\]*)*)"|«([^»]*)»)"#) else {
+            return nil
+        }
+        let tagline = extractField(pattern: #""(?:tagline|slogan|subtitle|logline|description)"\s*:\s*(?:"([^"\\]*(?:\\.[^"\\]*)*)"|«([^»]*)»)"#)
+            ?? "Философский лейтмотив фильма."
+        let premise = extractField(pattern: #""(?:philosophicalPremise|philosophical_premise|premise|thesis)"\s*:\s*(?:"([^"\\]*(?:\\.[^"\\]*)*)"|«([^»]*)»)"#)
+            ?? tagline
+        let suggestedTitle = extractField(pattern: #""(?:suggestedTitle|suggested_title|title)"\s*:\s*(?:"([^"\\]*(?:\\.[^"\\]*)*)"|«([^»]*)»)"#)
+            ?? "Этот фильм изменит твоё восприятие."
+        let reasoning = extractField(pattern: #""(?:aiReasoning|ai_reasoning|reasoning|explanation)"\s*:\s*(?:"([^"\\]*(?:\\.[^"\\]*)*)"|«([^»]*)»)"#)
+            ?? "Анализ сценария фильма выявил концепт «\(word)» как определяющую мысль сюжета."
+
+        let primary = ThematicConcept(
+            word: word,
+            tagline: tagline,
+            philosophicalPremise: premise,
+            suggestedTitle: suggestedTitle,
+            accentColorHex: "#F5D020",
+            isPrimaryChoice: true,
+            aiReasoning: reasoning
+        )
+
+        return ThematicAnalysisResult(
+            primaryConcept: primary,
+            aiReasoning: reasoning,
+            alternativeConcepts: []
+        )
     }
 
     /// Парсит список (type, title, beat) от LLM в `[LongformActDescriptor]`,

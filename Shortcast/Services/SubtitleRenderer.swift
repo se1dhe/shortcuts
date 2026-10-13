@@ -351,6 +351,21 @@ struct SubtitleSegment: Sendable {
             words: scaledWords
         )
     }
+
+    /// Slices the segment to `[windowStart, windowEnd]` and shifts timestamps to `timelineOffset`.
+    func sliced(windowStart: Double, windowEnd: Double, timelineOffset: Double = 0.0) -> SubtitleSegment? {
+        guard let slicedSeg = TranscriptSegment(start: start, end: end, text: text, words: words)
+            .sliced(windowStart: windowStart, windowEnd: windowEnd, timelineOffset: timelineOffset)
+        else {
+            return nil
+        }
+        return SubtitleSegment(
+            start: slicedSeg.start,
+            end: slicedSeg.end,
+            text: slicedSeg.text,
+            words: slicedSeg.words
+        )
+    }
 }
 
 /// Burns subtitle segments into a video using Core Animation overlay.

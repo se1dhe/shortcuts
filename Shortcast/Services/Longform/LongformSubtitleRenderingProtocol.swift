@@ -7,11 +7,13 @@ struct TimedSubtitlePhrase: Sendable, Equatable {
     let start: Double
     let end: Double
     let text: String
+    let words: [WordTimestamp]
 
-    init(start: Double, end: Double, text: String) {
+    init(start: Double, end: Double, text: String, words: [WordTimestamp] = []) {
         self.start = start
         self.end = end
         self.text = text
+        self.words = words
     }
 }
 
@@ -27,7 +29,8 @@ protocol LongformSubtitleRenderingProtocol: Sendable {
         timedPhrases: [TimedSubtitlePhrase],
         acts: [LongformAct],
         actStartTimes: [Double],
-        totalDuration: Double
+        totalDuration: Double,
+        introPadding: Double
     ) async -> CALayer
 
     /// Генерирует статический кадр для SwiftUI превью в фирменном стиле Shortcast
@@ -44,6 +47,25 @@ extension LongformSubtitleRenderingProtocol {
         concept: ThematicConcept,
         timedPhrases: [TimedSubtitlePhrase],
         acts: [LongformAct],
+        actStartTimes: [Double],
+        totalDuration: Double
+    ) async -> CALayer {
+        await makeOverlayLayer(
+            renderSize: renderSize,
+            concept: concept,
+            timedPhrases: timedPhrases,
+            acts: acts,
+            actStartTimes: actStartTimes,
+            totalDuration: totalDuration,
+            introPadding: 0.0
+        )
+    }
+
+    func makeOverlayLayer(
+        renderSize: CGSize,
+        concept: ThematicConcept,
+        timedPhrases: [TimedSubtitlePhrase],
+        acts: [LongformAct],
         totalDuration: Double
     ) async -> CALayer {
         await makeOverlayLayer(
@@ -52,7 +74,8 @@ extension LongformSubtitleRenderingProtocol {
             timedPhrases: timedPhrases,
             acts: acts,
             actStartTimes: [],
-            totalDuration: totalDuration
+            totalDuration: totalDuration,
+            introPadding: 0.0
         )
     }
 
@@ -67,7 +90,8 @@ extension LongformSubtitleRenderingProtocol {
             timedPhrases: timedPhrases,
             acts: [],
             actStartTimes: [],
-            totalDuration: timedPhrases.last?.end ?? 300.0
+            totalDuration: timedPhrases.last?.end ?? 300.0,
+            introPadding: 0.0
         )
     }
 }

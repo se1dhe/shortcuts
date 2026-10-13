@@ -39,6 +39,7 @@ struct ShortClipTile: View {
             case .ready:
                 if let url = clip.clipJob?.url {
                     MiniPhone(url: url,
+                              stage: clip.stage,
                               isPlaying: isHovered,
                               overlayHook: clip.overlayEnabled ? clip.overlayText : nil,
                               hookAppearance: clip.hookAppearance,
@@ -218,6 +219,7 @@ struct ShortClipTile: View {
 /// A small phone-framed, silent, looping preview of one clip.
 private struct MiniPhone: View {
     let url: URL
+    var stage: ShortClip.Stage? = nil
     var isPlaying: Bool = false
     var overlayHook: String?
     var hookAppearance: HookAppearance = .default
@@ -247,7 +249,7 @@ private struct MiniPhone: View {
                         .clipShape(RoundedRectangle(cornerRadius: radius - 3, style: .continuous))
                         .padding(3)
                 } else {
-                    VideoThumbnailView(url: url)
+                    VideoThumbnailView(url: url, stageId: stage?.description ?? "")
                         .clipShape(RoundedRectangle(cornerRadius: radius - 3, style: .continuous))
                         .padding(3)
                 }
@@ -403,6 +405,7 @@ struct ClipEditorSheet: View {
 
 private struct VideoThumbnailView: View {
     let url: URL
+    var stageId: String = ""
     @State private var thumbnail: NSImage?
 
     var body: some View {
@@ -416,7 +419,7 @@ private struct VideoThumbnailView: View {
                 Color.black
             }
         }
-        .task(id: url) {
+        .task(id: "\(url.absoluteString)-\(stageId)") {
             thumbnail = await Self.makeThumbnail(for: url)
         }
     }

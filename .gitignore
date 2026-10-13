@@ -62,4 +62,7 @@ dist/
 # Dependencies & local video assets
 node_modules/
 vid/
+films/
 Exports/
+inland-sea-gull.md
+

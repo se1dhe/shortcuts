@@ -169,23 +169,17 @@ struct ClipRenderingService {
             clip.clipJob = VideoJob(url: clipURL, durationSeconds: segDuration)
 
             // Re-align subtitle segments to the trimmed start boundary
-            let mappedSegs = transcript.segments
-                .filter { $0.end > segStart && $0.start < (segStart + segDuration) }
-                .map { seg in
-                    let wordTimings = seg.words.map {
-                        WordTimestamp(
-                            word: $0.word,
-                            start: max(0, $0.start - segStart),
-                            end: max(0, $0.end - segStart)
-                        )
-                    }
-                    return SubtitleSegment(
-                        start: max(0, seg.start - segStart),
-                        end: max(0, seg.end - segStart),
-                        text: seg.text.trimmed,
-                        words: wordTimings
-                    )
+            let mappedSegs: [SubtitleSegment] = transcript.segments.compactMap { seg in
+                guard let sliced = seg.sliced(windowStart: segStart, windowEnd: segStart + segDuration) else {
+                    return nil
                 }
+                return SubtitleSegment(
+                    start: sliced.start,
+                    end: sliced.end,
+                    text: sliced.text,
+                    words: sliced.words
+                )
+            }
             if !mappedSegs.isEmpty {
                 clip.subtitleSegments = mappedSegs
             }

@@ -377,4 +377,106 @@ struct SentenceBoundaryTests {
         #expect(FileManager.default.fileExists(atPath: result.outputURL.path))
         #expect(result.duration > 10)
     }
+
+    @Test("parseNarrativeArc clamps excessive LLM act durations to strict budget")
+    func testLLMArcParserClampsExcessiveDurationsToBudget() {
+        let mockJSON = """
+        {
+          "acts": [
+            {"type": "hook", "start": "01:00", "end": "08:00", "title": "Вступление", "dramaticBeat": "Хук"},
+            {"type": "downfall", "start": "10:00", "end": "22:00", "title": "Кризис", "dramaticBeat": "Падение"},
+            {"type": "struggle", "start": "25:00", "end": "38:00", "title": "Борьба", "dramaticBeat": "Кульминация"},
+            {"type": "catharsis", "start": "40:00", "end": "50:00", "title": "Финал", "dramaticBeat": "Катарсис"}
+          ]
+        }
+        """
+
+        let concept = ThematicConcept(
+            word: "Иллюзия",
+            tagline: "Сквозной концепт",
+            philosophicalPremise: "Ложь разума",
+            suggestedTitle: "Философия фильма",
+            accentColorHex: "#F5D020"
+        )
+
+        // Generating a synthetic dialogue transcript spanning 0 to 3600 seconds
+        var transcriptSegments: [TranscriptSegment] = []
+        for minute in 0..<60 {
+            let start = Double(minute * 60) + 5.0
+            transcriptSegments.append(
+                TranscriptSegment(
+                    start: start,
+                    end: start + 45.0,
+                    text: "Это важная реплика в минуте \(minute). Мы продолжаем диалог и заканчиваем мысль.",
+                    words: []
+                )
+            )
+        }
+
+        let arc = MomentFinderService.parseNarrativeArc(
+            from: mockJSON,
+            movieTitle: "Тестовый фильм",
+            concept: concept,
+            targetDuration: 520.0,
+            transcriptEnd: 3600.0,
+            transcriptSegments: transcriptSegments
+        )
+
+        #expect(arc != nil)
+        if let arc {
+            #expect(arc.acts.count == 4)
+            // Even though LLM gave 42 minutes of intervals, the resulting arc MUST be clamped to 5-12 min
+            #expect(arc.totalDuration >= 280.0)
+            #expect(arc.totalDuration <= 720.0)
+            // Act 1 (hook) should be bounded around ~60-90s, NOT 7 minutes (420s)
+            #expect(arc.acts[0].duration <= 100.0)
+            // Act 2 & 3 should be bounded around ~170-220s, NOT 12 minutes (720s)
+            #expect(arc.acts[1].duration <= 240.0)
+            #expect(arc.acts[2].duration <= 240.0)
+            // Act 4 should be bounded around ~100-140s, NOT 10 minutes (600s)
+            #expect(arc.acts[3].duration <= 150.0)
+        }
+    }
+
+    @Test("LongformNarrativeDirector buildArc maintains strict 5-12 min duration on 2-hour movie transcript")
+    func testLongformDirectorBuildArcStaysWithinBudgetOnFullMovie() async throws {
+        let concept = ThematicConcept(
+            word: "Иллюзия",
+            tagline: "Сквозной концепт",
+            philosophicalPremise: "Ложь разума",
+            suggestedTitle: "Философия фильма",
+            accentColorHex: "#F5D020"
+        )
+
+        // 2-hour movie (7200s) with 30 distinct dialogue scenes containing multiple lines
+        var segments: [TranscriptSegment] = []
+        var t = 30.0
+        for scene in 0..<30 {
+            for line in 0..<15 {
+                segments.append(
+                    TranscriptSegment(
+                        start: t,
+                        end: t + 10.0,
+                        text: "Реплика сцены \(scene) реплика \(line). Жизнь полна борьбы и поиска глубокого смысла.",
+                        words: []
+                    )
+                )
+                t += 11.5 // 1.5s gap between lines within same scene (well below maxSceneGap)
+            }
+            t += 90.0 // 90s gap between scenes
+        }
+        let transcript = Transcript(segments: segments, language: "ru")
+        let director = LongformNarrativeDirector()
+        let arc = try await director.buildArc(
+            from: transcript,
+            concept: concept,
+            movieTitle: "Двухчасовой фильм",
+            targetDuration: 520.0
+        )
+
+        #expect(arc.acts.count == 4)
+        // Must strictly stay in the 5 to 12 minutes budget (300s to 720s), target ~520s (8.6 min)
+        #expect(arc.totalDuration >= 300.0)
+        #expect(arc.totalDuration <= 720.0)
+    }
 }

@@ -765,15 +765,17 @@ final class MomentFinderService {
 
         ЖЁСТКИЕ ПРАВИЛА:
         1. Акты ОБЯЗАНЫ идти строго хронологически: конец акта N раньше начала акта N+1. Пересечения запрещены.
-        2. Каждый отрезок — это непрерывная сцена (или плотно соседние сцены), а не склейка далёких кусков.
-        3. start и end задавай ВРЕМЕНЕМ из транскрипта в формате "MM:SS" (или "HH:MM:SS").
+        2. Каждый отрезок — это непрерывная компактная сцена (НЕ более 1–3 минут!), а не длинный кусок фильма.
+        3. start и end задавай ВРЕМЕНЕМ из транскрипта в формате "MM:SS" (или "HH:MM:SS"). Длительность отрезка (end - start) должна строго соответствовать бюджету акта в секундах!
         4. Выбирай сцены, которые раскрывают тему эссе и несут драматургию своего акта.
 
         СТРУКТУРА АКТОВ (типы строго: hook, downfall, struggle, catharsis):
-        - hook (~\(hookS)с): сильнейший монолог/диалог, задающий тему и конфликт.
-        - downfall (~\(downfallS)с): кризис, падение, сомнения, потеря контроля.
-        - struggle (~\(struggleS)с): борьба вопреки всему, пик напряжения, кульминация.
-        - catharsis (~\(catharsisS)с): финальное откровение, триумф духа или экзистенциальный итог.
+        - hook (~\(hookS)с, строго 40–80с): сильнейший открывающий монолог/диалог, задающий тему и конфликт.
+        - downfall (~\(downfallS)с, строго 120–200с): кризис, падение, сомнения, потеря контроля.
+        - struggle (~\(struggleS)с, строго 130–210с): борьба вопреки всему, пик напряжения, кульминация.
+        - catharsis (~\(catharsisS)с, строго 60–120с): финальное откровение, триумф духа или экзистенциальный итог.
+
+        Суммарный хронометраж всех 4 актов должен составлять 7–10 минут (строго в пределах 5–12 минут!).
 
         Ответь СТРОГО валидным JSON-объектом без markdown и без пояснений:
         {"acts":[{"type":"hook","start":"01:23","end":"02:45","title":"Название акта","dramaticBeat":"О чём этот акт","reasoning":"Почему выбрана эта сцена"},{"type":"downfall","start":"...","end":"...","title":"...","dramaticBeat":"...","reasoning":"..."},{"type":"struggle","start":"...","end":"...","title":"...","dramaticBeat":"...","reasoning":"..."},{"type":"catharsis","start":"...","end":"...","title":"...","dramaticBeat":"...","reasoning":"..."}]}
@@ -805,6 +807,7 @@ final class MomentFinderService {
                 from: raw,
                 movieTitle: movieTitle,
                 concept: concept,
+                targetDuration: clampedTarget,
                 transcriptEnd: Self.lastTimestamp(in: clampedSample),
                 transcriptSegments: transcriptSegments
             )
@@ -839,10 +842,11 @@ final class MomentFinderService {
         }
     }
 
-    nonisolated private static func parseNarrativeArc(
+    nonisolated static func parseNarrativeArc(
         from raw: String,
         movieTitle: String,
         concept: ThematicConcept,
+        targetDuration: Double = 520.0,
         transcriptEnd: Double,
         transcriptSegments: [TranscriptSegment]? = nil
     ) -> LongformNarrativeArc? {
@@ -888,6 +892,7 @@ final class MomentFinderService {
         var acts: [LongformAct] = []
         var lastEnd: Double = -1
         let detector = SentenceBoundaryDetector()
+        let clampedTarget = min(max(targetDuration, 300.0), 600.0)
 
         for expected in order {
             guard let match = parsed.first(where: { $0.0 == expected }) else {
@@ -897,9 +902,18 @@ final class MomentFinderService {
             var segment = match.1
             if transcriptEnd > 0 { segment.end = min(segment.end, transcriptEnd) }
 
+            // Строгие лимиты длительности на акт в соответствии с 5-12 мин хронометражем
+            let actTarget = clampedTarget * expected.targetDurationRatio
+            let maxActDuration = min(actTarget * 1.35, 240.0) // Не более 4 минут на акт даже для downfall/struggle
+
+            // Если модель выбрала огромный отрезок (например, 10 минут сцены),
+            // жестко ограничиваем окно поиска целевым хронометражем, чтобы не раздувать ролик.
+            if segment.duration > maxActDuration {
+                segment.end = segment.start + actTarget
+            }
+
             // Выравниваем границы сцены по естественным паузам и границам предложений
             if let transcriptSegments, !transcriptSegments.isEmpty {
-                let maxActDuration = max(180.0, segment.duration + 30.0)
                 let refined = detector.refineSceneBoundary(
                     range: segment,
                     maxAllowedDuration: maxActDuration,
@@ -924,6 +938,13 @@ final class MomentFinderService {
         }
 
         guard acts.count == 4 else { return nil }
+
+        let totalDuration = acts.reduce(0.0) { $0 + $1.duration }
+        // Допустимый хронометраж кино-эссе: строго 5–12 минут (300с – 720с)
+        guard totalDuration >= 280.0 && totalDuration <= 720.0 else {
+            Self.log("parseNarrativeArc: totalDuration \(totalDuration)s is outside 5-12 min budget [280, 720], discarding arc")
+            return nil
+        }
 
         return LongformNarrativeArc(
             movieTitle: movieTitle,

@@ -31,6 +31,34 @@ struct TranscriptSegment: Codable, Sendable, Equatable {
         return Self.synthesizeProportionalWords(text: text, start: start, end: end)
     }
 
+    static func hasTerminalPunctuation(_ token: String) -> Bool {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let lastChar = trimmed.last else { return false }
+        if lastChar == "!" || lastChar == "?" || lastChar == "…" {
+            return true
+        }
+        if lastChar == "." {
+            if trimmed.hasSuffix("...") { return true }
+            let withoutDot = trimmed.dropLast()
+            if let prevChar = withoutDot.last, prevChar.isNumber {
+                return false
+            }
+            let lower = trimmed.lowercased()
+            let abbrevs = ["т.д.", "т.п.", "др.", "пр.", "г.", "ул.", "ст.", "руб.", "коп.", "etc.", "e.g.", "i.e.", "mr.", "mrs.", "dr."]
+            if abbrevs.contains(lower) {
+                return false
+            }
+            return true
+        }
+        return false
+    }
+
+    static func hasMinorPunctuation(_ token: String) -> Bool {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let lastChar = trimmed.last else { return false }
+        return lastChar == "," || lastChar == ";" || lastChar == ":" || lastChar == "—"
+    }
+
     static func synthesizeProportionalWords(text: String, start: Double, end: Double) -> [WordTimestamp] {
         let clean = text
             .replacingOccurrences(of: "<yellow>", with: "")
@@ -45,16 +73,53 @@ struct TranscriptSegment: Codable, Sendable, Equatable {
         let weights = tokens.map { max(Double($0.count), 2.0) }
         let totalWeight = max(weights.reduce(0.0, +), 1.0)
         let totalDuration = end - start
-        var current = start
+
+        // Подсчитываем пунктуационные паузы между словами
+        var numTerminalBreaks = 0
+        var numMinorBreaks = 0
+        for (idx, token) in tokens.enumerated() {
+            guard idx < tokens.count - 1 else { continue }
+            if hasTerminalPunctuation(token) {
+                numTerminalBreaks += 1
+            } else if hasMinorPunctuation(token) {
+                numMinorBreaks += 1
+            }
+        }
+        let hasLeadingPause = clean.hasPrefix("...") || clean.hasPrefix("…")
+
+        // Вычисляем бюджет пауз: оставляем достаточно времени на речь (минимум 0.22с на слово или 55% хронометража)
+        let minSpeechDuration = Double(tokens.count) * 0.22
+        let maxPauseBudget = max(0.0, totalDuration - max(minSpeechDuration, totalDuration * 0.55))
+        let desiredTotalPause = (Double(numTerminalBreaks) * 0.85) + (Double(numMinorBreaks) * 0.25) + (hasLeadingPause ? 0.40 : 0.0)
+
+        let actualTotalPause = min(desiredTotalPause, maxPauseBudget)
+        let pauseScale = desiredTotalPause > 0 ? (actualTotalPause / desiredTotalPause) : 0.0
+        let terminalPause = 0.85 * pauseScale
+        let minorPause = 0.25 * pauseScale
+        let leadingPause = hasLeadingPause ? (0.40 * pauseScale) : 0.0
+
+        let speechDuration = max(0.1, totalDuration - actualTotalPause)
+        var current = start + leadingPause
         var result: [WordTimestamp] = []
         result.reserveCapacity(tokens.count)
 
         for (idx, token) in tokens.enumerated() {
             let isLast = (idx == tokens.count - 1)
-            let dur = totalDuration * (weights[idx] / totalWeight)
+            let dur = speechDuration * (weights[idx] / totalWeight)
             let wEnd = isLast ? end : min(end, current + dur)
             result.append(WordTimestamp(word: token, start: current, end: max(current, wEnd)))
-            current = wEnd
+
+            if !isLast {
+                var pause = 0.0
+                if hasTerminalPunctuation(token) {
+                    pause = terminalPause
+                } else if hasMinorPunctuation(token) {
+                    pause = minorPause
+                }
+                current = min(end, wEnd + pause)
+            } else {
+                current = end
+            }
         }
         return result
     }
@@ -151,6 +216,20 @@ struct Transcript: Codable, Sendable, Equatable {
     func srtLike() -> String {
         segments.map { "[\(Int($0.start))s] \($0.text.trimmed)" }
             .joined(separator: "\n")
+    }
+
+    /// Returns a copy of the transcript where any segments lacking word-level timestamps
+    /// have synthesized punctuation-aware word timestamps populated.
+    var withResolvedWordTimestamps: Transcript {
+        let hasMissingWords = segments.contains(where: { $0.words.isEmpty })
+        guard hasMissingWords else { return self }
+        let enriched = segments.map { seg in
+            if seg.words.isEmpty {
+                return TranscriptSegment(start: seg.start, end: seg.end, text: seg.text, words: seg.resolvedWords())
+            }
+            return seg
+        }
+        return Transcript(segments: enriched, language: language)
     }
 
     /// Concatenated text of segments overlapping `[start, end]`.

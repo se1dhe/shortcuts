@@ -79,7 +79,8 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             concept: concept,
             acts: acts,
             actStartTimes: actStartTimes,
-            totalDuration: calculatedTotalDuration
+            totalDuration: calculatedTotalDuration,
+            introPadding: introPadding
         )
         rootLayer.addSublayer(actCardsLayer)
 
@@ -196,96 +197,67 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             let clean = phrase.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !clean.isEmpty, phrase.end > phrase.start else { continue }
 
-            // 1. Если у фразы есть пословные таймкоды WhisperKit: группируем слова по естественным паузам и ритму речи
-            if !phrase.words.isEmpty {
-                let validWords = phrase.words.filter { !$0.word.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.end >= $0.start }
-                if !validWords.isEmpty {
-                    var wordGroups: [[WordTimestamp]] = []
-                    var currentGroup: [WordTimestamp] = []
-                    var currentChars = 0
-
-                    for w in validWords {
-                        let wordText = w.word.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let isPauseBreak: Bool
-                        if let prev = currentGroup.last {
-                            isPauseBreak = (w.start - prev.end) >= 0.65
-                        } else {
-                            isPauseBreak = false
-                        }
-
-                        if !currentGroup.isEmpty && (currentGroup.count >= 4 || currentChars + wordText.count + 1 > 34 || isPauseBreak) {
-                            wordGroups.append(currentGroup)
-                            currentGroup = [w]
-                            currentChars = wordText.count
-                        } else {
-                            currentGroup.append(w)
-                            currentChars += (currentGroup.count == 1 ? wordText.count : wordText.count + 1)
-                        }
-                    }
-                    if !currentGroup.isEmpty {
-                        wordGroups.append(currentGroup)
-                    }
-
-                    for (idx, group) in wordGroups.enumerated() {
-                        guard let firstWord = group.first, let lastWord = group.last else { continue }
-                        let text = group.map(\.word).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-                        let groupStart = firstWord.start
-                        let nextStart = (idx + 1 < wordGroups.count) ? wordGroups[idx + 1].first?.start : nil
-                        let rawEnd = lastWord.end + 0.20
-                        let groupEnd: Double
-                        if let nextStart {
-                            groupEnd = min(max(groupStart + 0.35, rawEnd), nextStart - 0.05)
-                        } else {
-                            groupEnd = min(max(groupStart + 0.35, rawEnd), phrase.end)
-                        }
-                        if groupEnd > groupStart {
-                            result.append(TimedSubtitlePhrase(start: groupStart, end: groupEnd, text: text, words: group))
-                        }
-                    }
-                    continue
-                }
+            // Используем пословные таймкоды WhisperKit, либо синтезируем паузо-чувствительные таймкоды с учетом пунктуации
+            let candidateWords = !phrase.words.isEmpty
+                ? phrase.words
+                : TranscriptSegment.synthesizeProportionalWords(text: clean, start: phrase.start, end: phrase.end)
+            let validWords = candidateWords.filter {
+                !$0.word.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.end >= $0.start
             }
+            guard !validWords.isEmpty else { continue }
 
-            // 2. Резервный режим (без пословных таймкодов): делим фразу по словам пропорционально длине, без потери хвостовых фраз
-            let words = clean.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-            if words.count <= 5 && clean.count <= 38 {
-                result.append(phrase)
-                continue
-            }
+            var wordGroups: [[WordTimestamp]] = []
+            var currentGroup: [WordTimestamp] = []
+            var currentChars = 0
 
-            // Разбиваем длинную фразу на ритмичные порции по 3-4 слова (кино-ритм)
-            var chunks: [[String]] = []
-            var currentChunk: [String] = []
-            var currentLen = 0
-
-            for word in words {
-                if !currentChunk.isEmpty && (currentChunk.count >= 4 || currentLen + word.count + 1 > 34) {
-                    chunks.append(currentChunk)
-                    currentChunk = [word]
-                    currentLen = word.count
+            for w in validWords {
+                let wordText = w.word.trimmingCharacters(in: .whitespacesAndNewlines)
+                let isPauseBreak: Bool
+                let isTerminalBreak: Bool
+                if let prev = currentGroup.last {
+                    let prevText = prev.word.trimmingCharacters(in: .whitespacesAndNewlines)
+                    isPauseBreak = (w.start - prev.end) >= 0.40
+                    isTerminalBreak = TranscriptSegment.hasTerminalPunctuation(prevText)
                 } else {
-                    currentChunk.append(word)
-                    currentLen += (currentChunk.count == 1 ? word.count : (word.count + 1))
+                    isPauseBreak = false
+                    isTerminalBreak = false
+                }
+
+                // Разрываем группу (субтитровый кадр), если:
+                // 1. Предыдущее слово закончилось точкой/вопросом/восклицанием (граница реплики/предложения)
+                // 2. Между словами пауза >= 0.40 сек (актер сделал паузу/замолчал)
+                // 3. Набралось 4 слова или > 34 символов (кинематографический ритм Shortcast)
+                if !currentGroup.isEmpty && (currentGroup.count >= 4 || currentChars + wordText.count + 1 > 34 || isPauseBreak || isTerminalBreak) {
+                    wordGroups.append(currentGroup)
+                    currentGroup = [w]
+                    currentChars = wordText.count
+                } else {
+                    currentGroup.append(w)
+                    currentChars += (currentGroup.count == 1 ? wordText.count : wordText.count + 1)
                 }
             }
-            if !currentChunk.isEmpty {
-                chunks.append(currentChunk)
+            if !currentGroup.isEmpty {
+                wordGroups.append(currentGroup)
             }
 
-            let totalChars = max(1, clean.count)
-            let totalDur = phrase.end - phrase.start
-            var runningTime = phrase.start
+            for (idx, group) in wordGroups.enumerated() {
+                guard let firstWord = group.first, let lastWord = group.last else { continue }
+                let text = group.map(\.word).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { continue }
 
-            for (idx, chunk) in chunks.enumerated() {
-                let chunkText = chunk.joined(separator: " ")
-                let chunkFraction = Double(chunkText.count) / Double(totalChars)
-                let chunkDur = totalDur * chunkFraction
-                let isLast = (idx == chunks.count - 1)
-                let chunkEnd = isLast ? phrase.end : min(phrase.end, runningTime + chunkDur)
-                if chunkEnd > runningTime {
-                    result.append(TimedSubtitlePhrase(start: runningTime, end: chunkEnd, text: chunkText))
+                let groupStart = firstWord.start
+                let nextStart = (idx + 1 < wordGroups.count) ? wordGroups[idx + 1].first?.start : nil
+                let rawEnd = lastWord.end + 0.20
+                let groupEnd: Double
+                if let nextStart {
+                    // Оставляем гарантированный темный зазор между репликами, если между ними пауза в речи
+                    groupEnd = min(max(groupStart + 0.35, rawEnd), nextStart - 0.05)
+                } else {
+                    groupEnd = min(max(groupStart + 0.35, rawEnd), phrase.end)
                 }
-                runningTime = chunkEnd
+                if groupEnd > groupStart {
+                    result.append(TimedSubtitlePhrase(start: groupStart, end: groupEnd, text: text, words: group))
+                }
             }
         }
         return result
@@ -492,7 +464,8 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         concept: ThematicConcept,
         acts: [LongformAct],
         actStartTimes: [Double] = [],
-        totalDuration: Double
+        totalDuration: Double,
+        introPadding: Double = 0.0
     ) -> CALayer {
         let root = CALayer()
         root.frame = CGRect(origin: .zero, size: renderSize)
@@ -503,7 +476,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         let accentColor = NSColor(hex: concept.accentColorHex) ?? NSColor(hex: "#FFE45C") ?? .yellow
         let romanNumerals = ["I", "II", "III", "IV", "V", "VI"]
 
-        var currentTimelineOffset: Double = 2.5 // Синхронизировано с introPadding (Cold Open)
+        var currentTimelineOffset: Double = max(0.0, introPadding) // Синхронизировано с introPadding (Cold Open)
 
         for (index, act) in acts.enumerated() {
             let actDuration = act.duration

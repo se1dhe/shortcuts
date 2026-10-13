@@ -629,8 +629,11 @@ enum SubtitleRenderer {
             let groupedWords = partitionIntoSnaps(words: words, maxWords: maxWords)
             let totalWeight = words.reduce(0.0) { $0 + $1.charWeight }
             
-            let actualSpeechStart = seg.words.first?.start ?? seg.start
-            let hasWordTimestamps = !seg.words.isEmpty
+            let resolvedSegWords = !seg.words.isEmpty
+                ? seg.words
+                : TranscriptSegment.synthesizeProportionalWords(text: seg.text, start: seg.start, end: seg.end)
+            let actualSpeechStart = resolvedSegWords.first?.start ?? seg.start
+            let hasWordTimestamps = !resolvedSegWords.isEmpty
             var wordIndex = 0
             var accumulatedTime = actualSpeechStart
             
@@ -638,10 +641,10 @@ enum SubtitleRenderer {
                 let snapStart: Double
                 let snapEnd: Double
                 
-                if hasWordTimestamps && wordIndex < seg.words.count {
-                    let wStart = seg.words[wordIndex].start
-                    let endIdx = min(wordIndex + snapWords.count - 1, seg.words.count - 1)
-                    let wEnd = seg.words[endIdx].end
+                if hasWordTimestamps && wordIndex < resolvedSegWords.count {
+                    let wStart = resolvedSegWords[wordIndex].start
+                    let endIdx = min(wordIndex + snapWords.count - 1, resolvedSegWords.count - 1)
+                    let wEnd = resolvedSegWords[endIdx].end
                     snapStart = max(actualSpeechStart, wStart)
                     let rawEnd = max(snapStart + 0.22, wEnd)
                     let isLastInSeg = (idx == groupedWords.count - 1)

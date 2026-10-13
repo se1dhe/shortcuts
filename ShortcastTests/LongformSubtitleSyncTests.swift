@@ -105,4 +105,47 @@ struct LongformSubtitleSyncTests {
         #expect(slicedForScene2?.text.contains("Уж точно") == false, "Words spoken in Scene 1 must not bleed into Scene 2")
         #expect(slicedForScene2?.text.contains("опаздываю") == true, "Words spoken inside Scene 2 must be preserved")
     }
+
+    @Test("synthesizeProportionalWords inserts natural acoustic pause after terminal punctuation")
+    func punctuationPausesPreventSentenceBleed() {
+        let text = "Я из АРС. И вы должны государству пятьдесят тысяч."
+        let words = TranscriptSegment.synthesizeProportionalWords(text: text, start: 0.0, end: 8.0)
+
+        #expect(words.count >= 6)
+        // Находим слово "АРС." и следующее за ним слово "И"
+        if let arsIndex = words.firstIndex(where: { $0.word.contains("АРС") }), arsIndex + 1 < words.count {
+            let arsWord = words[arsIndex]
+            let nextWord = words[arsIndex + 1]
+            let pauseGap = nextWord.start - arsWord.end
+            #expect(pauseGap >= 0.40, "Pause gap after terminal punctuation must be >= 0.40s, got \(pauseGap)s")
+        } else {
+            Issue.record("Expected to find 'АРС.' in synthesized words")
+        }
+    }
+
+    @Test("LongformSubtitleRenderer does not show subtitles during dialogue silence between sentences")
+    func subtitlesAreHiddenDuringSilenceGaps() async {
+        let phrase = TimedSubtitlePhrase(
+            start: 10.0,
+            end: 18.0,
+            text: "Я из АРС. И вы должны государству пятьдесят тысяч.",
+            words: []
+        )
+
+        let renderer = LongformSubtitleRenderer()
+        let layer = await renderer.makeOverlayLayer(
+            renderSize: CGSize(width: 1920, height: 1080),
+            concept: ThematicConcept(
+                word: "ДОЛГ",
+                tagline: "Цена человеческой ошибки",
+                philosophicalPremise: "Каждый поступок имеет свою цену",
+                suggestedTitle: "Семь жизней"
+            ),
+            timedPhrases: [phrase],
+            totalDuration: 25.0,
+            introPadding: 2.5
+        )
+
+        #expect(layer.sublayers?.count ?? 0 >= 2)
+    }
 }

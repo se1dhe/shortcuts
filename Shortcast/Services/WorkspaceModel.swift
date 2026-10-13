@@ -431,7 +431,9 @@ final class WorkspaceModel {
         // открываем экран выбора концепта мгновенно (0.01 сек), без повторного Whisper и Gemma!
         if let existingAnalysis = self.thematicAnalysis ?? self.currentProject?.thematicAnalysis,
            let cachedTranscript = self.storedTranscript ?? self.currentProject?.transcript {
-            self.storedTranscript = cachedTranscript
+            let enriched = cachedTranscript.withResolvedWordTimestamps
+            self.storedTranscript = enriched
+            self.currentProject?.transcript = enriched
             self.thematicAnalysis = existingAnalysis
             self.thematicReasoning = existingAnalysis.aiReasoning
             self.discoveredConcepts = existingAnalysis.allConcepts
@@ -477,9 +479,11 @@ final class WorkspaceModel {
             // 2. Транскрипция фильма через WhisperKit (или кэш проекта)
             let transcript: Transcript
             if let cached = self.storedTranscript ?? self.currentProject?.transcript {
-                transcript = cached
-                self.storedTranscript = cached
-                Self.log("Using cached transcript for longform: \(cached.segments.count) segments")
+                let enriched = cached.withResolvedWordTimestamps
+                transcript = enriched
+                self.storedTranscript = enriched
+                self.currentProject?.transcript = enriched
+                Self.log("Using cached transcript for longform: \(enriched.segments.count) segments")
             } else {
                 self.progressTracker.startTranscription(totalSeconds: newJob.durationSeconds)
                 transcript = try await transcription.transcript(

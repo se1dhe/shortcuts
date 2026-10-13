@@ -423,7 +423,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         let isAct4 = (actType == .catharsis)
         let minSegmentDuration = isAct4 ? 5.0 : 15.0
         let rawRange = TimeSegment(start: first.start, end: max(last.end, first.start + minSegmentDuration))
-        let headPadding: Double = isAct1 ? 3.0 : (isAct3 ? 1.2 : (isAct4 ? 1.5 : 0.5))
+        let headPadding: Double = isAct1 ? 1.2 : (isAct3 ? 1.2 : (isAct4 ? 1.5 : 0.5))
         // Хвостовой паддинг 0.85с для естественного затухания реплики, эха и реверберации
         // перед плавным кинематографическим затемнением на склейке (устраняет эффект обрыва слов)
         let tailPadding: Double = 0.85

@@ -295,6 +295,11 @@ final class TranscriptionService {
             phase = .ready
             return parsed
         }
+        if let extracted = await Self.extractEmbeddedSubtitles(for: videoURL),
+           let parsed = Self.parseSubtitles(at: extracted) {
+            phase = .ready
+            return parsed
+        }
         return try await transcribeOnDevice(videoURL, languageHint: languageHint, modelCacheDir: modelCacheDir, correctionsService: correctionsService, progress: progress)
     }
 
@@ -315,20 +320,26 @@ final class TranscriptionService {
         if whisper == nil {
             phase = .downloadingModel(fraction: 0)
 
-            // Point HuggingFace cache to our working directory so the model
-            // lands in an accessible location instead of ~/Documents/huggingface/.
-            if let cacheDir = modelCacheDir {
-                setenv("HUGGINGFACE_HUB_CACHE", cacheDir.path, 1)
-            }
-
             let support = WhisperKit.recommendedModels()
             let variant = Self.preferredVariants.first { support.supported.contains($0) }
                 ?? support.default
             Self.log("whisper variant: \(variant) (supported: \(support.supported.joined(separator: ", ")))")
-            let folder = try await WhisperKit.download(variant: variant) { @Sendable [weak self] progress in
-                let fraction = progress.fractionCompleted
-                Task { @MainActor in
-                    self?.phase = fraction < 1.0 ? .downloadingModel(fraction: fraction) : .preparingModel
+
+            let folder: URL
+            if let local = Self.findLocalModelFolder(for: variant, modelCacheDir: modelCacheDir) {
+                Self.log("using existing local whisper model at \(local.path)")
+                folder = local
+            } else {
+                // Point HuggingFace cache to our working directory only if downloading
+                if let cacheDir = modelCacheDir {
+                    setenv("HUGGINGFACE_HUB_CACHE", cacheDir.path, 1)
+                }
+
+                folder = try await WhisperKit.download(variant: variant) { @Sendable [weak self] progress in
+                    let fraction = progress.fractionCompleted
+                    Task { @MainActor in
+                        self?.phase = fraction < 1.0 ? .downloadingModel(fraction: fraction) : .preparingModel
+                    }
                 }
             }
             // Loading specialises the CoreML model for the chosen compute units.
@@ -482,6 +493,143 @@ final class TranscriptionService {
             }
         }
         return nil
+    }
+
+    /// Automatically extracts embedded Russian or primary subtitle tracks from MKV/MP4 files using ffmpeg/ffprobe
+    static func extractEmbeddedSubtitles(for videoURL: URL) async -> URL? {
+        let ext = videoURL.pathExtension.lowercased()
+        guard ["mkv", "mp4", "m4v", "mov", "webm"].contains(ext) else { return nil }
+
+        let srtCandidate = videoURL.deletingPathExtension().appendingPathExtension("srt")
+        if FileManager.default.fileExists(atPath: srtCandidate.path) {
+            return srtCandidate
+        }
+
+        let ffmpeg = BinaryDownloadService.resolveBinary("ffmpeg", workingDirectory: nil)
+            ?? URL(fileURLWithPath: "/opt/homebrew/bin/ffmpeg")
+        let ffprobe = BinaryDownloadService.resolveBinary("ffprobe", workingDirectory: nil)
+            ?? URL(fileURLWithPath: "/opt/homebrew/bin/ffprobe")
+
+        guard FileManager.default.isExecutableFile(atPath: ffprobe.path),
+              FileManager.default.isExecutableFile(atPath: ffmpeg.path) else {
+            return nil
+        }
+
+        // 1. Проверяем наличие дорожек субтитров через ffprobe
+        let probeTask = Process()
+        probeTask.executableURL = ffprobe
+        probeTask.arguments = [
+            "-v", "error",
+            "-show_entries", "stream=index,codec_type,codec_name:stream_tags=language,title",
+            "-of", "json",
+            videoURL.path
+        ]
+        let probePipe = Pipe()
+        probeTask.standardOutput = probePipe
+        do {
+            try probeTask.run()
+            let data = probePipe.fileHandleForReading.readDataToEndOfFile()
+            probeTask.waitUntilExit()
+
+            guard probeTask.terminationStatus == 0,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let streams = json["streams"] as? [[String: Any]] else {
+                return nil
+            }
+
+            let subStreams = streams.filter { ($0["codec_type"] as? String) == "subtitle" }
+            guard !subStreams.isEmpty else { return nil }
+
+            // Ищем русскую дорожку, отдавая приоритет полной дорожке (без 'forced' в названии)
+            let chosenStream = subStreams.first(where: { stream in
+                let tags = stream["stream_tags"] as? [String: Any] ?? stream["tags"] as? [String: Any] ?? [:]
+                let lang = ((tags["language"] as? String) ?? "").lowercased()
+                let title = ((tags["title"] as? String) ?? "").lowercased()
+                return (lang == "rus" || lang == "ru") && !title.contains("forced")
+            }) ?? subStreams.first(where: { stream in
+                let tags = stream["stream_tags"] as? [String: Any] ?? stream["tags"] as? [String: Any] ?? [:]
+                let lang = ((tags["language"] as? String) ?? "").lowercased()
+                return lang == "rus" || lang == "ru"
+            }) ?? subStreams.first(where: { stream in
+                let tags = stream["stream_tags"] as? [String: Any] ?? stream["tags"] as? [String: Any] ?? [:]
+                let title = ((tags["title"] as? String) ?? "").lowercased()
+                return !title.contains("forced")
+            }) ?? subStreams.first
+
+            guard let targetStream = chosenStream, let streamIndex = targetStream["index"] as? Int else {
+                return nil
+            }
+
+            // Извлекаем выбранную дорожку в .srt рядом с видео (или в кэш)
+            let targetSRT: URL
+            if FileManager.default.isWritableFile(atPath: videoURL.deletingLastPathComponent().path) {
+                targetSRT = srtCandidate
+            } else if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+                targetSRT = caches.appendingPathComponent(videoURL.lastPathComponent + ".srt")
+            } else {
+                targetSRT = srtCandidate
+            }
+
+            let extractTask = Process()
+            extractTask.executableURL = ffmpeg
+            extractTask.arguments = [
+                "-y",
+                "-i", videoURL.path,
+                "-map", "0:\(streamIndex)",
+                "-c:s", "srt",
+                targetSRT.path
+            ]
+            try extractTask.run()
+            extractTask.waitUntilExit()
+
+            if extractTask.terminationStatus == 0,
+               let attrs = try? FileManager.default.attributesOfItem(atPath: targetSRT.path),
+               (attrs[.size] as? Int64 ?? 0) > 200 {
+                Self.log("extracted embedded subtitles stream \(streamIndex) to \(targetSRT.path)")
+                return targetSRT
+            }
+        } catch {
+            Self.log("failed to extract embedded subtitles: \(error)")
+        }
+        return nil
+    }
+
+    /// Looks for a pre-downloaded Whisper CoreML model folder on the local machine
+    /// before making any remote network requests.
+    static func findLocalModelFolder(for variant: String, modelCacheDir: URL? = nil) -> URL? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        var searchRoots: [URL] = [
+            home.appendingPathComponent("Documents/huggingface/models/argmaxinc/whisperkit-coreml"),
+            home.appendingPathComponent("Documents/huggingface/models"),
+            home.appendingPathComponent("Documents/huggingface"),
+            home.appendingPathComponent(".cache/huggingface/hub"),
+            home.appendingPathComponent("Library/Caches/huggingface/hub")
+        ]
+        if let custom = modelCacheDir {
+            searchRoots.insert(custom.appendingPathComponent("models/argmaxinc/whisperkit-coreml"), at: 0)
+            searchRoots.insert(custom, at: 0)
+        }
+
+        for root in searchRoots {
+            let direct = root.appendingPathComponent(variant)
+            if isValidModelFolder(direct) {
+                return direct
+            }
+            if let entries = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) {
+                for entry in entries where entry.lastPathComponent.contains(variant) {
+                    if isValidModelFolder(entry) {
+                        return entry
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func isValidModelFolder(_ url: URL) -> Bool {
+        let encoder = url.appendingPathComponent("AudioEncoder.mlmodelc")
+        let decoder = url.appendingPathComponent("TextDecoder.mlmodelc")
+        return FileManager.default.fileExists(atPath: encoder.path) && FileManager.default.fileExists(atPath: decoder.path)
     }
 
     /// Parses an `.srt` or `.vtt` file into a `Transcript`. Tolerant of both

@@ -176,6 +176,7 @@ final class SinglePassClipCompositor: SinglePassClipCompositing {
                     let t2 = max(t1, kf2.time - startSec)
                     if t1 >= clipDurationSec { break }
                     let clampedT2 = min(clipDurationSec, t2)
+                    guard clampedT2 - t1 >= 0.05 else { continue }
                     let timeRange = CMTimeRange(
                         start: CMTime(seconds: t1, preferredTimescale: 600),
                         duration: CMTime(seconds: clampedT2 - t1, preferredTimescale: 600)
@@ -301,60 +302,13 @@ final class SinglePassClipCompositor: SinglePassClipCompositing {
         )
 
         // 6. Аудио-микс: баланс голоса и саундтрека
-        let audioMix = AVMutableAudioMix()
-        var inputParams: [AVAudioMixInputParameters] = []
-
-        if let compSpeechTrack {
-            let speechParam = AVMutableAudioMixInputParameters(track: compSpeechTrack)
-            let vol = Float(clip.isOriginalAudioMuted ? 0.0 : max(0.0, clip.originalAudioVolume))
-            speechParam.setVolume(vol, at: .zero)
-            inputParams.append(speechParam)
-        }
-
-        if let compMusicTrack {
-            let musicParam = AVMutableAudioMixInputParameters(track: compMusicTrack)
-            let baseVol = Float(max(0.0, clip.musicVolume))
-
-            if !clip.musicDuckingEnabled {
-                musicParam.setVolume(baseVol, at: .zero)
-            } else {
-                // Применяем дакинг под реплики
-                let duckingFactor = Float(pow(10.0, -14.0 / 20.0))
-                let duckedVol = baseVol * duckingFactor
-                musicParam.setVolume(baseVol, at: .zero)
-
-                for seg in clip.subtitleSegments {
-                    let sStart = max(0, seg.start - startSec)
-                    let sEnd = min(clipDurationSec, seg.end - startSec)
-                    guard sEnd > sStart else { continue }
-
-                    let attackRange = CMTimeRange(
-                        start: CMTime(seconds: max(0, sStart - 0.1), preferredTimescale: 600),
-                        duration: CMTime(seconds: 0.1, preferredTimescale: 600)
-                    )
-                    musicParam.setVolumeRamp(fromStartVolume: baseVol, toEndVolume: duckedVol, timeRange: attackRange)
-
-                    let releaseRange = CMTimeRange(
-                        start: CMTime(seconds: sEnd, preferredTimescale: 600),
-                        duration: CMTime(seconds: 0.4, preferredTimescale: 600)
-                    )
-                    musicParam.setVolumeRamp(fromStartVolume: duckedVol, toEndVolume: baseVol, timeRange: releaseRange)
-                }
-            }
-
-            // Плавное затухание в конце
-            if clipDurationSec > 1.0 {
-                let fadeOutRange = CMTimeRange(
-                    start: CMTime(seconds: clipDurationSec - 0.8, preferredTimescale: 600),
-                    duration: CMTime(seconds: 0.8, preferredTimescale: 600)
-                )
-                musicParam.setVolumeRamp(fromStartVolume: baseVol, toEndVolume: 0.0, timeRange: fadeOutRange)
-            }
-
-            inputParams.append(musicParam)
-        }
-
-        audioMix.inputParameters = inputParams
+        let audioMix = buildAudioMix(
+            clip: clip,
+            speechTrack: compSpeechTrack,
+            musicTrack: compMusicTrack,
+            clipDurationSec: clipDurationSec,
+            startSec: startSec
+        )
 
         // 7. Экспорт в файл
         try? FileManager.default.removeItem(at: outputURL)
@@ -380,5 +334,173 @@ final class SinglePassClipCompositor: SinglePassClipCompositing {
 
         Self.logger.notice("Single-Pass Render completed in 1 pass: \(outputURL.path)")
         return outputURL
+    }
+
+    // MARK: - Audio Mixing & Safe Volume Ramps (SOLID: Single Responsibility & Testability)
+
+    /// Формирует аудио-микс для шортса с балансировкой дорожки речи и безопасным бесконфликтным дакингом саундтрека.
+    func buildAudioMix(
+        clip: ShortClip,
+        speechTrack: AVCompositionTrack?,
+        musicTrack: AVCompositionTrack?,
+        clipDurationSec: Double,
+        startSec: Double
+    ) -> AVAudioMix {
+        buildAudioMix(
+            speechTrack: speechTrack,
+            musicTrack: musicTrack,
+            clipDurationSec: clipDurationSec,
+            startSec: startSec,
+            subtitleSegments: clip.subtitleSegments,
+            isOriginalAudioMuted: clip.isOriginalAudioMuted,
+            originalAudioVolume: clip.originalAudioVolume,
+            musicVolume: clip.musicVolume,
+            musicDuckingEnabled: clip.musicDuckingEnabled
+        )
+    }
+
+    /// Формирует параметры аудио-микса композиции (SOLID: Single Responsibility & Open-Closed).
+    func buildAudioMix(
+        speechTrack: AVCompositionTrack?,
+        musicTrack: AVCompositionTrack?,
+        clipDurationSec: Double,
+        startSec: Double,
+        subtitleSegments: [SubtitleSegment],
+        isOriginalAudioMuted: Bool,
+        originalAudioVolume: Double,
+        musicVolume: Double,
+        musicDuckingEnabled: Bool
+    ) -> AVAudioMix {
+        let audioMix = AVMutableAudioMix()
+        var inputParams: [AVAudioMixInputParameters] = []
+
+        if let speechTrack {
+            let speechParam = AVMutableAudioMixInputParameters(track: speechTrack)
+            let vol = Float(isOriginalAudioMuted ? 0.0 : max(0.0, originalAudioVolume))
+            speechParam.setVolume(vol, at: .zero)
+            inputParams.append(speechParam)
+        }
+
+        if let musicTrack {
+            let musicParam = AVMutableAudioMixInputParameters(track: musicTrack)
+            let baseVol = Float(max(0.0, musicVolume))
+            var lastMusicRampEnd: Double = 0.0
+            var isDucked = false
+            let duckingFactor = Float(pow(10.0, -14.0 / 20.0))
+            let duckedVol = baseVol * duckingFactor
+
+            if !musicDuckingEnabled {
+                musicParam.setVolume(baseVol, at: .zero)
+            } else {
+                musicParam.setVolume(baseVol, at: .zero)
+
+                // 1. Сдвиг относительно тримминга startSec и фильтрация
+                struct DuckingInterval {
+                    let start: Double
+                    let end: Double
+                }
+
+                var rawIntervals: [DuckingInterval] = []
+                for seg in subtitleSegments {
+                    let sStart = max(0.0, seg.start - startSec)
+                    let sEnd = min(clipDurationSec, seg.end - startSec)
+                    guard sEnd > sStart + 0.02 else { continue }
+                    rawIntervals.append(DuckingInterval(start: sStart, end: sEnd))
+                }
+
+                // 2. Сортировка сегментов по началу
+                let sortedIntervals = rawIntervals.sorted { $0.start < $1.start }
+
+                // 3. Объединение близких реплик: если пауза меньше 0.45с, удерживаем дакинг без скачков
+                var mergedIntervals: [DuckingInterval] = []
+                for interval in sortedIntervals {
+                    if let last = mergedIntervals.last {
+                        if interval.start <= last.end + 0.45 {
+                            mergedIntervals[mergedIntervals.count - 1] = DuckingInterval(
+                                start: last.start,
+                                end: max(last.end, interval.end)
+                            )
+                        } else {
+                            mergedIntervals.append(interval)
+                        }
+                    } else {
+                        mergedIntervals.append(interval)
+                    }
+                }
+
+                // 4. Планирование рампов громкости под объединенные интервалы речи
+                for (idx, interval) in mergedIntervals.enumerated() {
+                    if !isDucked {
+                        let attackDur = 0.10
+                        let attackStart = max(0.0, interval.start - attackDur)
+                        safeSetVolumeRamp(
+                            params: musicParam,
+                            from: baseVol,
+                            to: duckedVol,
+                            start: attackStart,
+                            duration: attackDur,
+                            lastRampEnd: &lastMusicRampEnd
+                        )
+                        isDucked = true
+                    }
+
+                    let nextStart = (idx + 1 < mergedIntervals.count) ? mergedIntervals[idx + 1].start : clipDurationSec
+                    let availablePause = nextStart - interval.end
+
+                    // Восстанавливаем громкость, только если пауза между фразами достаточно велика (>= 0.6с)
+                    // и фраза не находится в самом конце клипа перед финальным фейдом
+                    if availablePause >= 0.6 && interval.end < (clipDurationSec - 0.9) {
+                        let releaseDur = 0.40
+                        safeSetVolumeRamp(
+                            params: musicParam,
+                            from: duckedVol,
+                            to: baseVol,
+                            start: interval.end,
+                            duration: releaseDur,
+                            lastRampEnd: &lastMusicRampEnd
+                        )
+                        isDucked = false
+                    }
+                }
+            }
+
+            // Безопасное финальное затухание в конце клипа
+            let fadeOutStart = max(lastMusicRampEnd + 0.01, clipDurationSec - 0.8)
+            if clipDurationSec > fadeOutStart + 0.1 {
+                let startFadeVol = (musicDuckingEnabled && isDucked) ? duckedVol : baseVol
+                safeSetVolumeRamp(
+                    params: musicParam,
+                    from: startFadeVol,
+                    to: 0.0,
+                    start: fadeOutStart,
+                    duration: clipDurationSec - fadeOutStart,
+                    lastRampEnd: &lastMusicRampEnd
+                )
+            }
+
+            inputParams.append(musicParam)
+        }
+
+        audioMix.inputParameters = inputParams
+        return audioMix
+    }
+
+    /// Безопасно применяет volume ramp к дорожке, гарантируя полное отсутствие пересечений временных диапазонов в AVFoundation.
+    private func safeSetVolumeRamp(
+        params: AVMutableAudioMixInputParameters,
+        from startVolume: Float,
+        to endVolume: Float,
+        start: Double,
+        duration: Double,
+        lastRampEnd: inout Double
+    ) {
+        guard duration >= 0.02 else { return }
+        let safeStart = max(lastRampEnd + 0.005, start)
+        let timeRange = CMTimeRange(
+            start: CMTime(seconds: safeStart, preferredTimescale: 600),
+            duration: CMTime(seconds: duration, preferredTimescale: 600)
+        )
+        params.setVolumeRamp(fromStartVolume: startVolume, toEndVolume: endVolume, timeRange: timeRange)
+        lastRampEnd = safeStart + duration
     }
 }

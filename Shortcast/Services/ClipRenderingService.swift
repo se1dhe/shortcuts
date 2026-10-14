@@ -11,7 +11,7 @@ struct ClipRenderingService {
         captionLanguage: String?,
         modelManager: ModelManager,
         settings: AppSettings,
-        transcription: TranscriptionService,
+        transcription: TranscriptionService? = nil,
         boundaryDetector: SentenceBoundaryDetecting = SentenceBoundaryDetector()
     ) async throws {
         FontDownloadService.shared.registerBundledFonts()
@@ -152,10 +152,10 @@ struct ClipRenderingService {
             let newDuration = try? await asset.load(.duration)
             clip.clipJob = VideoJob(url: clipURL, durationSeconds: CMTimeGetSeconds(newDuration ?? .zero))
             
-            // Re-transcribing stitched clip for perfect subtitle sync...
-            let newTranscript = try await transcription.transcript(for: clipURL, languageHint: settings.languageOverride)
-            clip.subtitleSegments = newTranscript.segments.map {
-                SubtitleSegment(start: $0.start, end: $0.end, text: $0.text, words: $0.words)
+            // Mathematical projection of subtitles from original transcript onto stitched timeline (no WhisperKit re-run)
+            let projected = projectSubtitles(segments: transcript.segments, onto: condensedRanges)
+            if !projected.isEmpty {
+                clip.subtitleSegments = projected
             }
             
             clip.variants = []
@@ -330,6 +330,70 @@ struct ClipRenderingService {
         let time = CMTime(seconds: seconds, preferredTimescale: 600)
         guard let (cgImage, _) = try? await generator.image(at: time) else { return nil }
         return await CinemaSquareReframer.analyzeFraming(image: cgImage)
+    }
+
+    // MARK: - Subtitle Projection (SOLID: Pure Mathematical Projection)
+
+    /// Mathematically projects transcript segments and word-level timestamps onto a stitched timeline
+    /// across multiple condensed time ranges without requiring expensive WhisperKit re-transcription.
+    nonisolated static func projectSubtitles(
+        segments: [TranscriptSegment],
+        onto condensedRanges: [CMTimeRange]
+    ) -> [SubtitleSegment] {
+        var projectedSegments: [SubtitleSegment] = []
+        var timelineOffset: Double = 0.0
+
+        for cRange in condensedRanges {
+            let cStart = cRange.start.seconds
+            let cDuration = cRange.duration.seconds
+            let cEnd = cStart + cDuration
+
+            let intersecting = segments.filter { $0.end > cStart && $0.start < cEnd }
+            for seg in intersecting {
+                let segStart = max(0, seg.start - cStart) + timelineOffset
+                let segEnd = min(cDuration, max(0, seg.end - cStart)) + timelineOffset
+
+                let wordTimings = seg.words
+                    .filter { $0.end > cStart && $0.start < cEnd }
+                    .map { word in
+                        let wStart = max(0, word.start - cStart) + timelineOffset
+                        let wEnd = min(cDuration, max(0, word.end - cStart)) + timelineOffset
+                        return WordTimestamp(
+                            word: word.word,
+                            start: wStart,
+                            end: max(wStart, wEnd)
+                        )
+                    }
+
+                let finalWords: [WordTimestamp]
+                if wordTimings.isEmpty && !seg.words.isEmpty {
+                    finalWords = seg.words.map { word in
+                        let wStart = max(0, word.start - cStart) + timelineOffset
+                        let wEnd = min(cDuration, max(0, word.end - cStart)) + timelineOffset
+                        return WordTimestamp(
+                            word: word.word,
+                            start: wStart,
+                            end: max(wStart, wEnd)
+                        )
+                    }
+                } else {
+                    finalWords = wordTimings
+                }
+
+                projectedSegments.append(
+                    SubtitleSegment(
+                        start: segStart,
+                        end: max(segStart, segEnd),
+                        text: seg.text.trimmed,
+                        words: finalWords
+                    )
+                )
+            }
+
+            timelineOffset += cDuration
+        }
+
+        return projectedSegments
     }
 }
 

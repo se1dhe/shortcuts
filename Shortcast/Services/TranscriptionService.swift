@@ -99,6 +99,13 @@ final class TranscriptionService {
 
     // MARK: - Public
 
+    /// Frees the loaded WhisperKit model from memory to reclaim RAM and Neural Engine/GPU resources.
+    func unload() {
+        whisper = nil
+        phase = .idle
+        Self.log("WhisperKit model unloaded to free memory")
+    }
+
     /// Returns a transcript for `videoURL`, using a sidecar `.srt`/`.vtt` if one
     /// sits next to it, otherwise transcribing on-device. `languageHint` (e.g.
     /// "es", "Spanish") forces Whisper's decode language; empty = auto-detect.

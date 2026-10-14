@@ -1410,9 +1410,11 @@ final class WorkspaceModel {
             }
             phase = .shortsResults
 
-            // On tight RAM, free the Director before the Gemma E4B clip-watcher.
-            if settings.copywriterModel.watchesClips {
-                modelManager.freeDirectorIfMemoryTight()
+            // Free Director LLM and WhisperKit heavy weights before batch rendering
+            // to reclaim RAM/VRAM and avoid memory spikes/OOM during video export.
+            modelManager.freeDirectorIfMemoryTight()
+            if !modelManager.canKeepBothResident {
+                transcription.unload()
             }
 
             // Stage 4: Cut, then caption, each clip in turn (65% -> 100%)

@@ -45,7 +45,12 @@ tools/
 
 # Generated videos & media
 *.mp4
+*.mkv
+*.mov
+*.avi
+*.webm
 *.srt
+films/
 
 # One-off patch / fix / test scripts
 patch_*.py

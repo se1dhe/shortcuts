@@ -13,12 +13,13 @@ struct ShortsResultsView: View {
 
     enum ViewMode: String, CaseIterable, Identifiable {
         case grid = "Сетка"
+        case table = "Таблица"
         case compare = "Сравнение"
         var id: String { rawValue }
     }
 
     @State private var viewMode: ViewMode = .grid
-    private let columns = [GridItem(.adaptive(minimum: 190, maximum: 240), spacing: 16)]
+    private let columns = [GridItem(.adaptive(minimum: 280, maximum: 380), spacing: 20)]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -145,7 +146,7 @@ struct ShortsResultsView: View {
         }
         .pickerStyle(.segmented)
         .labelsHidden()
-        .frame(width: 220)
+        .frame(width: 280)
         .fixedSize()
         .layoutPriority(1)
         .accessibilityLabel("Режим")
@@ -188,6 +189,8 @@ struct ShortsResultsView: View {
         switch viewMode {
         case .grid:
             gridView
+        case .table:
+            ShortsTableView(clips: workspace.clips)
         case .compare:
             batchCompareView
         }

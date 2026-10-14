@@ -13,20 +13,29 @@ struct ShortClipTile: View {
     @State private var showEditor = false
     @State private var showPlayer = false
     @State private var isHovered = false
+    @State private var selectedPlatform: SocialPlatform = .tiktok
+    @State private var copiedTitle = false
+    @State private var copiedDescription = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             phoneArea
-            footer
+            detailsBlock
         }
-        .padding(10)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.quaternary))
-        .opacity(clip.isApproved ? 1 : 0.5)
+        .padding(12)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.quaternary))
+        .shadow(color: .black.opacity(0.04), radius: 6, x: 0, y: 2)
+        .opacity(clip.isApproved ? 1.0 : 0.55)
         .onHover { isHovered = $0 }
         .sheet(isPresented: $showEditor) { ClipEditorSheet(clip: clip) }
         .sheet(isPresented: $showPlayer) {
             ClipPlayerSheet(clip: clip)
+        }
+        .onAppear {
+            if let first = clip.variants.first?.platform {
+                selectedPlatform = first
+            }
         }
     }
 
@@ -55,9 +64,11 @@ struct ShortClipTile: View {
                     overlays
                 }
             case .failed(let message):
-                placeholder { Label(message, systemImage: "exclamationmark.triangle")
-                    .font(.caption).foregroundStyle(.orange).multilineTextAlignment(.center)
-                    .textSelection(.enabled) }
+                placeholder {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange).multilineTextAlignment(.center)
+                        .textSelection(.enabled)
+                }
             default:
                 placeholder {
                     VStack(spacing: 8) {
@@ -85,20 +96,21 @@ struct ShortClipTile: View {
                 Text("\(Int(clip.candidate.duration.rounded()))s")
                     .font(.caption2.weight(.bold))
                     .padding(.horizontal, 7).padding(.vertical, 3)
-                    .background(.black.opacity(0.55), in: Capsule())
+                    .background(.black.opacity(0.65), in: Capsule())
                     .foregroundStyle(.white)
+
                 if clip.isRendered {
                     Image(systemName: "aspectratio")
                         .font(.caption2.weight(.bold))
                         .padding(5)
-                        .background(.black.opacity(0.55), in: Circle())
+                        .background(.black.opacity(0.65), in: Circle())
                         .foregroundStyle(.white)
                 }
                 if clip.backgroundMusicEnabled {
                     Image(systemName: "music.note")
                         .font(.caption2.weight(.bold))
                         .padding(5)
-                        .background(.black.opacity(0.55), in: Circle())
+                        .background(.black.opacity(0.65), in: Circle())
                         .foregroundStyle(.white)
                         .help("Фоновая музыка включена")
                 }
@@ -111,98 +123,225 @@ struct ShortClipTile: View {
                         .font(.title3)
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(.white, clip.isApproved ? Color.accentColor : .black.opacity(0.4))
-                        .background(Circle().fill(.black.opacity(0.35)))
+                        .background(Circle().fill(.black.opacity(0.4)))
                 }
                 .buttonStyle(.plain)
-                .help(clip.isApproved ? "Approved — included in Publish all" : "Not approved")
+                .help(clip.isApproved ? "Утверждён — входит в публикацию" : "Не утверждён")
             }
             Spacer()
-            // Action bar.
-            HStack(spacing: 8) {
-                tileButton("play.fill", "Смотреть со звуком") { showPlayer = true }
-                tileButton("square.and.pencil", "Редактировать") { showEditor = true }
-                if clip.isExporting {
-                    ProgressView().controlSize(.small).frame(width: 30, height: 30)
-                } else {
-                    tileButton("arrow.down.circle", "Скачать MP4") { downloadClip() }
-                }
-            }
-            .padding(6)
-            .background(.black.opacity(0.4), in: Capsule())
         }
         .padding(10)
     }
 
-    private func tileButton(_ symbol: String, _ help: String, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 30, height: 30)
+    // MARK: - Details Block (Platform, Hook, Description, Actions)
+
+    private var detailsBlock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            platformSelector
+            titleSection
+            descriptionSection
+            if clip.scheduledDate != nil || clip.publishReport != nil || clip.exportError != nil {
+                statusBadges
+            }
+            Divider()
+            actionPanel
         }
-        .buttonStyle(.plain)
-        .help(help)
+        .padding(.horizontal, 2)
+        .padding(.top, 2)
+    }
+
+    private var platformSelector: some View {
+        HStack(spacing: 5) {
+            ForEach(SocialPlatform.allCases) { platform in
+                let isSelected = selectedPlatform == platform
+                Button {
+                    selectedPlatform = platform
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: platform.symbolName)
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(platformLabel(platform))
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(
+                        isSelected ? platform.tint.opacity(0.18) : Color.primary.opacity(0.04),
+                        in: Capsule()
+                    )
+                    .overlay(
+                        Capsule().strokeBorder(
+                            isSelected ? platform.tint.opacity(0.6) : Color.secondary.opacity(0.15),
+                            lineWidth: 1
+                        )
+                    )
+                    .foregroundStyle(isSelected ? platform.tint : .secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func platformLabel(_ platform: SocialPlatform) -> String {
+        switch platform {
+        case .tiktok: return "TikTok"
+        case .instagram: return "Reels"
+        case .youtube: return "Shorts"
+        case .telegram: return "TG"
+        }
+    }
+
+    private var titleSection: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text("Название")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    ClipExportHelper.copyToPasteboard(currentHook)
+                    copiedTitle = true
+                    Task {
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                        copiedTitle = false
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: copiedTitle ? "checkmark" : "doc.on.doc")
+                        if copiedTitle {
+                            Text("Скопировано")
+                        }
+                    }
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(copiedTitle ? .green : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Скопировать название в буфер обмена")
+            }
+
+            Text(currentHook.isEmpty ? "Без названия" : currentHook)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(2)
+                .foregroundStyle(currentHook.isEmpty ? .secondary : .primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var descriptionSection: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text("Описание")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    let desc = currentFullDescription
+                    guard !desc.isEmpty else { return }
+                    ClipExportHelper.copyToPasteboard(desc)
+                    copiedDescription = true
+                    Task {
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                        copiedDescription = false
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: copiedDescription ? "checkmark" : "doc.on.doc")
+                        if copiedDescription {
+                            Text("Скопировано")
+                        }
+                    }
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(copiedDescription ? .green : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Скопировать описание с тегами в буфер обмена")
+                .disabled(currentFullDescription.isEmpty)
+            }
+
+            let desc = currentFullDescription
+            Text(desc.isEmpty ? "Описание с тегами не сформировано" : desc)
+                .font(.caption)
+                .foregroundStyle(desc.isEmpty ? .tertiary : .secondary)
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var currentVariant: PostVariant? {
+        clip.variants.first(where: { $0.platform == selectedPlatform }) ?? clip.variants.first
+    }
+
+    private var currentHook: String {
+        if let hook = currentVariant?.hook.trimmingCharacters(in: .whitespacesAndNewlines), !hook.isEmpty {
+            return hook
+        }
+        return clip.displayTitle
+    }
+
+    private var currentFullDescription: String {
+        currentVariant?.fullDescriptionWithTags.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private var statusBadges: some View {
+        HStack(spacing: 6) {
+            if let err = clip.exportError {
+                Label(err, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .lineLimit(1)
+            }
+            if let date = clip.scheduledDate {
+                Label(Self.shortDate(date), systemImage: "calendar")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.blue)
+            } else if clip.publishReport != nil {
+                Label("Опубликовано", systemImage: "checkmark.seal.fill")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.green)
+            }
+            Spacer()
+        }
+    }
+
+    private var actionPanel: some View {
+        HStack(spacing: 8) {
+            Button {
+                showPlayer = true
+            } label: {
+                Label("Смотреть", systemImage: "play.fill")
+                    .font(.caption.weight(.medium))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Button {
+                showEditor = true
+            } label: {
+                Label("Редактировать", systemImage: "square.and.pencil")
+                    .font(.caption.weight(.medium))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Spacer(minLength: 0)
+
+            if clip.isExporting {
+                ProgressView().controlSize(.small)
+            } else {
+                Button {
+                    downloadClip()
+                } label: {
+                    Label("Скачать MP4", systemImage: "arrow.down.circle")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+        }
     }
 
     private func downloadClip() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.mpeg4Movie]
-        panel.nameFieldStringValue = clip.suggestedFileName
-        panel.canCreateDirectories = true
-        panel.title = String(localized: "Download short")
-        panel.begin { response in
-            guard response == .OK, let destination = panel.url else { return }
-            Task {
-                let enhance = VideoEnhancementOptions(
-                    preset: clip.videoEnhancementPreset,
-                    rifeFrameRate: clip.videoEnhancementRifeFPS,
-                    realesrganScale: clip.videoEnhancementScale,
-                    sharpness: clip.videoEnhancementSharpness,
-                    contrast: clip.videoEnhancementContrast,
-                    saturation: clip.videoEnhancementSaturation,
-                    bitrateMbps: clip.videoEnhancementBitrate)
-                await clip.export(
-                    to: destination,
-                    workingDirectory: settings.workingDirectory,
-                    customMusicDirectory: settings.customMusicDirectory,
-                    enhancementOptions: enhance)
-            }
-        }
-    }
-
-    // MARK: - Footer (hook + platform dots)
-
-    private var footer: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(clip.displayTitle)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            HStack(spacing: 8) {
-                ForEach(clip.variants) { variant in
-                    Image(systemName: variant.platform.symbolName)
-                        .font(.caption2)
-                        .foregroundStyle(variant.platform.tint)
-                }
-                Spacer()
-                if let err = clip.exportError {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.caption2).foregroundStyle(.orange).help(err)
-                }
-                if let date = clip.scheduledDate {
-                    Label(Self.shortDate(date), systemImage: "calendar")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.blue)
-                        .help("Scheduled")
-                } else if clip.publishReport != nil {
-                    Image(systemName: "checkmark.seal.fill")
-                        .font(.caption2).foregroundStyle(.green).help("Published")
-                }
-            }
-        }
-        .padding(.horizontal, 4)
-        .padding(.bottom, 2)
+        ClipExportHelper.downloadClip(clip, settings: settings)
     }
 
     private static func shortDate(_ date: Date) -> String {
@@ -216,7 +355,7 @@ struct ShortClipTile: View {
 // MARK: - Mini phone
 
 /// A small phone-framed, silent, looping preview of one clip.
-private struct MiniPhone: View {
+struct MiniPhone: View {
     let url: URL
     var isPlaying: Bool = false
     var overlayHook: String?
@@ -401,7 +540,7 @@ struct ClipEditorSheet: View {
 
 // MARK: - Video Thumbnail View
 
-private struct VideoThumbnailView: View {
+struct VideoThumbnailView: View {
     let url: URL
     @State private var thumbnail: NSImage?
 

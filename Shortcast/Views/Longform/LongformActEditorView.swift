@@ -41,17 +41,37 @@ struct EditableActModel: Identifiable, Equatable {
     var title: String
     var dramaticBeat: String
     var scenes: [EditableSceneSegment]
+    let originalDuration: Double
+    let originalSceneCount: Int
+
+    init(
+        id: String,
+        actIndex: Int,
+        type: LongformActType,
+        title: String,
+        dramaticBeat: String,
+        scenes: [EditableSceneSegment]
+    ) {
+        self.id = id
+        self.actIndex = actIndex
+        self.type = type
+        self.title = title
+        self.dramaticBeat = dramaticBeat
+        self.scenes = scenes
+        self.originalDuration = scenes.reduce(0.0) { $0 + $1.duration }
+        self.originalSceneCount = scenes.count
+    }
 
     var duration: Double {
         scenes.reduce(0.0) { $0 + $1.duration }
     }
 
     var isEdited: Bool {
-        scenes.contains { $0.isEdited }
+        scenes.count != originalSceneCount || abs(duration - originalDuration) > 0.05 || scenes.contains { $0.isEdited }
     }
 
     var diffDuration: Double {
-        scenes.reduce(0.0) { $0 + $1.diffDuration }
+        duration - originalDuration
     }
 }
 
@@ -73,6 +93,7 @@ struct LongformActEditorView: View {
     @State private var sourceDuration: Double = .infinity
     @State private var previewPlayer: AVPlayer?
     @State private var previewStopTask: Task<Void, Never>?
+    @State private var showMomentSearchSheet: Bool = false
 
     private let minSceneDuration: Double = 3.0
 
@@ -136,6 +157,21 @@ struct LongformActEditorView: View {
             previewStopTask?.cancel()
             previewPlayer?.pause()
             previewPlayer = nil
+        }
+        .sheet(isPresented: $showMomentSearchSheet) {
+            ActMomentInjectionSheet(
+                transcriptSegments: transcriptSegments,
+                sourceURL: sourceURL,
+                acts: editedActs,
+                initialActIndex: selectedActIndex,
+                onInsert: { targetActIdx, position, start, end in
+                    showMomentSearchSheet = false
+                    insertMoment(actIndex: targetActIdx, position: position, start: start, end: end)
+                },
+                onCancel: {
+                    showMomentSearchSheet = false
+                }
+            )
         }
     }
 
@@ -212,6 +248,18 @@ struct LongformActEditorView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(totalEditedCount == 0)
+
+                Button {
+                    showMomentSearchSheet = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "sparkle.magnifyingglass")
+                        Text("Вставить момент")
+                    }
+                    .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .help("Поиск ключевого момента или диалога по транскрипту для вставки в акт")
 
                 Button {
                     applyChangesAndProceed()
@@ -350,9 +398,22 @@ struct LongformActEditorView: View {
 
                 // Сцены акта
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Сцены и склейки фильма (\(act.scenes.count)):")
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(.primary)
+                    HStack {
+                        Text("Сцены и склейки фильма (\(act.scenes.count)):")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.primary)
+
+                        Spacer()
+
+                        Button {
+                            showMomentSearchSheet = true
+                        } label: {
+                            Label("Вставить момент из фильма", systemImage: "sparkle.magnifyingglass")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.yellow)
+                    }
 
                     ForEach(0..<act.scenes.count, id: \.self) { sceneIdx in
                         sceneTrimmerCard(actIndex: actIndex, sceneIndex: sceneIdx)
@@ -388,6 +449,19 @@ struct LongformActEditorView: View {
                 }
 
                 Spacer()
+
+                if editedActs[actIndex].scenes.count > 1 {
+                    Button {
+                        removeScene(actIndex: actIndex, sceneIndex: sceneIndex)
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.caption2)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .tint(.red)
+                    .help("Удалить сцену из акта")
+                }
 
                 if scene.isEdited {
                     Text("Отредактировано")
@@ -822,5 +896,54 @@ struct LongformActEditorView: View {
         let secs = Int(seconds) % 60
         let tenths = Int((seconds.truncatingRemainder(dividingBy: 1)) * 10)
         return String(format: "%02d:%02d.%d", mins, secs, tenths)
+    }
+
+    // MARK: - Moment Injection & Removal
+
+    private func insertMoment(actIndex: Int, position: InjectionPosition, start: Double, end: Double) {
+        guard actIndex < editedActs.count else { return }
+        var currentScenes = editedActs[actIndex].scenes
+
+        let newScene = EditableSceneSegment(
+            sceneIndex: 0,
+            start: start,
+            end: end
+        )
+
+        switch position {
+        case .beginning:
+            currentScenes.insert(newScene, at: 0)
+        case .end:
+            currentScenes.append(newScene)
+        }
+
+        // Переиндексация сцен
+        for i in 0..<currentScenes.count {
+            currentScenes[i] = EditableSceneSegment(
+                id: currentScenes[i].id,
+                sceneIndex: i,
+                start: currentScenes[i].start,
+                end: currentScenes[i].end
+            )
+        }
+
+        editedActs[actIndex].scenes = currentScenes
+        selectedActIndex = actIndex
+    }
+
+    private func removeScene(actIndex: Int, sceneIndex: Int) {
+        guard actIndex < editedActs.count, sceneIndex < editedActs[actIndex].scenes.count else { return }
+        var currentScenes = editedActs[actIndex].scenes
+        guard currentScenes.count > 1 else { return }
+        currentScenes.remove(at: sceneIndex)
+        for i in 0..<currentScenes.count {
+            currentScenes[i] = EditableSceneSegment(
+                id: currentScenes[i].id,
+                sceneIndex: i,
+                start: currentScenes[i].start,
+                end: currentScenes[i].end
+            )
+        }
+        editedActs[actIndex].scenes = currentScenes
     }
 }

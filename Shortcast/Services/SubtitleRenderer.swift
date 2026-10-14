@@ -325,17 +325,37 @@ extension NSColor {
 }
 
 /// One segment to burn, with timestamps in seconds relative to the clip start.
-struct SubtitleSegment: Sendable {
-    let start: Double
-    let end: Double
-    let text: String
-    let words: [WordTimestamp]
+struct SubtitleSegment: Sendable, Identifiable, Equatable {
+    var id: UUID
+    var start: Double
+    var end: Double
+    var text: String
+    var words: [WordTimestamp]
 
-    init(start: Double, end: Double, text: String, words: [WordTimestamp] = []) {
+    init(id: UUID = UUID(), start: Double, end: Double, text: String, words: [WordTimestamp] = []) {
+        self.id = id
         self.start = start
         self.end = end
         self.text = text.cleanedTranscriptText
         self.words = words
+    }
+
+    var duration: Double {
+        max(0.0, end - start)
+    }
+
+    var timecodeDisplay: String {
+        let sTotalSec = Int(start)
+        let sMin = sTotalSec / 60
+        let sSec = sTotalSec % 60
+        let sTenths = Int((start * 10).rounded()) % 10
+
+        let eTotalSec = Int(end)
+        let eMin = eTotalSec / 60
+        let eSec = eTotalSec % 60
+        let eTenths = Int((end * 10).rounded()) % 10
+
+        return String(format: "%02d:%02d.%d — %02d:%02d.%d", sMin, sSec, sTenths, eMin, eSec, eTenths)
     }
 
     /// Returns a copy of the segment with start, end, and word timestamps scaled by `factor`
@@ -345,6 +365,7 @@ struct SubtitleSegment: Sendable {
             WordTimestamp(word: $0.word, start: $0.start * factor, end: $0.end * factor)
         }
         return SubtitleSegment(
+            id: id,
             start: start * factor,
             end: end * factor,
             text: text,

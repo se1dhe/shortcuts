@@ -736,7 +736,7 @@ struct SettingsView: View {
 
 // MARK: - Watermark appearance editor
 
-private struct WatermarkAppearanceEditor: View {
+struct WatermarkAppearanceEditor: View {
 
     @Binding var appearance: WatermarkAppearance
 

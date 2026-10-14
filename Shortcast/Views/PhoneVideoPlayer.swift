@@ -15,6 +15,7 @@ struct PhoneVideoPlayer: NSViewRepresentable {
     /// means "until the end".
     var trimStart: Double = 0
     var trimEnd: Double = 0
+    var seekTime: Double? = nil
 
     func makeNSView(context: Context) -> AVPlayerView {
         let view = AVPlayerView()
@@ -34,6 +35,11 @@ struct PhoneVideoPlayer: NSViewRepresentable {
     func updateNSView(_ nsView: AVPlayerView, context: Context) {
         // Rebuild the loop if the trim window changed.
         context.coordinator.rebuildLooperIfNeeded(url: url, trimStart: trimStart, trimEnd: trimEnd)
+        if let seekTime, context.coordinator.lastSeekTime != seekTime {
+            context.coordinator.lastSeekTime = seekTime
+            let target = CMTime(seconds: seekTime, preferredTimescale: 600)
+            context.coordinator.player?.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+        }
     }
 
     static func dismantleNSView(_ nsView: AVPlayerView, coordinator: Coordinator) {
@@ -50,6 +56,7 @@ struct PhoneVideoPlayer: NSViewRepresentable {
     final class Coordinator {
         var player: AVQueuePlayer?
         var looper: AVPlayerLooper?
+        var lastSeekTime: Double?
         private var currentTrim: (Double, Double)?
 
         func rebuildLooperIfNeeded(url: URL, trimStart: Double, trimEnd: Double) {

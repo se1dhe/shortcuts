@@ -524,17 +524,22 @@ struct ClipEditorSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Edit short").font(.headline)
+                Text("Редактирование шортса")
+                    .font(.headline)
                 Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                Button("Готово") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
             }
-            .padding(14)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+
             Divider()
-            ScrollView {
-                ShortClipCard(clip: clip).padding(20)
-            }
+
+            ShortClipCard(clip: clip)
+                .padding(14)
         }
-        .frame(width: 920, height: 720)
+        .frame(minWidth: 1060, idealWidth: 1140, minHeight: 740, idealHeight: 820)
     }
 }
 

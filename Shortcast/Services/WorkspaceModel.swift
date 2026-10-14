@@ -1556,6 +1556,9 @@ final class WorkspaceModel {
             tmdbAPIKey: settings.tmdbAPIKey,
             descriptionMode: .movie,   // show the movie synopsis in the description
             textAd: settings.textAdEnabled,
+            candidateHook: clip.candidate.hook,
+            candidateSummary: clip.candidate.why,
+            transcriptSlice: clip.transcriptSlice,
             sceneDescriptionProvider: nil,
             fallbackMovieProvider: {
                 await modelManager.prepareDirectorIfNeeded()

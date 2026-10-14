@@ -332,39 +332,43 @@ struct ShortClipCard: View {
 
     // MARK: - Cinema quick editor (main section, YouTube clips only)
 
-    /// Binding to the TikTok variant's hook (the text shown on social media,
-    /// not the burned-in overlay). Falls back to a no-op when no variant exists.
-    private var tiktokHookBinding: Binding<String> {
+    // MARK: - Cinema quick editor (main section, YouTube clips only)
+
+    /// Binding to the active platform's hook / title.
+    private var platformHookBinding: Binding<String> {
         Binding(
             get: {
-                clip.variants.first(where: { $0.platform == .tiktok })?.hook ?? ""
+                let target = clip.variants.first(where: { $0.platform == previewPlatform }) ?? clip.variants.first
+                return target?.hook ?? ""
             },
             set: { newValue in
-                // Capture the old hook before writing the new one so we can
-                // decide whether to sync overlayText (only when it was matching).
-                let oldHook = clip.variants.first(where: { $0.platform == .tiktok })?.hook ?? ""
-                if let idx = clip.variants.firstIndex(where: { $0.platform == .tiktok }) {
+                let oldHook = clip.variants.first(where: { $0.platform == previewPlatform })?.hook ?? ""
+                if let idx = clip.variants.firstIndex(where: { $0.platform == previewPlatform }) {
                     clip.variants[idx].hook = newValue
+                } else {
+                    clip.variants.append(PostVariant(
+                        platform: previewPlatform,
+                        hook: newValue,
+                        summary: "",
+                        hashtags: [],
+                        pinnedComment: ""
+                    ))
                 }
                 let overlayMatchedOldHook = clip.overlayText.trimmed == oldHook.trimmed
                     || clip.overlayText.trimmed.isEmpty
-                if overlayMatchedOldHook {
+                if overlayMatchedOldHook || previewPlatform == .tiktok {
                     clip.overlayText = newValue.truncatingToHook(limit: 60)
                 }
             })
     }
 
-    /// Binding to the TikTok variant's summary (description / caption body).
-    private var tiktokSummaryBinding: Binding<String> {
-        Binding(
-            get: {
-                clip.variants.first(where: { $0.platform == .tiktok })?.summary ?? ""
-            },
-            set: { newValue in
-                if let idx = clip.variants.firstIndex(where: { $0.platform == .tiktok }) {
-                    clip.variants[idx].summary = newValue
-                }
-            })
+    private var platformHookPlaceholder: String {
+        switch previewPlatform {
+        case .tiktok:    "Ударный виральный хук сцены..."
+        case .instagram: "🎬 Кинематографичный заголовок..."
+        case .youtube:   "Интригующий заголовок... #Shorts"
+        case .telegram:  "🎬 Название фильма (Год)"
+        }
     }
 
     private var movieTitleBinding: Binding<String> {
@@ -396,23 +400,21 @@ struct ShortClipCard: View {
         Binding(
             get: {
                 let target = clip.variants.first(where: { $0.platform == previewPlatform }) ?? clip.variants.first
-                let summary = target?.summary.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let tags = target?.hashtagLine.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return [summary, tags].filter { !$0.isEmpty }.joined(separator: "\n\n")
+                return target?.fullDescriptionWithTags ?? ""
             },
             set: { newValue in
-                let (summary, tags) = SocialCopyBox.splitCombined(newValue)
                 if let idx = clip.variants.firstIndex(where: { $0.platform == previewPlatform }) {
-                    clip.variants[idx].summary = summary
-                    clip.variants[idx].hashtags = tags
+                    clip.variants[idx].updateFromCombinedDescription(newValue)
                 } else {
-                    clip.variants.append(PostVariant(
+                    var newVariant = PostVariant(
                         platform: previewPlatform,
                         hook: clip.displayTitle,
-                        summary: summary,
-                        hashtags: tags,
+                        summary: "",
+                        hashtags: [],
                         pinnedComment: ""
-                    ))
+                    )
+                    newVariant.updateFromCombinedDescription(newValue)
+                    clip.variants.append(newVariant)
                 }
             })
     }
@@ -472,12 +474,27 @@ struct ShortClipCard: View {
 
             Divider()
 
-            // ── Hook ───────────────────────────────────────────────────
+            // ── Platform selector ─────────────────────────────────────
+            Picker("Платформа", selection: $previewPlatform) {
+                ForEach(SocialPlatform.allCases) { platform in
+                    Label(platform.rawValue.capitalized, systemImage: platform.symbolName)
+                        .tag(platform)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            // ── Name / Hook column ────────────────────────────────────
             VStack(alignment: .leading, spacing: 6) {
-                Text("Хук (заголовок)")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                TextField("🎬 Название фильма (2008)", text: tiktokHookBinding, axis: .vertical)
+                HStack {
+                    Text("Название (хук):")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(previewPlatform.displayName)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                TextField(platformHookPlaceholder, text: platformHookBinding, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...2)
                 Toggle(isOn: $clip.overlayEnabled) {
@@ -487,10 +504,10 @@ struct ShortClipCard: View {
                 .toggleStyle(.switch)
             }
 
-            // ── Description & Hashtags (Combined in one window) ────────
+            // ── Description & Hashtags column ─────────────────────────
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("Описание и хештеги:")
+                    Text("Описание (с тегами внутри):")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -506,19 +523,11 @@ struct ShortClipCard: View {
                     }
                 }
 
-                Picker("Платформа", selection: $previewPlatform) {
-                    ForEach(SocialPlatform.allCases) { platform in
-                        Label(platform.rawValue.capitalized, systemImage: platform.symbolName)
-                            .tag(platform)
-                    }
-                }
-                .pickerStyle(.segmented)
-
                 Toggle(isOn: Binding(
                     get: { settings.textAdEnabled },
                     set: { settings.textAdEnabled = $0; regenerateCinemaContent() }
                 )) {
-                    Label("Текстовая реклама бота — описание = промо @RedQueenSecurity_Bot",
+                    Label("Текстовая реклама бота — промо @RedQueenSecurity_Bot",
                           systemImage: "megaphone.fill")
                         .font(.caption)
                 }
@@ -812,6 +821,9 @@ struct ShortClipCard: View {
                 descriptionMode: mode,
                 textAd: settings.textAdEnabled,
                 preselectedMovie: preselected,
+                candidateHook: clip.candidate.hook,
+                candidateSummary: clip.candidate.why,
+                transcriptSlice: clip.transcriptSlice,
                 sceneDescriptionProvider: {
                     await modelManager.momentFinder.describeScene(
                         transcriptSlice: clip.transcriptSlice,
@@ -858,6 +870,9 @@ struct ShortClipCard: View {
                 descriptionMode: mode,
                 textAd: settings.textAdEnabled,
                 preselectedMovie: movie,
+                candidateHook: clip.candidate.hook,
+                candidateSummary: clip.candidate.why,
+                transcriptSlice: clip.transcriptSlice,
                 sceneDescriptionProvider: {
                     await modelManager.momentFinder.describeScene(
                         transcriptSlice: clip.transcriptSlice,
@@ -1110,9 +1125,7 @@ private struct SocialCopyBox: View {
     /// The full text a user would paste into a platform: description, a blank
     /// line, then the hashtags.
     private var combinedText: String {
-        let summary = variant.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        let tags = variant.hashtagLine.trimmingCharacters(in: .whitespacesAndNewlines)
-        return [summary, tags].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        variant.fullDescriptionWithTags
     }
 
     private func copyAll() {
@@ -1133,27 +1146,12 @@ private struct SocialCopyBox: View {
         Binding(
             get: { combinedText },
             set: { newValue in
-                let (summary, tags) = Self.splitCombined(newValue)
-                variant.summary = summary
-                variant.hashtags = tags
+                variant.updateFromCombinedDescription(newValue)
             })
     }
 
-    /// Splits combined text into (description, hashtags). The trailing block of
-    /// `#`-prefixed tokens becomes the hashtag list; everything before it is the
-    /// description. If there are no trailing hashtags, it's all description.
+    /// Splits combined text into (description, hashtags). Delegates to PostVariant.parseCombinedDescription.
     static func splitCombined(_ text: String) -> (summary: String, hashtags: [String]) {
-        // Match a trailing run of "#tag" tokens (and the whitespace before them).
-        let pattern = "(\\s*#[^\\s#]\\S*)+\\s*$"
-        guard let range = text.range(of: pattern, options: .regularExpression) else {
-            return (text.trimmingCharacters(in: .whitespacesAndNewlines), [])
-        }
-        let summary = String(text[..<range.lowerBound])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let tags = text[range.lowerBound...]
-            .split(whereSeparator: { " \n\t,".contains($0) })
-            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "# ")) }
-            .filter { !$0.isEmpty }
-        return (summary, tags)
+        PostVariant.parseCombinedDescription(text)
     }
 }

@@ -65,6 +65,43 @@ struct PostVariant: Identifiable, Codable, Sendable, Equatable {
             .map { $0.hasPrefix("#") ? $0 : "#\($0)" }
             .joined(separator: " ")
     }
+
+    /// Combined description and hashtags: `summary` + `\n\n` + `hashtagLine` (if tags are present).
+    var fullDescriptionWithTags: String {
+        let trimmedSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedTags = hashtagLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedSummary.isEmpty {
+            return trimmedTags
+        }
+        if trimmedTags.isEmpty {
+            return trimmedSummary
+        }
+        return "\(trimmedSummary)\n\n\(trimmedTags)"
+    }
+
+    /// Updates `summary` and `hashtags` from a single combined text block.
+    /// The trailing run of `#`-prefixed tags is parsed into `hashtags`, while the preceding text becomes `summary`.
+    mutating func updateFromCombinedDescription(_ text: String) {
+        let (parsedSummary, parsedTags) = Self.parseCombinedDescription(text)
+        self.summary = parsedSummary
+        self.hashtags = parsedTags
+    }
+
+    /// Splits combined text into (summary, hashtags). The trailing block of `#`-prefixed tokens
+    /// becomes the hashtag list; everything before it is the summary/description.
+    static func parseCombinedDescription(_ text: String) -> (summary: String, hashtags: [String]) {
+        let pattern = "(\\s*#[^\\s#]\\S*)+\\s*$"
+        guard let range = text.range(of: pattern, options: .regularExpression) else {
+            return (text.trimmingCharacters(in: .whitespacesAndNewlines), [])
+        }
+        let parsedSummary = String(text[..<range.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let tags = text[range.lowerBound...]
+            .split(whereSeparator: { " \n\t,".contains($0) })
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "# ")) }
+            .filter { !$0.isEmpty }
+        return (parsedSummary, tags)
+    }
 }
 
 /// Full result of one on-device generation pass.

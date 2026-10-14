@@ -55,6 +55,9 @@ enum CinemaContentGenerator {
         descriptionMode: DescriptionMode = .scene,
         textAd: Bool = false,
         preselectedMovie: TMDBMovie? = nil,
+        candidateHook: String? = nil,
+        candidateSummary: String? = nil,
+        transcriptSlice: String? = nil,
         sceneDescriptionProvider: (() async -> String?)? = nil,
         fallbackMovieProvider: (() async -> TMDBMovie?)? = nil
     ) async -> (movie: TMDBMovie?, candidates: [TMDBMovie], query: MovieSearchQuery, content: [SocialPlatform: GeneratedContent], error: String?) {
@@ -97,7 +100,10 @@ enum CinemaContentGenerator {
                 movie: movie,
                 descriptionMode: descriptionMode,
                 textAd: textAd,
-                sceneDescription: sceneDescription)
+                sceneDescription: sceneDescription,
+                candidateHook: candidateHook,
+                candidateSummary: candidateSummary,
+                transcriptSlice: transcriptSlice)
         } else {
             resolvedQuery = query
             content = cinemaPlatformContent(
@@ -105,7 +111,10 @@ enum CinemaContentGenerator {
                 sourceText: sourceText,
                 descriptionMode: descriptionMode,
                 textAd: textAd,
-                sceneDescription: sceneDescription)
+                sceneDescription: sceneDescription,
+                candidateHook: candidateHook,
+                candidateSummary: candidateSummary,
+                transcriptSlice: transcriptSlice)
             if !tmdbAPIKey.trimmed.isEmpty {
                 error = String(localized: "TMDB did not find this movie. Generated from entered title and year.")
             }
@@ -388,180 +397,433 @@ enum CinemaContentGenerator {
         return queries.filter { seen.insert($0).inserted }
     }
 
-    // MARK: - Content builders
+    // MARK: - Platform Copywriters (SOLID / OCP / SRP)
 
-    private static func cinemaPlatformContent(
+    /// Context describing the movie, scene, and platform parameters for copywriting.
+    struct CinemaSceneContext: Sendable {
+        var movieTitle: String
+        var year: String?
+        var genres: [String] = []
+        var overview: String = ""
+        var imdbRating: Double? = nil
+        var cast: [String] = []
+        var director: String? = nil
+        var candidateHook: String? = nil
+        var candidateSummary: String? = nil
+        var transcriptSlice: String? = nil
+        var descriptionMode: DescriptionMode = .scene
+        var textAd: Bool = false
+        var sourceText: String = ""
+    }
+
+    /// Contract for platform-specific copywriting (Open/Closed & Liskov Substitution).
+    protocol CinemaPlatformCopywriter: Sendable {
+        var platform: SocialPlatform { get }
+        func generate(context: CinemaSceneContext) -> GeneratedContent
+    }
+
+    /// TikTok copywriter: Dynamic viral hook, intriguing hero dilemma, comment discussion call, genre hashtags.
+    struct TikTokCinemaCopywriter: CinemaPlatformCopywriter {
+        var platform: SocialPlatform { .tiktok }
+
+        func generate(context: CinemaSceneContext) -> GeneratedContent {
+            let hook = buildHook(context: context)
+            let description = buildDescription(context: context)
+            let hashtags = buildHashtags(context: context)
+            return GeneratedContent(hook: hook, description: description, hashtags: hashtags)
+        }
+
+        private func buildHook(context: CinemaSceneContext) -> String {
+            if let hook = context.candidateHook?.trimmed, !hook.isEmpty {
+                return hook.hasTerminalEmoji ? hook : "\(hook) 😳"
+            }
+            return CinemaContentGenerator.dynamicGenreHook(genres: context.genres, defaultEmoji: "😳")
+        }
+
+        private func buildDescription(context: CinemaSceneContext) -> String {
+            if context.textAd {
+                let dynamicHook = buildHook(context: context)
+                return "\(dynamicHook)\n\n🎬 Название фильма и где смотреть уже в Telegram: @telonyx_club\n\n\(CinemaContentGenerator.botAdMessage())\n\nСмотри до конца 👇"
+            }
+
+            let effectiveSummary = CinemaContentGenerator.resolvedSceneSummary(context: context)
+            let brief = effectiveSummary.count > 180
+                ? String(effectiveSummary.prefix(180).trimmingCharacters(in: .whitespacesAndNewlines)) + "..."
+                : effectiveSummary
+
+            var paragraphs: [String] = []
+            if !brief.isEmpty {
+                paragraphs.append(brief)
+            }
+
+            let lower = context.genres.map { $0.lowercased() }
+            let dilemmaQuestion: String
+            if lower.contains(where: { $0.contains("комеди") }) {
+                dilemmaQuestion = "Узнали себя или знакомого в этой ситуации? 😂 Напишите в комменты 👇"
+            } else {
+                dilemmaQuestion = "Как бы ты поступил на месте героя? Напиши в комменты 👇"
+            }
+            paragraphs.append(dilemmaQuestion)
+            paragraphs.append("🍿 Название фильма и где посмотреть уже выложили в наш Telegram: @telonyx_club (активная ссылка в шапке профиля 👆)")
+
+            return paragraphs.joined(separator: "\n\n")
+        }
+
+        private func buildHashtags(context: CinemaSceneContext) -> String {
+            let base = CinemaContentGenerator.baseGenresAndCastHashtags(context: context, includeTitle: false)
+            let tags = CinemaContentGenerator.buildViralHashtags(
+                base: base,
+                trending: CinemaContentGenerator.tiktokViralHashtags,
+                maxCount: 12,
+                textAd: context.textAd
+            )
+            return tags.joined(separator: " ")
+        }
+    }
+
+    /// Instagram Reels copywriter: Cinematographic hook, acting and atmospheric tension, save call, aesthetics tags.
+    struct InstagramCinemaCopywriter: CinemaPlatformCopywriter {
+        var platform: SocialPlatform { .instagram }
+
+        func generate(context: CinemaSceneContext) -> GeneratedContent {
+            let hook = buildHook(context: context)
+            let description = buildDescription(context: context)
+            let hashtags = buildHashtags(context: context)
+            return GeneratedContent(hook: hook, description: description, hashtags: hashtags)
+        }
+
+        private func buildHook(context: CinemaSceneContext) -> String {
+            if let hook = context.candidateHook?.trimmed, !hook.isEmpty {
+                return hook.hasTerminalEmoji ? hook : "🎬 \(hook) 🍿"
+            }
+            let lower = context.genres.map { $0.lowercased() }
+            if lower.contains(where: { $0.contains("триллер") || $0.contains("драма") }) {
+                return "Культовый момент: когда атмосфера и актерская игра на пределе 🎭"
+            }
+            return "Момент, ради которого стоит пересмотреть весь фильм 🍿"
+        }
+
+        private func buildDescription(context: CinemaSceneContext) -> String {
+            if context.textAd {
+                return "Этот момент пробирает до мурашек... 🍿\n\n🎬 Название фильма в шапке профиля 👆 (Telegram: @telonyx_club)\n\n\(CinemaContentGenerator.botAdMessage())\n\n📌 Сохраняй в закладки!"
+            }
+
+            var paragraphs: [String] = []
+            paragraphs.append("Этот момент пробирает до мурашек... Актерская игра и режиссура создают невероятное напряжение. 🍿")
+
+            let effectiveSummary = CinemaContentGenerator.resolvedSceneSummary(context: context)
+            if !effectiveSummary.isEmpty {
+                paragraphs.append(effectiveSummary)
+            }
+
+            paragraphs.append("📌 Сохраняй в закладки, чтобы не потерять на вечер!\nОцени этот момент от 1 до 10 в комментариях 👇")
+            paragraphs.append("🎬 Название фильма и где посмотреть — в шапке профиля 👆 (Telegram: @telonyx_club)")
+
+            return paragraphs.joined(separator: "\n\n")
+        }
+
+        private func buildHashtags(context: CinemaSceneContext) -> String {
+            let base = CinemaContentGenerator.baseGenresAndCastHashtags(context: context, includeTitle: false)
+            let tags = CinemaContentGenerator.buildViralHashtags(
+                base: base,
+                trending: CinemaContentGenerator.instagramViralHashtags,
+                maxCount: 15,
+                textAd: context.textAd
+            )
+            return tags.joined(separator: " ")
+        }
+    }
+
+    /// YouTube Shorts copywriter: Clickable relevant hook with #Shorts, character motivation question, channel source.
+    struct YouTubeCinemaCopywriter: CinemaPlatformCopywriter {
+        var platform: SocialPlatform { .youtube }
+
+        func generate(context: CinemaSceneContext) -> GeneratedContent {
+            let hook = buildHook(context: context)
+            let description = buildDescription(context: context)
+            let hashtags = buildHashtags(context: context)
+            return GeneratedContent(hook: hook, description: description, hashtags: hashtags)
+        }
+
+        private func buildHook(context: CinemaSceneContext) -> String {
+            let baseHook: String
+            if let hook = context.candidateHook?.trimmed, !hook.isEmpty {
+                baseHook = hook
+            } else {
+                baseHook = CinemaContentGenerator.dynamicGenreHook(genres: context.genres, defaultEmoji: "😳")
+            }
+            if baseHook.localizedCaseInsensitiveContains("#shorts") {
+                return baseHook
+            }
+            return "\(baseHook) #Shorts"
+        }
+
+        private func buildDescription(context: CinemaSceneContext) -> String {
+            if context.textAd {
+                let dynamicHook = buildHook(context: context)
+                return "\(dynamicHook)\n\n🎬 Название фильма в Telegram: https://t.me/telonyx_club\n\n\(CinemaContentGenerator.botAdMessage())\n\n#Shorts #кино #фильмы"
+            }
+
+            var paragraphs: [String] = []
+            let effectiveSummary = CinemaContentGenerator.resolvedSceneSummary(context: context)
+            if !effectiveSummary.isEmpty {
+                paragraphs.append(effectiveSummary)
+            }
+
+            paragraphs.append("Что двигало героем в этот момент — холодный расчет или отчаяние? Напишите свои мысли в комментариях 👇")
+            paragraphs.append("🎬 Название фильма и где посмотреть выложили в наш Telegram: https://t.me/telonyx_club (ссылка в описании канала и в закрепленном комментарии) 👇")
+            paragraphs.append("🔔 Подписывайся на канал, чтобы не пропустить лучшие моменты из кино!\n\n#Shorts #кино #фильмы")
+
+            return paragraphs.joined(separator: "\n\n")
+        }
+
+        private func buildHashtags(context: CinemaSceneContext) -> String {
+            let base = CinemaContentGenerator.baseGenresAndCastHashtags(context: context, includeTitle: false)
+            let tags = CinemaContentGenerator.buildViralHashtags(
+                base: base,
+                trending: CinemaContentGenerator.youtubeShortsViralHashtags,
+                maxCount: 10,
+                textAd: context.textAd
+            )
+            return tags.joined(separator: " ")
+        }
+    }
+
+    /// Telegram copywriter: Rich card with movie title, year, IMDb rating, genres, scene quote, synopsis, subscriber prompt.
+    struct TelegramCinemaCopywriter: CinemaPlatformCopywriter {
+        var platform: SocialPlatform { .telegram }
+
+        func generate(context: CinemaSceneContext) -> GeneratedContent {
+            let yearPart = (context.year?.trimmed.isEmpty == false) ? " (\(context.year!.trimmed))" : ""
+            let hook = "🎬 \(context.movieTitle)\(yearPart)"
+            let description = buildCardDescription(context: context, yearPart: yearPart)
+            let hashtags = buildHashtags(context: context)
+            return GeneratedContent(hook: hook, description: description, hashtags: hashtags)
+        }
+
+        private func buildCardDescription(context: CinemaSceneContext, yearPart: String) -> String {
+            var lines: [String] = []
+            lines.append("🎬 «\(context.movieTitle)»\(yearPart)")
+            lines.append("")
+
+            var metaItems: [String] = []
+            if let imdb = context.imdbRating, imdb > 0 {
+                metaItems.append(String(format: "⭐️ IMDb: %.1f", imdb))
+            }
+            if !context.genres.isEmpty {
+                metaItems.append("🎭 " + context.genres.prefix(3).joined(separator: ", "))
+            }
+            if !metaItems.isEmpty {
+                lines.append(metaItems.joined(separator: " | "))
+                lines.append("")
+            }
+
+            var credits: [String] = []
+            if let director = context.director?.trimmed, !director.isEmpty {
+                credits.append("🎥 Режиссер: \(director)")
+            }
+            if !context.cast.isEmpty {
+                credits.append("👥 В ролях: " + context.cast.prefix(3).joined(separator: ", "))
+            }
+            if !credits.isEmpty {
+                lines.append(contentsOf: credits)
+                lines.append("")
+            }
+
+            if let quote = CinemaContentGenerator.extractQuote(from: context.transcriptSlice, fallback: context.candidateHook) {
+                lines.append("💬 «\(quote)»")
+                lines.append("")
+            }
+
+            if let sceneSummary = context.candidateSummary?.trimmed, !sceneSummary.isEmpty {
+                lines.append("📝 О сцене:")
+                let sceneText = sceneSummary.count > 300
+                    ? String(sceneSummary.prefix(300).trimmingCharacters(in: .whitespacesAndNewlines)) + "..."
+                    : sceneSummary
+                lines.append(sceneText)
+                lines.append("")
+            }
+
+            if !context.overview.trimmed.isEmpty {
+                lines.append("📖 О фильме:")
+                let overviewText = context.overview.count > 450
+                    ? String(context.overview.prefix(450).trimmingCharacters(in: .whitespacesAndNewlines)) + "..."
+                    : context.overview
+                lines.append(overviewText)
+                lines.append("")
+            }
+
+            let lower = context.genres.map { $0.lowercased() }
+            let question: String
+            if lower.contains(where: { $0.contains("триллер") || $0.contains("детектив") }) {
+                question = "❓ Как вам развязка этого фильма? Догадались сразу или были в шоке? Пишите в комментариях!"
+            } else if lower.contains(where: { $0.contains("криминал") || $0.contains("боевик") }) {
+                question = "❓ Оправдан ли поступок главного героя в этой ситуации? Делитесь мнением!"
+            } else if lower.contains(where: { $0.contains("комеди") }) {
+                question = "❓ Сколько раз пересматривали эту комедию? Какой момент самый смешной?"
+            } else {
+                question = "❓ Смотрели этот фильм? Как оцениваете? Оставьте оценку от 1 до 10 в комментариях!"
+            }
+            lines.append(question)
+            lines.append("")
+
+            lines.append("🍿 Приятного просмотра!")
+            lines.append("Канал: @telonyx_club")
+            return lines.joined(separator: "\n")
+        }
+
+        private func buildHashtags(context: CinemaSceneContext) -> String {
+            let base = CinemaContentGenerator.baseGenresAndCastHashtags(context: context, includeTitle: true)
+            return base.joined(separator: " ")
+        }
+    }
+
+    // MARK: - Content Dispatcher (OCP / DIP)
+
+    static func cinemaPlatformContent(
+        context: CinemaSceneContext
+    ) -> [SocialPlatform: GeneratedContent] {
+        let copywriters: [CinemaPlatformCopywriter] = [
+            TikTokCinemaCopywriter(),
+            InstagramCinemaCopywriter(),
+            YouTubeCinemaCopywriter(),
+            TelegramCinemaCopywriter()
+        ]
+        var result: [SocialPlatform: GeneratedContent] = [:]
+        for copywriter in copywriters {
+            result[copywriter.platform] = copywriter.generate(context: context)
+        }
+        return result
+    }
+
+    static func cinemaPlatformContent(
         movie: TMDBMovie,
         descriptionMode: DescriptionMode,
         textAd: Bool,
-        sceneDescription: String?
+        sceneDescription: String?,
+        candidateHook: String? = nil,
+        candidateSummary: String? = nil,
+        transcriptSlice: String? = nil
     ) -> [SocialPlatform: GeneratedContent] {
-        let yearPart = movie.year.isEmpty ? "" : " (\(movie.year))"
-        let title = movie.title
-        let synopsis = resolvedBodyText(
+        let context = CinemaSceneContext(
+            movieTitle: movie.title,
+            year: movie.year.isEmpty ? nil : movie.year,
+            genres: movie.genres,
             overview: movie.overview,
+            imdbRating: movie.imdbRating,
+            cast: movie.cast,
+            director: movie.director,
+            candidateHook: candidateHook,
+            candidateSummary: candidateSummary ?? sceneDescription,
+            transcriptSlice: transcriptSlice,
             descriptionMode: descriptionMode,
-            sceneDescription: sceneDescription)
-
-        // Viral hooks (intrigue without spoiling the movie title)
-        let viralVideoHook = "Такой развязки никто не ожидал... 😳"
-        let youtubeHook = "Такой развязки точно никто не ожидал... 😳 #Shorts"
-        let telegramHook = "🎬 \(title)\(yearPart)"
-
-        // Viral platform-specific descriptions with @telonyx_club funnel
-        let tiktokDesc = tiktokViralDescription(synopsis: synopsis, textAd: textAd)
-        let instaDesc = instagramViralDescription(synopsis: synopsis, textAd: textAd)
-        let youtubeDesc = youtubeViralDescription(synopsis: synopsis, textAd: textAd)
-        let telegramDesc = telegramCardDescription(title: title, yearPart: yearPart, synopsis: synopsis, movie: movie)
-
-        // Viral hashtags (genres and trends only, no movie title in video platforms!)
-        let movieGenresAndCast = baseCinemaHashtags(movie: movie, includeTitle: false)
-        let telegramMovieTags = baseCinemaHashtags(movie: movie, includeTitle: true)
-
-        let tiktokTags = buildViralHashtags(base: movieGenresAndCast, trending: tiktokViralHashtags, maxCount: 12, textAd: textAd)
-        let instaTags = buildViralHashtags(base: movieGenresAndCast, trending: instagramViralHashtags, maxCount: 15, textAd: textAd)
-        let youtubeTags = buildViralHashtags(base: movieGenresAndCast, trending: youtubeShortsViralHashtags, maxCount: 10, textAd: textAd)
-
-        return [
-            .tiktok: GeneratedContent(hook: viralVideoHook, description: tiktokDesc, hashtags: tiktokTags.joined(separator: " ")),
-            .instagram: GeneratedContent(hook: viralVideoHook, description: instaDesc, hashtags: instaTags.joined(separator: " ")),
-            .youtube: GeneratedContent(hook: youtubeHook, description: youtubeDesc, hashtags: youtubeTags.joined(separator: " ")),
-            .telegram: GeneratedContent(hook: telegramHook, description: telegramDesc, hashtags: telegramMovieTags.joined(separator: " "))
-        ]
+            textAd: textAd,
+            sourceText: ""
+        )
+        return cinemaPlatformContent(context: context)
     }
 
-    private static func cinemaPlatformContent(
+    static func cinemaPlatformContent(
         query: MovieSearchQuery,
         sourceText: String,
         descriptionMode: DescriptionMode,
         textAd: Bool,
-        sceneDescription: String?
+        sceneDescription: String?,
+        candidateHook: String? = nil,
+        candidateSummary: String? = nil,
+        transcriptSlice: String? = nil
     ) -> [SocialPlatform: GeneratedContent] {
-        let yearPart = query.year?.trimmed.isEmpty == false ? " (\(query.year!.trimmed))" : ""
-        let title = query.title
-        let synopsis = sceneDescription?.trimmed ?? ""
-
-        let viralVideoHook = "Такой развязки никто не ожидал... 😳"
-        let youtubeHook = "Такой развязки точно никто не ожидал... 😳 #Shorts"
-        let telegramHook = "🎬 \(title)\(yearPart)"
-
-        let tiktokDesc = tiktokViralDescription(synopsis: synopsis, textAd: textAd)
-        let instaDesc = instagramViralDescription(synopsis: synopsis, textAd: textAd)
-        let youtubeDesc = youtubeViralDescription(synopsis: synopsis, textAd: textAd)
-        let telegramDesc = telegramCardDescription(title: title, yearPart: yearPart, synopsis: synopsis, movie: nil)
-
-        let plainTags = baseCinemaHashtags(title: title, sourceText: sourceText, includeTitle: false)
-        let telegramTags = baseCinemaHashtags(title: title, sourceText: sourceText, includeTitle: true)
-
-        let tiktokTags = buildViralHashtags(base: plainTags, trending: tiktokViralHashtags, maxCount: 12, textAd: textAd)
-        let instaTags = buildViralHashtags(base: plainTags, trending: instagramViralHashtags, maxCount: 15, textAd: textAd)
-        let youtubeTags = buildViralHashtags(base: plainTags, trending: youtubeShortsViralHashtags, maxCount: 10, textAd: textAd)
-
-        return [
-            .tiktok: GeneratedContent(hook: viralVideoHook, description: tiktokDesc, hashtags: tiktokTags.joined(separator: " ")),
-            .instagram: GeneratedContent(hook: viralVideoHook, description: instaDesc, hashtags: instaTags.joined(separator: " ")),
-            .youtube: GeneratedContent(hook: youtubeHook, description: youtubeDesc, hashtags: youtubeTags.joined(separator: " ")),
-            .telegram: GeneratedContent(hook: telegramHook, description: telegramDesc, hashtags: telegramTags.joined(separator: " "))
-        ]
+        let context = CinemaSceneContext(
+            movieTitle: query.title,
+            year: query.year,
+            genres: [],
+            overview: "",
+            imdbRating: nil,
+            cast: [],
+            director: nil,
+            candidateHook: candidateHook,
+            candidateSummary: candidateSummary ?? sceneDescription,
+            transcriptSlice: transcriptSlice,
+            descriptionMode: descriptionMode,
+            textAd: textAd,
+            sourceText: sourceText
+        )
+        return cinemaPlatformContent(context: context)
     }
 
-    private static func resolvedBodyText(
-        overview: String,
-        descriptionMode: DescriptionMode,
-        sceneDescription: String?
-    ) -> String {
-        let overview = overview.trimmed
-        let scene = sceneDescription?.trimmed ?? ""
-        switch descriptionMode {
+    static func resolvedSceneSummary(context: CinemaSceneContext) -> String {
+        let sceneWhy = context.candidateSummary?.trimmed ?? ""
+        let overview = context.overview.trimmed
+        switch context.descriptionMode {
         case .scene:
-            return !scene.isEmpty ? scene : overview
+            return !sceneWhy.isEmpty ? sceneWhy : overview
         case .movie:
-            return !overview.isEmpty ? overview : scene
+            return !overview.isEmpty ? overview : sceneWhy
         }
     }
 
-    private static func tiktokViralDescription(
-        synopsis: String,
-        textAd: Bool
-    ) -> String {
-        if textAd {
-            return "Такой развязки никто не ожидал... 😳\n\n🎬 Название фильма и где смотреть уже в Telegram: @telonyx_club\n\n\(botAdMessage())\n\nСмотри до конца 👇"
+    static func dynamicGenreHook(genres: [String], defaultEmoji: String = "😳") -> String {
+        let lower = genres.map { $0.lowercased() }
+        if lower.contains(where: { $0.contains("криминал") || $0.contains("боевик") || $0.contains("детектив") }) {
+            return "Он совершил роковую ошибку... 🤫"
+        } else if lower.contains(where: { $0.contains("триллер") || $0.contains("ужас") }) {
+            return "В этот момент напряжение зашкаливает... 😱"
+        } else if lower.contains(where: { $0.contains("драма") || $0.contains("мелодрама") }) {
+            return "Слова, после которых всё изменилось... 💔"
+        } else if lower.contains(where: { $0.contains("фантастика") || $0.contains("приключени") }) {
+            return "В этот момент реальность перевернулась... 🤯"
+        } else if lower.contains(where: { $0.contains("комеди") }) {
+            return "Эту сцену пересматривают сотни раз 😂"
+        } else {
+            return "Момент, который врезается в память навсегда... \(defaultEmoji)"
         }
-        let leadIn = "Такой развязки точно никто не ожидал... 😳"
-        let brief = synopsis.count > 140 ? String(synopsis.prefix(140).trimmingCharacters(in: .whitespacesAndNewlines)) + "..." : synopsis
-        var text = leadIn
-        if !brief.isEmpty {
-            text += "\n\n\(brief)"
-        }
-        text += "\n\nКак бы ты поступил на его месте? Напиши в комменты 👇"
-        text += "\n\n🍿 Название фильма и где посмотреть уже выложили в наш Telegram: @telonyx_club (активная ссылка в шапке профиля 👆)"
-        return text
     }
 
-    private static func instagramViralDescription(
-        synopsis: String,
-        textAd: Bool
-    ) -> String {
-        if textAd {
-            return "Этот момент пробирает до мурашек... 🍿\n\n🎬 Название фильма в шапке профиля 👆 (Telegram: @telonyx_club)\n\n\(botAdMessage())\n\n📌 Сохраняй в закладки!"
+    static func extractQuote(from transcript: String?, fallback: String?) -> String? {
+        if let fallback = fallback?.trimmed, !fallback.isEmpty {
+            let quoteCandidates = regexRanges(pattern: #"["«]([^"»]+)["»]"#, in: fallback)
+                .map { String(fallback[$0]).trimmingCharacters(in: CharacterSet(charactersIn: "\"«» ")) }
+            if let first = quoteCandidates.first, first.count >= 6 {
+                return first
+            }
+            if fallback.contains(":") || fallback.contains("—") {
+                let parts = fallback.components(separatedBy: CharacterSet(charactersIn: ":—"))
+                if let last = parts.last?.trimmingCharacters(in: .whitespacesAndNewlines), last.count >= 6 && last.count < 100 {
+                    return last
+                }
+            }
         }
-        var text = "Этот момент пробирает до мурашек... 🍿"
-        if !synopsis.isEmpty {
-            text += "\n\n\(synopsis)"
+        guard let transcript = transcript?.trimmed, !transcript.isEmpty else { return nil }
+        let lines = transcript.components(separatedBy: CharacterSet.newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.count >= 10 && !$0.hasPrefix("[") }
+        if let firstLine = lines.first {
+            let cleaned = firstLine.replacingOccurrences(of: #"^\d+:\d+\s*"#, with: "", options: .regularExpression).trimmed
+            return cleaned.count > 100 ? String(cleaned.prefix(97)) + "..." : cleaned
         }
-        text += "\n\n📌 Сохраняй, чтобы не потерять на вечер!\nОцени этот момент от 1 до 10 в комментариях 👇"
-        text += "\n\n🎬 Название фильма и где посмотреть — в шапке профиля 👆 (Telegram: @telonyx_club)"
-        return text
+        return nil
     }
 
-    private static func youtubeViralDescription(
-        synopsis: String,
-        textAd: Bool
-    ) -> String {
-        if textAd {
-            return "Такой развязки никто не ожидал... 😳 #Shorts\n\n🎬 Название фильма в Telegram: https://t.me/telonyx_club\n\n\(botAdMessage())\n\n#Shorts #кино #фильмы"
+    static func baseGenresAndCastHashtags(context: CinemaSceneContext, includeTitle: Bool) -> [String] {
+        var tags: [String] = []
+        if includeTitle && !context.movieTitle.trimmed.isEmpty {
+            tags.append(hashtag(context.movieTitle))
         }
-        var text = "Такой развязки точно никто не ожидал... 😳"
-        if !synopsis.isEmpty {
-            text += "\n\n\(synopsis)"
+        tags.append(contentsOf: context.genres.prefix(3).map(hashtag))
+        tags.append(contentsOf: context.cast.prefix(2).map(hashtag))
+        if let director = context.director?.trimmed, !director.isEmpty {
+            tags.append(hashtag(director))
         }
-        text += "\n\n🎬 Название фильма и где посмотреть выложили в наш Telegram: https://t.me/telonyx_club (ссылка в описании канала и в закрепленном комментарии) 👇"
-        text += "\n\n🔔 Подписывайся на канал, чтобы не пропустить лучшие моменты из кино!\n\n#Shorts #кино #фильмы"
-        return text
-    }
-
-    private static func telegramCardDescription(
-        title: String,
-        yearPart: String,
-        synopsis: String,
-        movie: TMDBMovie?
-    ) -> String {
-        var lines: [String] = []
-        lines.append("🎬 «\(title)»\(yearPart)")
-        lines.append("")
-
-        var metaItems: [String] = []
-        if let imdb = movie?.imdbRating, imdb > 0 {
-            metaItems.append(String(format: "⭐️ IMDb: %.1f", imdb))
-        }
-        if let genres = movie?.genres, !genres.isEmpty {
-            metaItems.append("🎭 " + genres.prefix(3).joined(separator: ", "))
-        }
-        if !metaItems.isEmpty {
-            lines.append(metaItems.joined(separator: " | "))
-            lines.append("")
+        if tags.isEmpty && !context.sourceText.trimmed.isEmpty {
+            tags.append(contentsOf: hashtags(from: context.sourceText)
+                .filter { !genericCinemaHashtags.contains($0.lowercased()) }
+                .prefix(3))
         }
 
-        if !synopsis.isEmpty {
-            lines.append("📝 О фильме:")
-            let overviewText = synopsis.count > 500 ? String(synopsis.prefix(500).trimmingCharacters(in: .whitespacesAndNewlines)) + "..." : synopsis
-            lines.append(overviewText)
-            lines.append("")
-        }
-
-        lines.append("🍿 Приятного просмотра!")
-        lines.append("Канал: @telonyx_club")
-        return lines.joined(separator: "\n")
+        var seen = Set<String>()
+        return tags
+            .map(\.trimmed)
+            .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
     }
 
     /// The channel hashtag, placed right after the movie-title hashtag.
@@ -679,5 +941,17 @@ enum CinemaContentGenerator {
             .replacingOccurrences(of: #"[\p{P}\p{S}\s]+"#, with: "", options: .regularExpression)
             .trimmed
         return cleaned.isEmpty ? "" : "#\(cleaned)"
+    }
+}
+
+private extension String {
+    var hasTerminalEmoji: Bool {
+        guard let lastChar = self.trimmingCharacters(in: .whitespacesAndNewlines).last else { return false }
+        for scalar in lastChar.unicodeScalars {
+            if scalar.properties.isEmoji && (scalar.value > 0x2380 || scalar.properties.isEmojiPresentation) {
+                return true
+            }
+        }
+        return false
     }
 }

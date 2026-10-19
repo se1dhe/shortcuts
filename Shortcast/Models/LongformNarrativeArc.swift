@@ -37,12 +37,43 @@ struct LongformAct: Codable, Identifiable, Equatable, Sendable {
 
 /// 4-актная сквозная арка для длинного видео (хронометраж 420–600 сек / 7–10 мин)
 struct LongformNarrativeArc: Codable, Identifiable, Equatable, Sendable {
+
+    /// Честная бухгалтерия хронометража: что просили, сколько допускал материал фильма, сколько собрали.
+    /// Пороги отбора под этот потолок не ослабляются — тонкий материал только документируется.
+    struct DurationReport: Codable, Equatable, Sendable {
+        /// Длительность исходного фильма, с
+        let filmDuration: Double
+        /// Запрошенный пайплайном хронометраж ролика, с
+        let ask: Double
+        /// Эффективный целевой хронометраж, выведенный из длины фильма, с
+        let effectiveTarget: Double
+        /// Арифметический потолок из пригодного материала при неизменных gates, но не больше
+        /// бюджета акта: собранный хронометраж может его превысить на целый прогон, потому что
+        /// крой никогда не режется посередине мысли.
+        let admissibleCeiling: Double
+        /// Фактически собранный хронометраж, с
+        let achieved: Double
+        /// Доля собранного от эффективной цели
+        let fillRatio: Double
+        /// Число связных запусков речи в каждом из четырёх актов
+        let runsPerAct: [Int]
+        /// Хронометраж каждого акта, с
+        let perActDurations: [Double]
+        /// true — ни один запуск акта IV не начинается в зарезервированном финале фильма
+        let tailUnused: Bool
+        /// true — пороги отбора не ослаблялись ради достижения цели
+        let gatesUnchanged: Bool
+    }
+
     var id: String
     var movieTitle: String
     var concept: ThematicConcept
     var acts: [LongformAct]
     var summary: String
     var mood: String
+
+    /// Отчёт по хронометражу. Опционален: старые архивы арок декодируются без него.
+    var durationReport: DurationReport? = nil
 
     var segments: [TimeSegment] {
         acts.flatMap(\.segments)
@@ -58,7 +89,8 @@ struct LongformNarrativeArc: Codable, Identifiable, Equatable, Sendable {
         concept: ThematicConcept,
         acts: [LongformAct],
         summary: String,
-        mood: String = "dramatic"
+        mood: String = "dramatic",
+        durationReport: DurationReport? = nil
     ) {
         self.id = id
         self.movieTitle = movieTitle
@@ -66,5 +98,6 @@ struct LongformNarrativeArc: Codable, Identifiable, Equatable, Sendable {
         self.acts = acts
         self.summary = summary
         self.mood = mood
+        self.durationReport = durationReport
     }
 }

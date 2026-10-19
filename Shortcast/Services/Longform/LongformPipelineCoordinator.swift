@@ -13,19 +13,22 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
     private let subtitleRenderer: any LongformSubtitleRenderingProtocol
     private let thumbnailGenerator: any LongformThumbnailGeneratingProtocol
     private let audioLooper: any SeamlessAudioLooping
+    private let loudnessNormalizer: any LongformLoudnessNormalizing
 
     init(
         director: any LongformNarrativeDirecting = LongformNarrativeDirector(),
         audioMastering: any LongformAudioMasteringProtocol = LongformAudioMasteringService(),
         subtitleRenderer: any LongformSubtitleRenderingProtocol = LongformSubtitleRenderer(),
         thumbnailGenerator: any LongformThumbnailGeneratingProtocol = LongformThumbnailGenerator(),
-        audioLooper: any SeamlessAudioLooping = SeamlessAudioLoopService.shared
+        audioLooper: any SeamlessAudioLooping = SeamlessAudioLoopService.shared,
+        loudnessNormalizer: any LongformLoudnessNormalizing = LongformLoudnessService()
     ) {
         self.director = director
         self.audioMastering = audioMastering
         self.subtitleRenderer = subtitleRenderer
         self.thumbnailGenerator = thumbnailGenerator
         self.audioLooper = audioLooper
+        self.loudnessNormalizer = loudnessNormalizer
     }
 
     func buildLongformVideo(
@@ -91,7 +94,12 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
 
         // Вставляем нарезанные сцены фильма по актам с кинематографическим разделением
         for (actIndex, act) in arc.acts.enumerated() {
-            if actIndex > 0 {
+            // Пауза-«дыхание» имеет смысл только между двумя содержательными актами:
+            // пустой акт ничего не вставляет, и щель рядом с ним была бы мёртвым чёрным
+            // экраном, который при этом засчитывается в хронометраж.
+            if actIndex > 0,
+               !act.segments.isEmpty,
+               !arc.acts[actIndex - 1].segments.isEmpty {
                 let prevEnd = insertTime.seconds
                 // Добавляем меж-актовую паузу (черный экран, где звучит только фоновая музыка)
                 insertTime = CMTimeAdd(insertTime, CMTime(seconds: interActGap, preferredTimescale: 600))
@@ -427,6 +435,24 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             } catch {
                 Self.logger.warning("AntiCopyright pass failed, fallback to raw render: \(error.localizedDescription)")
                 finalVideoURL = intermediateURL
+            }
+        }
+
+        // 5.5. Пост-экспортная нормализация громкости до -14 LUFS / -1.5 dBTP (EBU R128).
+        // Это ПОСЛЕДНЯЯ аудио-операция конвейера: после защиты от Content ID и до обложки,
+        // поэтому её результат уже никем не перекодируется. Имя файла и расширение сохраняются,
+        // их читают генератор обложки и LongformResultsView. Этап не фатален: без ffmpeg,
+        // без свободного места или при ошибке прохода остается предыдущий рендер.
+        if audioSettings.loudnessNormalizationEnabled {
+            progressHandler?(0.92, "Нормализация громкости до -14 LUFS...")
+            do {
+                finalVideoURL = try await loudnessNormalizer.normalize(
+                    videoURL: finalVideoURL,
+                    outputURL: finalVideoURL,
+                    workingDirectory: workingDirectory
+                )
+            } catch {
+                Self.logger.warning("Loudness pass failed, keeping pre-normalized render: \(error.localizedDescription)")
             }
         }
 

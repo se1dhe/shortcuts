@@ -794,7 +794,8 @@ struct LongformActEditorView: View {
             concept: arc.concept,
             acts: updatedActs,
             summary: arc.summary,
-            mood: arc.mood
+            mood: arc.mood,
+            durationReport: arc.durationReport
         )
 
         onApply(updatedArc)

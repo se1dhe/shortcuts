@@ -89,14 +89,21 @@ final class WorkspaceModel {
 
     /// Хранит полный транскрипт фильма
     var storedTranscript: Transcript?
-    /// Выявленные темы для длинного ролика Shortcast Cinema
-    var discoveredConcepts: [ThematicConcept] = []
-    /// Полный анализ фильма с ОДНОЙ главной темой и разбором ИИ
+    /// Полный анализ фильма с ОДНОЙ главной темой и разбором ИИ — единственный
+    /// источник правды про темы; всё остальное выводится из него.
     var thematicAnalysis: ThematicAnalysisResult?
-    /// Драматургический разбор сценария от ИИ
-    var thematicReasoning: String?
     /// Выбранная тема для ролика
     var selectedConcept: ThematicConcept?
+    /// Драматургический разбор сценария от ИИ (производное от thematicAnalysis)
+    var thematicReasoning: String? { thematicAnalysis?.aiReasoning }
+    /// Выявленные темы для длинного ролика Shortcast Cinema (производное от thematicAnalysis)
+    var discoveredConcepts: [ThematicConcept] {
+        if let thematicAnalysis { return thematicAnalysis.allConcepts }
+        return legacyDiscoveredConcepts
+    }
+    /// Темы из архивов, сохранённых до появления thematicAnalysis. Только чтение
+    /// как запасной вариант: записей в них больше нет.
+    private var legacyDiscoveredConcepts: [ThematicConcept] = []
     /// Промежуточные параметры эссе для редактора субтитров
     var stagedConcept: ThematicConcept?
     var stagedConfirmedMovieTitle: String?
@@ -106,10 +113,16 @@ final class WorkspaceModel {
     var longformResult: LongformBuildResult?
     /// Прогресс рендеринга длинного видео
     var longformBuildProgress: (fraction: Double, step: String) = (0.0, "")
+    /// Идёт ли прямо сейчас повторный анализ сценария моделью Director
+    private(set) var isRegeneratingConcepts = false
 
     /// Активный проект фильма (сохранение прогресса транскрипции, тем и шортсов)
     var currentProject: FilmProject?
-    let filmProjectService: any FilmProjectServicing = FilmProjectService.shared
+    let filmProjectService: any FilmProjectServicing
+
+    init(filmProjectService: any FilmProjectServicing = FilmProjectService.shared) {
+        self.filmProjectService = filmProjectService
+    }
 
     /// Temporary input copies and normalized containers, deleted when the user
     /// starts over or an import fails. Originals already in the working folder
@@ -360,20 +373,18 @@ final class WorkspaceModel {
                     Self.log("Discarding mismatched cached movie metadata: '\(m.title)' vs filename candidate '\(fileQuery.title)'")
                     self.detectedMovie = nil
                     self.currentProject?.tmdbMetadata = nil
-                    self.currentProject?.discoveredConcepts = []
                 } else {
                     self.detectedMovie = m
                 }
             }
             if let ta = existingProject.thematicAnalysis {
                 self.thematicAnalysis = ta
-                self.thematicReasoning = ta.aiReasoning
-                self.discoveredConcepts = ta.allConcepts
                 if self.selectedConcept == nil {
                     self.selectedConcept = ta.primaryConcept
                 }
             } else if !existingProject.discoveredConcepts.isEmpty {
-                self.discoveredConcepts = existingProject.discoveredConcepts
+                // Архив, сохранённый до появления thematicAnalysis: темы читаем как есть.
+                self.legacyDiscoveredConcepts = existingProject.discoveredConcepts
             }
             if let sc = existingProject.selectedConcept {
                 self.selectedConcept = sc
@@ -389,7 +400,14 @@ final class WorkspaceModel {
                 fileSizeBytes: (try? sandboxFriendlyURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) }
             )
             self.currentProject = project
-            try? await filmProjectService.saveProject(project)
+            // Архив на диске есть, но мы его не прочитали: пустой проект стёр бы
+            // тему и результат последнего рендера. Держим его, ничего не сохраняем.
+            let unreadableArchiveOnDisk = await filmProjectService.hasStoredProjectFile(matching: sandboxFriendlyURL)
+            if unreadableArchiveOnDisk {
+                Self.log("Unreadable project archive kept for '\(originalBaseName)': blank project is not written to disk")
+            } else {
+                try? await filmProjectService.saveProject(project)
+            }
         }
 
         switch inputMode {
@@ -417,6 +435,30 @@ final class WorkspaceModel {
         }
     }
 
+    // MARK: - Theme persistence
+
+    /// Единственная точка, которая пишет состояние темы в архив: анализ, выбранная
+    /// тема и результат рендера копируются в проект все вместе, одним сохранением.
+    /// Раздельные записи и рождали рассинхрон «тема в проекте не та, что анализ».
+    func persistThemeState(reason: String) async {
+        guard var project = currentProject else {
+            Self.log("persistThemeState(\(reason)): no current project, theme not persisted")
+            return
+        }
+        project.thematicAnalysis = thematicAnalysis
+        project.selectedConcept = selectedConcept
+        project.longformResult = longformResult
+        project.discoveredConcepts = thematicAnalysis?.allConcepts ?? project.discoveredConcepts
+        currentProject = project
+        let savedSource = thematicAnalysis?.source.rawValue ?? "nil"
+        Self.log("persistThemeState(\(reason)): theme '\(selectedConcept?.word ?? "—")' saved with analysis source=\(savedSource)")
+        do {
+            try await filmProjectService.saveProject(project)
+        } catch {
+            Self.log("persistThemeState(\(reason)) failed: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Long-form Flow (YouTube 16:9 Thematic Essays in Shortcast Cinema style)
 
     private func startLongformPipeline(job newJob: VideoJob, modelManager: ModelManager, settings: AppSettings) async {
@@ -435,8 +477,6 @@ final class WorkspaceModel {
            let cachedTranscript = self.storedTranscript ?? self.currentProject?.transcript {
             self.storedTranscript = cachedTranscript
             self.thematicAnalysis = existingAnalysis
-            self.thematicReasoning = existingAnalysis.aiReasoning
-            self.discoveredConcepts = existingAnalysis.allConcepts
             if self.selectedConcept == nil {
                 self.selectedConcept = self.currentProject?.selectedConcept ?? existingAnalysis.primaryConcept
             }
@@ -574,8 +614,6 @@ final class WorkspaceModel {
                existing.source == .llm {
                 analysis = existing
                 self.thematicAnalysis = existing
-                self.thematicReasoning = existing.aiReasoning
-                self.discoveredConcepts = existing.allConcepts
                 if self.selectedConcept == nil {
                     self.selectedConcept = existing.primaryConcept
                 }
@@ -592,18 +630,11 @@ final class WorkspaceModel {
                     directorProfile: settings.copywriterModel.directorProfile
                 )
                 self.thematicAnalysis = analysis
-                self.thematicReasoning = analysis.aiReasoning
-                self.discoveredConcepts = analysis.allConcepts
                 // АВТОНОМНЫЙ ВЫБОР: модель сама выбирает и предлагает ОДНУ главную тему
                 self.selectedConcept = analysis.primaryConcept
                 Self.log("Director produced thematic analysis for '\(effectiveMovieTitle)': \(analysis.primaryConcept.word) (source=\(analysis.source.rawValue))")
                 if analysis.source == .llm {
-                    self.currentProject?.thematicAnalysis = analysis
-                    self.currentProject?.discoveredConcepts = analysis.allConcepts
-                    self.currentProject?.selectedConcept = analysis.primaryConcept
-                    if let project = self.currentProject {
-                        try? await filmProjectService.saveProject(project)
-                    }
+                    await persistThemeState(reason: "director-analysis")
                 }
             }
             self.phase = .selectingLongformConcept
@@ -664,7 +695,7 @@ final class WorkspaceModel {
         settings: AppSettings
     ) {
         if let stored = storedTranscript {
-            self.storedTranscript = Transcript(segments: updatedSegments, language: stored.language)
+            self.storedTranscript = Transcript(segments: updatedSegments, language: stored.language, provenance: stored.provenance)
         }
         guard let concept = stagedConcept, let audioSettings = stagedAudioSettings else { return }
         confirmLongformConceptInternal(
@@ -707,7 +738,7 @@ final class WorkspaceModel {
         settings: AppSettings
     ) {
         if let stored = storedTranscript {
-            self.storedTranscript = Transcript(segments: updatedSegments, language: stored.language)
+            self.storedTranscript = Transcript(segments: updatedSegments, language: stored.language, provenance: stored.provenance)
         }
         startLongformRebuild(
             concept: existingResult.arc.concept,
@@ -785,10 +816,8 @@ final class WorkspaceModel {
                     }
                 }
                 self.longformResult = result
-                self.currentProject?.longformResult = result
-                if let project = self.currentProject {
-                    try? await self.filmProjectService.saveProject(project)
-                }
+                self.selectedConcept = concept
+                await self.persistThemeState(reason: "longform-rebuild")
                 self.phase = .longformResults
             } catch {
                 if Task.isCancelled { return }
@@ -863,11 +892,7 @@ final class WorkspaceModel {
                     }
                 }
                 self.longformResult = result
-                self.currentProject?.longformResult = result
-                self.currentProject?.selectedConcept = concept
-                if let project = self.currentProject {
-                    try? await self.filmProjectService.saveProject(project)
-                }
+                await self.persistThemeState(reason: "longform-render")
                 self.phase = .longformResults
             } catch is CancellationError {
                 // A reset or a new render explicitly cancels this task. Do not
@@ -890,7 +915,10 @@ final class WorkspaceModel {
 
     /// Повторный запуск генерации тем нейросетью Director в выбранном профиле модели
     func regenerateThematicConcepts(modelManager: ModelManager, directorProfile: ChatModelProfile) async {
-        guard let transcript = storedTranscript else { return }
+        guard let transcript = storedTranscript, !isRegeneratingConcepts else { return }
+        // Флаг держится всё время анализа — Director считает минуты, а не 1.2 секунды.
+        isRegeneratingConcepts = true
+        defer { isRegeneratingConcepts = false }
         let effectiveTitle = detectedMovie?.title ?? job?.effectiveTitle ?? "Фильм"
         let overview = detectedMovie?.overview
         let thematicService = LongformThematicService()
@@ -904,17 +932,10 @@ final class WorkspaceModel {
                 directorProfile: directorProfile
             )
             self.thematicAnalysis = freshAnalysis
-            self.thematicReasoning = freshAnalysis.aiReasoning
-            self.discoveredConcepts = freshAnalysis.allConcepts
             self.selectedConcept = freshAnalysis.primaryConcept
             Self.log("Director regenerated themes for '\(effectiveTitle)': \(freshAnalysis.primaryConcept.word) (source=\(freshAnalysis.source.rawValue))")
             if freshAnalysis.source == .llm {
-                self.currentProject?.thematicAnalysis = freshAnalysis
-                self.currentProject?.discoveredConcepts = freshAnalysis.allConcepts
-                self.currentProject?.selectedConcept = freshAnalysis.primaryConcept
-                if let project = self.currentProject {
-                    try? await filmProjectService.saveProject(project)
-                }
+                await persistThemeState(reason: "director-regenerate")
             }
         } catch {
             errorMessage = "Ошибка подбора тем: \(error.localizedDescription)"
@@ -928,8 +949,7 @@ final class WorkspaceModel {
             self.phase = .longformResults
         } else {
             self.thematicAnalysis = nil
-            self.thematicReasoning = nil
-            self.discoveredConcepts = []
+            self.legacyDiscoveredConcepts = []
             self.selectedConcept = nil
             cleanUpTempInput()
             self.phase = .empty
@@ -939,10 +959,9 @@ final class WorkspaceModel {
     func resetLongform() {
         self.longformResult = nil
         self.thematicAnalysis = nil
-        self.thematicReasoning = nil
+        self.legacyDiscoveredConcepts = []
         self.selectedConcept = nil
         self.storedTranscript = nil
-        self.discoveredConcepts = []
         self.detectedMovie = nil
         cleanUpTempInput()
         self.phase = .empty
@@ -1686,6 +1705,20 @@ final class WorkspaceModel {
         publishError = nil
         errorMessage = nil
         pipelineError = nil
+        // Состояние эссе чистим обязательно: иначе второй фильм стартует с темой,
+        // транскриптом и рендером первого.
+        thematicAnalysis = nil
+        legacyDiscoveredConcepts = []
+        selectedConcept = nil
+        longformResult = nil
+        storedTranscript = nil
+        stagedConcept = nil
+        stagedConfirmedMovieTitle = nil
+        stagedAudioSettings = nil
+        stagedArc = nil
+        detectedMovie = nil
+        isRegeneratingConcepts = false
+        currentProject = nil
         cleanUpTempInput()
         phase = .empty
     }

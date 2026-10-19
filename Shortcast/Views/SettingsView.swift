@@ -326,7 +326,7 @@ struct SettingsView: View {
                     step: "1", icon: "waveform",
                     title: "Transcribe",
                     model: "WhisperKit · large-v3-turbo",
-                    detail: "Turns the audio into text. Runs only when the video has no .srt/.vtt next to it.",
+                    detail: "Turns the audio into text. An existing .srt/.vtt is reused only if Shortcast created it — anything else is ignored and the audio is transcribed here.",
                     status: nil)
                 pipelineRole(
                     step: "2", icon: "wand.and.stars",

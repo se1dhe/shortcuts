@@ -7,6 +7,8 @@ struct ThematicConceptSelectionSheet: View {
     let concepts: [ThematicConcept]
     let aiReasoning: String?
     let source: ThematicSource
+    /// Идёт ли сейчас настоящий анализ Director — состояние модели, а не таймера.
+    let isRegenerating: Bool
     let onSelect: (ThematicConcept, String, LongformAudioSettings) -> Void
     let onCancel: () -> Void
     let onRegenerate: (() -> Void)?
@@ -16,11 +18,10 @@ struct ThematicConceptSelectionSheet: View {
     @State private var customWord: String = ""
     @State private var customTitle: String = ""
     @State private var showCustomInput: Bool = false
-    @State private var isRegenerating: Bool = false
 
     // Аудиомастеринг и звукорежиссура Shortcast Cinema (автоматически сохраняются в UserDefaults)
     @AppStorage("shortcast.longform.dialogueFocusEnabled") private var dialogueFocusEnabled: Bool = true
-    @AppStorage("shortcast.longform.originalMusicDucking") private var originalMusicDucking: Double = 1.00
+    @AppStorage("shortcast.longform.originalMusicDucking") private var originalMusicDucking: Double = 0.82
     @AppStorage("shortcast.longform.coldOpenEnabled") private var coldOpenEnabled: Bool = true
     @AppStorage("shortcast.longform.ambientMusicEnabled") private var ambientMusicEnabled: Bool = true
     @AppStorage("shortcast.longform.duckingEnabled") private var duckingEnabled: Bool = true
@@ -60,6 +61,7 @@ struct ThematicConceptSelectionSheet: View {
         concepts: [ThematicConcept],
         aiReasoning: String? = nil,
         source: ThematicSource = .unknown,
+        isRegenerating: Bool = false,
         onSelect: @escaping (ThematicConcept, String, LongformAudioSettings) -> Void,
         onCancel: @escaping () -> Void,
         onRegenerate: (() -> Void)? = nil
@@ -69,6 +71,7 @@ struct ThematicConceptSelectionSheet: View {
         self.concepts = concepts
         self.aiReasoning = aiReasoning
         self.source = source
+        self.isRegenerating = isRegenerating
         self.onSelect = onSelect
         self.onCancel = onCancel
         self.onRegenerate = onRegenerate
@@ -114,6 +117,17 @@ struct ThematicConceptSelectionSheet: View {
 
     private var primaryConcept: ThematicConcept? {
         concepts.first(where: { $0.isPrimaryChoice }) ?? concepts.first
+    }
+
+    /// Что сказать, когда тем ещё нет: экран не выдумывает лейтмотив за модель.
+    private var emptyConceptsNote: String {
+        if isRegenerating {
+            return "Director ещё анализирует сценарий — тем пока нет."
+        }
+        if onRegenerate != nil {
+            return "Тем от нейросети пока нет: нажмите «Пересчитать темы с AI», чтобы тему выбрала модель."
+        }
+        return "Тем от нейросети пока нет — экран не выдумывает тему за модель."
     }
 
     private var alternativeConcepts: [ThematicConcept] {
@@ -202,11 +216,7 @@ struct ThematicConceptSelectionSheet: View {
 
                     if let onRegenerate {
                         Button {
-                            isRegenerating = true
                             onRegenerate()
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                                isRegenerating = false
-                            }
                         } label: {
                             HStack(spacing: 5) {
                                 if isRegenerating {
@@ -266,6 +276,18 @@ struct ThematicConceptSelectionSheet: View {
             // Сетка карточек концептов
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 14) {
+                    if concepts.isEmpty {
+                        // Темы нет — и придумывать её за модель мы не будем.
+                        Label(
+                            emptyConceptsNote,
+                            systemImage: isRegenerating ? "hourglass" : "questionmark.circle"
+                        )
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 10)
+                    }
+
                     // HERO CARD: главная тема эссе (100% фокус ролика, бейдж зависит от provenance)
                     if let primary = primaryConcept {
                         let isSelected = (selectedConceptId == primary.id || selectedConceptId == nil) && !showCustomInput

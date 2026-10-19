@@ -1,6 +1,7 @@
 import Foundation
 import NaturalLanguage
 import Observation
+import CryptoKit
 @preconcurrency import WhisperKit
 
 // WordTimestamp is defined in Shortcast/Models/WordTimestamp.swift
@@ -20,14 +21,52 @@ struct TranscriptSegment: Codable, Sendable, Equatable {
     }
 }
 
+/// Who produced a transcript. Whisper is the only authoritative source in this
+/// app, so anything we cannot *prove* we authored ourselves is `foreign` —
+/// fansub `.srt` files sitting next to a video are indistinguishable from our
+/// own output by name alone, so provenance is carried on the model, not inferred
+/// from file naming.
+enum TranscriptProvenance: String, Codable, Sendable, Equatable {
+    /// Produced on this device by our own Whisper run.
+    case whisper
+    /// Our own sidecar we previously wrote and just verified via its authorship
+    /// marker (`TranscriptSidecarMarker`).
+    case cache
+    /// A sidecar we did not author, a legacy archive with no recorded provenance,
+    /// or anything else of unknown origin. Never authoritative.
+    case foreign
+
+    /// Only files this app provably produced are trusted for reuse.
+    var isOurs: Bool { self != .foreign }
+}
+
 /// A full transcript with timestamps. Fed to the Director to pick moments, and
 /// sliced per clip to ground each caption in what's actually said there.
 struct Transcript: Codable, Sendable, Equatable {
     let segments: [TranscriptSegment]
     let language: String?
+    /// Where the text came from. Defaults to `foreign`: constructing a transcript
+    /// without declaring its source must not silently claim Whisper authorship.
+    let provenance: TranscriptProvenance
+
+    init(
+        segments: [TranscriptSegment],
+        language: String?,
+        provenance: TranscriptProvenance = .foreign
+    ) {
+        self.segments = segments
+        self.language = language
+        self.provenance = provenance
+    }
 
     var fullText: String {
         segments.map(\.text).joined(separator: " ")
+    }
+
+    /// Same text, declared source. Used once a sidecar's provenance has been
+    /// settled by the marker gate (`sidecarDecision(for:)` → `.cache`).
+    func withProvenance(_ provenance: TranscriptProvenance) -> Transcript {
+        Transcript(segments: segments, language: language, provenance: provenance)
     }
 
     /// Language inferred from the transcript text itself (BCP-47, e.g. "es").
@@ -59,12 +98,157 @@ struct Transcript: Codable, Sendable, Equatable {
         let t = Int(seconds.rounded())
         return String(format: "%d:%02d", t / 60, t % 60)
     }
+
+    enum CodingKeys: String, CodingKey {
+        case segments, language, provenance
+    }
+
+    /// Hand-written for ONE reason: `Transcript` is stored inside every
+    /// `.shortcastproj` archive, and archives written before provenance existed
+    /// have no `provenance` key. A synthesized non-optional field would make
+    /// those archives throw — so absent/unknown decodes as `.foreign`, never as
+    /// "it's ours".
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        segments = try container.decode([TranscriptSegment].self, forKey: .segments)
+        language = try container.decodeIfPresent(String.self, forKey: .language)
+        // `try?` also swallows an unrecognised case value (a newer app version
+        // writing "fansub" or similar) — an unverifiable label is foreign.
+        provenance = (try? container.decode(TranscriptProvenance.self, forKey: .provenance)) ?? .foreign
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(segments, forKey: .segments)
+        try container.encodeIfPresent(language, forKey: .language)
+        try container.encode(provenance, forKey: .provenance)
+    }
 }
 
-/// Produces a `Transcript` for a long video. Prefers an existing `.srt`/`.vtt`
-/// sidecar (instant, no download); falls back to on-device WhisperKit only when
-/// none is found — so the Whisper model never downloads for users who already
-/// have transcripts.
+/// Machine-readable proof of authorship, written next to every subtitle sidecar
+/// Shortcast itself produced.
+///
+/// Path convention: `<sidecar>.shortcast.json` — e.g.
+/// `movie.mkv` → `movie.srt` → `movie.srt.shortcast.json`
+/// (the caches fallback `…/Caches/<name>.mkv.srt` gets `…/<name>.mkv.srt.shortcast.json`).
+///
+/// Naming alone proves nothing: our own Whisper output is written as
+/// `<video>.srt`, exactly the pattern a release-group fansub uses. So a sidecar
+/// is only reused when this file exists, decodes and still matches the bytes on
+/// disk. Absent marker ⇒ foreign file ⇒ Whisper runs.
+struct TranscriptSidecarMarker: Codable, Sendable, Equatable {
+    /// Bump when the shape changes. Markers on a different schema are rejected
+    /// rather than trusted.
+    static let schemaVersion = 1
+
+    let schema: Int
+    /// `.whisper` when written, `.cache` when the same file is read back later.
+    let provenance: TranscriptProvenance
+    /// Whisper variant that produced the text, e.g. `openai_whisper-large-v3`.
+    let model: String?
+    let language: String?
+    let segmentCount: Int
+    let sourceSizeBytes: Int64
+    let sourceModifiedAt: Date?
+    let sourceChecksumSHA256: String?
+    let writtenAt: Date
+}
+
+/// Why a subtitle file next to a video cannot be trusted. Stable `rawValue` for
+/// log lines and provenance badges.
+enum ForeignSidecarReason: String, Codable, Sendable, Equatable, CaseIterable {
+    case missingMarker
+    case unreadableMarker
+    case unsupportedMarkerSchema
+    case markerClaimsForeignProvenance
+    case sidecarUnreadable
+    case sizeMismatch
+    case checksumMismatch
+    case modifiedAfterMarker
+    case modifiedAtMismatch
+    case noIntegrityProof
+    case segmentCountMismatch
+    case emptySidecar
+}
+
+/// Verdict of the provenance gate — the pure seam `transcript(for:)` branches on
+/// and the UI can render as a provenance badge without running anything.
+enum SidecarDecision: Sendable, Equatable {
+    /// No `.srt`/`.vtt` next to the video at all.
+    case noSidecar
+    /// Marker validates: the file is ours, reuse it, Whisper never runs.
+    case verified(url: URL, provenance: TranscriptProvenance)
+    /// Not provably ours: ignore the file entirely and transcribe on device.
+    case foreign(url: URL, reason: ForeignSidecarReason)
+
+    var isVerified: Bool {
+        if case .verified = self { return true }
+        return false
+    }
+
+    var sidecarURL: URL? {
+        switch self {
+        case .noSidecar: return nil
+        case .verified(let url, _), .foreign(let url, _): return url
+        }
+    }
+
+    var foreignReason: ForeignSidecarReason? {
+        if case .foreign(_, let reason) = self { return reason }
+        return nil
+    }
+
+    /// Provenance the resulting `Transcript` will carry if a transcript is
+    /// requested for this video right now.
+    var expectedTranscriptProvenance: TranscriptProvenance {
+        switch self {
+        case .verified(_, let provenance): return provenance
+        case .noSidecar, .foreign: return .whisper
+        }
+    }
+}
+
+/// The slice of the file system the provenance gate looks at. Injectable so the
+/// decision is testable from temp files — no WhisperKit, no model, no film.
+protocol SidecarFileReading: Sendable {
+    func exists(_ url: URL) -> Bool
+    func size(of url: URL) -> Int64?
+    func modifiedAt(of url: URL) -> Date?
+    func data(from url: URL) -> Data?
+}
+
+/// Timestamp slack when a marker carries no content hash: coarse-grained volumes
+/// can round mtimes. A genuine hand-edit is seconds-to-hours later, never 2s.
+private let sidecarTimestampTolerance: TimeInterval = 2.0
+
+/// Real disk.
+struct FileSystemSidecarReader: SidecarFileReading {
+    private func attributes(_ url: URL) -> [FileAttributeKey: Any]? {
+        try? FileManager.default.attributesOfItem(atPath: url.path)
+    }
+
+    func exists(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path)
+    }
+
+    func size(of url: URL) -> Int64? {
+        (attributes(url)?[.size] as? NSNumber)?.int64Value
+    }
+
+    func modifiedAt(of url: URL) -> Date? {
+        attributes(url)?[.modificationDate] as? Date
+    }
+
+    func data(from url: URL) -> Data? {
+        try? Data(contentsOf: url)
+    }
+}
+
+/// Produces a `Transcript` for a long video. Whisper is the only authoritative
+/// source: a `.srt`/`.vtt` next to the video is reused ONLY when its authorship
+/// marker proves Shortcast wrote it (`TranscriptSidecarMarker`). Everything else
+/// — fansub rips, hand-edited files, files of unknown origin — is ignored and
+/// the audio is transcribed on device. Container subtitle streams are never read.
 @MainActor
 @Observable
 final class TranscriptionService {
@@ -83,6 +267,9 @@ final class TranscriptionService {
 
     private(set) var phase: Phase = .idle
     private var whisper: WhisperKit?
+    /// Variant behind the last on-device run, recorded into the sidecar's
+    /// authorship marker so a cached transcript says which model made it.
+    private var activeModelVariant: String?
 
     /// Whisper variants to prefer, best-first; falls back to the device default
     /// (`openai_whisper-base`, which is multilingual). MUST be multilingual —
@@ -99,23 +286,189 @@ final class TranscriptionService {
 
     // MARK: - Public
 
-    /// Returns a transcript for `videoURL`, using a sidecar `.srt`/`.vtt` if one
-    /// sits next to it, otherwise transcribing on-device. `languageHint` (e.g.
-    /// "es", "Spanish") forces Whisper's decode language; empty = auto-detect.
+    /// Returns a transcript for `videoURL`. A sidecar `.srt`/`.vtt` is reused ONLY
+    /// if its authorship marker proves Shortcast wrote it; any other subtitle file
+    /// next to the video is ignored and the audio is transcribed on device with
+    /// Whisper (the only authoritative source). `languageHint` (e.g. "es",
+    /// "Spanish") forces Whisper's decode language; empty = auto-detect.
     /// `modelCacheDir` — if set, WhisperKit downloads its model to this directory
     /// instead of the default `~/Documents/huggingface/`.
     func transcript(for videoURL: URL, languageHint: String = "", modelCacheDir: URL? = nil, progress: (@Sendable (Double) -> Void)? = nil) async throws -> Transcript {
-        if let sidecar = Self.findSidecar(for: videoURL),
-           let parsed = Self.parseSubtitles(at: sidecar) {
-            phase = .ready
-            return parsed
+        switch Self.sidecarDecision(for: videoURL) {
+        case .noSidecar:
+            break
+        case .verified(let sidecar, let provenance):
+            if let parsed = Self.parseSubtitles(at: sidecar) {
+                phase = .ready
+                Self.log("reusing our own \(provenance.rawValue) sidecar: \(sidecar.lastPathComponent) (\(parsed.segments.count) segments)")
+                return parsed.withProvenance(provenance)
+            }
+            Self.log("marker validated but \(sidecar.lastPathComponent) no longer parses — transcribing on device")
+        case .foreign(let sidecar, let reason):
+            // The whole point: a file we did not author never becomes the essay's
+            // transcript, no matter how convincing its name or its contents look.
+            Self.log("FOREIGN transcript file ignored (\(reason.rawValue)): \(sidecar.path) — it is not Shortcast's own Whisper output; transcribing audio on device instead.")
         }
         return try await transcribeOnDevice(videoURL, languageHint: languageHint, modelCacheDir: modelCacheDir, progress: progress)
     }
 
-    /// True when a usable transcript exists without needing Whisper.
+    /// True when a transcript Shortcast itself wrote already exists — i.e. when
+    /// Whisper can be skipped. A foreign sidecar returns false.
     static func hasSidecar(for videoURL: URL) -> Bool {
-        findSidecar(for: videoURL) != nil
+        sidecarDecision(for: videoURL).isVerified
+    }
+
+    // MARK: - Provenance gate (pure, no Whisper, no model, no network)
+
+    /// THE decision seam: may the subtitle file next to `videoURL` be reused, or is
+    /// it a foreign file we must ignore? Reads files only — never instantiates
+    /// WhisperKit, never touches a video or the network — so it is directly testable
+    /// and is what a provenance badge should render.
+    nonisolated static func sidecarDecision(
+        for videoURL: URL,
+        reader: SidecarFileReading = FileSystemSidecarReader(),
+        cachesDir: URL? = defaultCachesDir()
+    ) -> SidecarDecision {
+        guard let sidecar = findSidecar(for: videoURL, reader: reader, cachesDir: cachesDir) else {
+            return .noSidecar
+        }
+        return sidecarDecision(forSidecar: sidecar, reader: reader)
+    }
+
+    /// Same verdict for an already-resolved sidecar path.
+    nonisolated static func sidecarDecision(
+        forSidecar sidecar: URL,
+        reader: SidecarFileReading = FileSystemSidecarReader()
+    ) -> SidecarDecision {
+        let markerURL = sidecarMarkerURL(for: sidecar)
+        guard reader.exists(markerURL) else {
+            return .foreign(url: sidecar, reason: .missingMarker)
+        }
+        guard let marker = loadSidecarMarker(at: markerURL, reader: reader) else {
+            return .foreign(url: sidecar, reason: .unreadableMarker)
+        }
+        guard marker.schema == TranscriptSidecarMarker.schemaVersion else {
+            return .foreign(url: sidecar, reason: .unsupportedMarkerSchema)
+        }
+        guard marker.provenance.isOurs else {
+            return .foreign(url: sidecar, reason: .markerClaimsForeignProvenance)
+        }
+        guard let size = reader.size(of: sidecar) else {
+            return .foreign(url: sidecar, reason: .sidecarUnreadable)
+        }
+        guard size == marker.sourceSizeBytes else {
+            return .foreign(url: sidecar, reason: .sizeMismatch)
+        }
+        guard let contents = reader.data(from: sidecar) else {
+            return .foreign(url: sidecar, reason: .sidecarUnreadable)
+        }
+        if let expected = marker.sourceChecksumSHA256 {
+            // Content proof first: a matching hash means the bytes are exactly what
+            // we wrote, so no later touch can make a foreign file look like ours.
+            // A hand-edit changes the bytes and fails here.
+            guard sha256Hex(of: contents) == expected else {
+                return .foreign(url: sidecar, reason: .checksumMismatch)
+            }
+        } else {
+            // Marker without a hash (older writes): fall back to timestamps, which
+            // catch a file saved over after we wrote it.
+            guard let modified = reader.modifiedAt(of: sidecar) else {
+                return .foreign(url: sidecar, reason: .sidecarUnreadable)
+            }
+            if let markerWritten = reader.modifiedAt(of: markerURL), modified > markerWritten {
+                return .foreign(url: sidecar, reason: .modifiedAfterMarker)
+            }
+            guard let recorded = marker.sourceModifiedAt else {
+                return .foreign(url: sidecar, reason: .noIntegrityProof)
+            }
+            guard abs(modified.timeIntervalSince(recorded)) <= sidecarTimestampTolerance else {
+                return .foreign(url: sidecar, reason: .modifiedAtMismatch)
+            }
+        }
+        // A hand-edited or truncated file can keep a plausible size; the number of
+        // cues we wrote must still come out of the parser.
+        guard let parsed = parseSubtitles(data: contents) else {
+            return .foreign(url: sidecar, reason: .emptySidecar)
+        }
+        guard parsed.segments.count == marker.segmentCount else {
+            return .foreign(url: sidecar, reason: .segmentCountMismatch)
+        }
+        return .verified(url: sidecar, provenance: .cache)
+    }
+
+    /// `<sidecar>.shortcast.json` — the authorship marker for one sidecar.
+    nonisolated static func sidecarMarkerURL(for sidecar: URL) -> URL {
+        sidecar.deletingLastPathComponent()
+            .appendingPathComponent(sidecar.lastPathComponent + ".shortcast.json")
+    }
+
+    nonisolated static func loadSidecarMarker(
+        at markerURL: URL,
+        reader: SidecarFileReading = FileSystemSidecarReader()
+    ) -> TranscriptSidecarMarker? {
+        guard let data = reader.data(from: markerURL) else { return nil }
+        return sidecarMarker(from: data)
+    }
+
+    nonisolated static func sidecarMarker(from data: Data) -> TranscriptSidecarMarker? {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(TranscriptSidecarMarker.self, from: data)
+    }
+
+    nonisolated static func sidecarMarkerData(_ marker: TranscriptSidecarMarker) -> Data? {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try? encoder.encode(marker)
+    }
+
+    /// Stamp a sidecar we just wrote with its authorship marker. Returns nil (and
+    /// writes nothing) for text we can't prove is ours — we never vouch for it.
+    @discardableResult
+    nonisolated static func writeSidecarMarker(
+        forSidecar sidecar: URL,
+        transcript: Transcript,
+        model: String?,
+        reader: SidecarFileReading = FileSystemSidecarReader()
+    ) -> TranscriptSidecarMarker? {
+        guard transcript.provenance.isOurs else {
+            Self.log("refusing to stamp \(sidecar.lastPathComponent): provenance \(transcript.provenance.rawValue) is not ours")
+            return nil
+        }
+        guard let size = reader.size(of: sidecar) else {
+            Self.log("no marker written for \(sidecar.lastPathComponent): the sidecar isn't on disk")
+            return nil
+        }
+        let marker = TranscriptSidecarMarker(
+            schema: TranscriptSidecarMarker.schemaVersion,
+            provenance: transcript.provenance,
+            model: model,
+            language: transcript.language,
+            segmentCount: transcript.segments.count,
+            sourceSizeBytes: size,
+            sourceModifiedAt: reader.modifiedAt(of: sidecar),
+            sourceChecksumSHA256: reader.data(from: sidecar).map { sha256Hex(of: $0) },
+            writtenAt: Date()
+        )
+        guard let data = sidecarMarkerData(marker) else { return nil }
+        let markerURL = sidecarMarkerURL(for: sidecar)
+        do {
+            try data.write(to: markerURL, options: .atomic)
+            Self.log("wrote authorship marker \(markerURL.lastPathComponent) (model=\(model ?? "?"), cues=\(marker.segmentCount))")
+            return marker
+        } catch {
+            Self.log("failed to write marker for \(sidecar.lastPathComponent): \(error)")
+            return nil
+        }
+    }
+
+    nonisolated static func sha256Hex(of data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    nonisolated static func defaultCachesDir() -> URL? {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
     }
 
     // MARK: - WhisperKit path
@@ -139,6 +492,7 @@ final class TranscriptionService {
             let support = WhisperKit.recommendedModels()
             let variant = Self.preferredVariants.first { support.supported.contains($0) }
                 ?? support.default
+            activeModelVariant = variant
             Self.log("whisper variant: \(variant) (supported: \(support.supported.joined(separator: ", ")))")
             let folder = try await WhisperKit.download(variant: variant) { @Sendable [weak self] progress in
                 let fraction = progress.fractionCompleted
@@ -193,13 +547,15 @@ final class TranscriptionService {
         }
         guard !segments.isEmpty else { throw TranscriptionError.empty }
         Self.log("transcribed \(segments.count) segments, language=\(results.first?.language ?? "?")")
-        let transcript = Transcript(segments: segments, language: results.first?.language)
-        Self.saveSidecar(transcript: transcript, for: videoURL)
+        // This is the ONLY place a transcript becomes authoritative: text we ran
+        // through Whisper on this device, right now.
+        let transcript = Transcript(segments: segments, language: results.first?.language, provenance: .whisper)
+        Self.saveSidecar(transcript: transcript, for: videoURL, model: activeModelVariant)
         phase = .ready
         return transcript
     }
     
-    private static func formatAsSRT(transcript: Transcript) -> String {
+    nonisolated static func formatAsSRT(transcript: Transcript) -> String {
         var lines: [String] = []
         for (index, segment) in transcript.segments.enumerated() {
             lines.append("\(index + 1)")
@@ -210,7 +566,7 @@ final class TranscriptionService {
         return lines.joined(separator: "\n")
     }
     
-    private static func formatSRTTime(_ seconds: Double) -> String {
+    nonisolated static func formatSRTTime(_ seconds: Double) -> String {
         let hrs = Int(seconds) / 3600
         let mins = (Int(seconds) % 3600) / 60
         let secs = Int(seconds) % 60
@@ -218,20 +574,34 @@ final class TranscriptionService {
         return String(format: "%02d:%02d:%02d,%03d", hrs, mins, secs, ms)
     }
 
-    private static func saveSidecar(transcript: Transcript, for videoURL: URL) {
+    /// Writes our transcript as `<video>.srt` **and** its authorship marker
+    /// (`<video>.srt.shortcast.json`). The marker is what makes the file reusable:
+    /// a bare `.srt` next to a video is a stranger until proven ours.
+    nonisolated static func saveSidecar(transcript: Transcript, for videoURL: URL, model: String?) {
+        guard transcript.provenance.isOurs else {
+            Self.log("not writing a sidecar for \(videoURL.lastPathComponent): provenance \(transcript.provenance.rawValue) is not ours")
+            return
+        }
         let srtContent = formatAsSRT(transcript: transcript)
         let candidate = videoURL.deletingPathExtension().appendingPathExtension("srt")
-        
+
         do {
             try srtContent.write(to: candidate, atomically: true, encoding: .utf8)
             Self.log("saved SRT sidecar to \(candidate.path)")
+            writeSidecarMarker(forSidecar: candidate, transcript: transcript, model: model)
         } catch {
             Self.log("failed to save sidecar next to video: \(error)")
-            // Fallback to cache directory
-            if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+            // Fallback to cache directory — stamped the same way, or it won't be
+            // trusted on the next run either.
+            if let caches = defaultCachesDir() {
                 let fallback = caches.appendingPathComponent(videoURL.lastPathComponent + ".srt")
-                try? srtContent.write(to: fallback, atomically: true, encoding: .utf8)
-                Self.log("saved SRT to fallback cache: \(fallback.path)")
+                do {
+                    try srtContent.write(to: fallback, atomically: true, encoding: .utf8)
+                    Self.log("saved SRT to fallback cache: \(fallback.path)")
+                    writeSidecarMarker(forSidecar: fallback, transcript: transcript, model: model)
+                } catch {
+                    Self.log("failed to save SRT to fallback cache: \(error)")
+                }
             }
         }
     }
@@ -261,19 +631,25 @@ final class TranscriptionService {
 
     // MARK: - Sidecar discovery + parsing
 
-    /// Looks for `<basename>.srt` / `<basename>.vtt` next to the video.
-    private static func findSidecar(for videoURL: URL) -> URL? {
+    /// Looks for `<basename>.srt` / `<basename>.vtt` next to the video, then the
+    /// caches fallback. Finding a file is NOT permission to use it: every caller
+    /// must run the video through `sidecarDecision(for:)` first.
+    nonisolated static func findSidecar(
+        for videoURL: URL,
+        reader: SidecarFileReading = FileSystemSidecarReader(),
+        cachesDir: URL? = defaultCachesDir()
+    ) -> URL? {
         let base = videoURL.deletingPathExtension()
         for ext in ["srt", "vtt"] {
             let candidate = base.appendingPathExtension(ext)
-            if FileManager.default.fileExists(atPath: candidate.path) {
+            if reader.exists(candidate) {
                 return candidate
             }
         }
         // Check fallback cache
-        if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
-            let fallback = caches.appendingPathComponent(videoURL.lastPathComponent + ".srt")
-            if FileManager.default.fileExists(atPath: fallback.path) {
+        if let cachesDir {
+            let fallback = cachesDir.appendingPathComponent(videoURL.lastPathComponent + ".srt")
+            if reader.exists(fallback) {
                 return fallback
             }
         }
@@ -282,9 +658,21 @@ final class TranscriptionService {
 
     /// Parses an `.srt` or `.vtt` file into a `Transcript`. Tolerant of both
     /// `,` and `.` millisecond separators and optional cue indices/headers.
-    static func parseSubtitles(at url: URL) -> Transcript? {
+    /// The result carries `.foreign` provenance — parsing can't know who wrote the
+    /// file, so only `sidecarDecision(for:)` may upgrade it (`.withProvenance(.cache)`).
+    nonisolated static func parseSubtitles(at url: URL) -> Transcript? {
         guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        return parseSubtitleText(raw)
+    }
 
+    /// Same parse over bytes already read — what the provenance gate uses, so it
+    /// never hits the disk twice and stays drivable by a fake reader.
+    nonisolated static func parseSubtitles(data: Data) -> Transcript? {
+        guard let raw = String(data: data, encoding: .utf8) else { return nil }
+        return parseSubtitleText(raw)
+    }
+
+    nonisolated static func parseSubtitleText(_ raw: String) -> Transcript? {
         var segments: [TranscriptSegment] = []
         let text = raw.replacingOccurrences(of: "\r\n", with: "\n")
         let lines = text.components(separatedBy: "\n")
@@ -313,13 +701,13 @@ final class TranscriptionService {
                     currentStart = s
                     currentEnd = e
                 }
-            } else {
-                if currentStart != nil {
-                    let trimmedLine = line.trimmingCharacters(in: .whitespaces)
-                    if !trimmedLine.isEmpty {
-                        currentTextLines.append(trimmedLine)
-                    }
-                }
+            } else if line.trimmed.isEmpty {
+                // A blank line closes a cue block. Without this the next cue's index
+                // number leaks into the previous cue's text, so our own sidecar
+                // wouldn't round-trip — and a round-trip we can't trust isn't a cache.
+                commitSegment()
+            } else if currentStart != nil {
+                currentTextLines.append(line.trimmed)
             }
         }
         commitSegment()
@@ -329,7 +717,7 @@ final class TranscriptionService {
     }
 
     /// Parses `HH:MM:SS,mmm` / `MM:SS.mmm` (cue settings after the time ignored).
-    static func timecode(_ raw: String) -> Double? {
+    nonisolated static func timecode(_ raw: String) -> Double? {
         let token = raw.trimmed
             .split(separator: " ").first.map(String.init) ?? raw.trimmed
         let normalized = token.replacingOccurrences(of: ",", with: ".")

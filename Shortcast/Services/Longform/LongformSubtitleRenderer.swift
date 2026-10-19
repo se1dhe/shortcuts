@@ -3,28 +3,308 @@ import AVFoundation
 import CoreGraphics
 import QuartzCore
 
+// MARK: - WCAG 2.1 контраст (чистая арифметика: без CALayer и без графического контекста)
+
+extension Double {
+    /// Относительная светлота sRGB по WCAG 2.1 (каналы в 0...1)
+    static func wcagRelativeLuminance(red: Double, green: Double, blue: Double) -> Double {
+        func linearize(_ channel: Double) -> Double {
+            channel <= 0.03928 ? channel / 12.92 : pow((channel + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * linearize(red) + 0.7152 * linearize(green) + 0.0722 * linearize(blue)
+    }
+
+    /// Контраст foreground/background по WCAG 2.1: (L_max + 0.05) / (L_min + 0.05)
+    static func wcagContrast(foregroundL: Double, backgroundL: Double) -> Double {
+        let high = Swift.max(foregroundL, backgroundL)
+        let low = Swift.min(foregroundL, backgroundL)
+        return (high + 0.05) / (low + 0.05)
+    }
+
+    /// Какая светлота нужна тексту, чтобы добить контраст target против фона backgroundL
+    static func minimumLuminance(forContrast target: Double, against backgroundL: Double) -> Double {
+        Swift.min(Swift.max(target * (backgroundL + 0.05) - 0.05, 0.0), 1.0)
+    }
+}
+
+extension String {
+    /// Светлота тёмного кинокадра под наложенными титрами (запас на тёмные сцены фильма)
+    static let cinemaFrameLuminance: Double = 0.02
+    /// Планка WCAG AA для акцентного текста поверх произвольного кадра
+    static let accentMinContrast: Double = 4.5
+
+    /// hex → sRGB 0...1 напрямую, без конвертаций NSColorSpace (иначе тесты не точны)
+    static func srgbComponents(hex: String) -> (red: Double, green: Double, blue: Double)? {
+        let clean = hex.trimmingCharacters(in: CharacterSet(charactersIn: "# "))
+        guard clean.count == 6, let value = UInt64(clean, radix: 16) else { return nil }
+        return (
+            red: Double((value >> 16) & 0xFF) / 255.0,
+            green: Double((value >> 8) & 0xFF) / 255.0,
+            blue: Double(value & 0xFF) / 255.0
+        )
+    }
+
+    /// Светлота цвета из hex по WCAG 2.1
+    static func wcagLuminance(hex: String) -> Double? {
+        guard let rgb = srgbComponents(hex: hex) else { return nil }
+        return Double.wcagRelativeLuminance(red: rgb.red, green: rgb.green, blue: rgb.blue)
+    }
+
+    /// Акцентный цвет, поднятый до WCAG AA 4.5:1 против тёмного кадра.
+    /// Тон (hue) сохраняется, растёт яркость HSB, насыщенность приглушается на (B_new - B_old) * 0.35.
+    /// Если контраст уже в норме — цвет возвращается БЕЗ изменений; если планка недостижима —
+    /// возвращается ближайший достижимый вариант при B = 1.0.
+    static func legibleAccent(
+        hex: String,
+        backgroundL: Double = String.cinemaFrameLuminance,
+        minContrast: Double = String.accentMinContrast
+    ) -> NSColor {
+        let fallback = NSColor(hex: "#FFE45C") ?? .yellow
+        guard let start = srgbComponents(hex: hex) else { return fallback }
+
+        let targetL = Double.minimumLuminance(forContrast: minContrast, against: backgroundL)
+        let startL = Double.wcagRelativeLuminance(red: start.red, green: start.green, blue: start.blue)
+        if startL >= targetL {
+            // Комплаентный акцент не трогаем вообще — он обязан вернуться байт-в-байт
+            return NSColor(hex: hex) ?? fallback
+        }
+
+        let hsb = longformHSB(red: start.red, green: start.green, blue: start.blue)
+        var closest = start
+        let steps = 100
+        for step in 0...steps {
+            let brightness = hsb.brightness + (1.0 - hsb.brightness) * Double(step) / Double(steps)
+            let saturation = Swift.max(0.0, hsb.saturation - (brightness - hsb.brightness) * 0.35)
+            let candidate = longformRGB(hue: hsb.hue, saturation: saturation, brightness: brightness)
+            closest = candidate
+            let luminance = Double.wcagRelativeLuminance(red: candidate.red, green: candidate.green, blue: candidate.blue)
+            if luminance >= targetL {
+                return NSColor(
+                    red: CGFloat(candidate.red),
+                    green: CGFloat(candidate.green),
+                    blue: CGFloat(candidate.blue),
+                    alpha: 1.0
+                )
+            }
+        }
+        // Цель недостижима (B уже 1.0) — отдаём самый светлый достигнутый оттенок
+        return NSColor(red: CGFloat(closest.red), green: CGFloat(closest.green), blue: CGFloat(closest.blue), alpha: 1.0)
+    }
+}
+
+/// HSB в нормированном sRGB-пространстве (0...1), вручную — чтобы не зависеть от NSColorSpace
+fileprivate func longformHSB(red: Double, green: Double, blue: Double) -> (hue: Double, saturation: Double, brightness: Double) {
+    let maxC = max(red, green, blue)
+    let minC = min(red, green, blue)
+    let delta = maxC - minC
+    var hue = 0.0
+    if delta > 0 {
+        if maxC == red {
+            hue = ((green - blue) / delta).truncatingRemainder(dividingBy: 6.0)
+        } else if maxC == green {
+            hue = (blue - red) / delta + 2.0
+        } else {
+            hue = (red - green) / delta + 4.0
+        }
+        hue /= 6.0
+        if hue < 0 { hue += 1.0 }
+    }
+    return (hue, maxC > 0 ? delta / maxC : 0.0, maxC)
+}
+
+/// Обратная конверсия HSB (0...1) → sRGB (0...1)
+fileprivate func longformRGB(hue: Double, saturation: Double, brightness: Double) -> (red: Double, green: Double, blue: Double) {
+    let h = (hue - floor(hue)) * 6.0
+    let sector = Int(floor(h)) % 6
+    let f = h - floor(h)
+    let p = brightness * (1.0 - saturation)
+    let q = brightness * (1.0 - saturation * f)
+    let t = brightness * (1.0 - saturation * (1.0 - f))
+    switch sector {
+    case 0: return (red: brightness, green: t, blue: p)
+    case 1: return (red: q, green: brightness, blue: p)
+    case 2: return (red: p, green: brightness, blue: t)
+    case 3: return (red: p, green: q, blue: brightness)
+    case 4: return (red: t, green: p, blue: brightness)
+    default: return (red: brightness, green: p, blue: q)
+    }
+}
+
 /// Кинематографический отрисовщик титров и оверлеев в стиле канала @prrodan,
 /// но с фирменной типографикой, шрифтами и стилем Shortcast Cinema (SOLID):
 /// 1. Центральное якорное слово концепта (например, "ТЕРПЕНИЕ"):
 ///    - Постоянно отображается по центру экрана на протяжении всего фильма (opacity 1.0)
-///    - Фирменная типографика Shortcast: шрифт Russo One / Bebas Neue, крупный кегль,
-///      широкий кинематографический трекинг (kern: 5.0), офф-вайт (#F5F5F7),
-///      тонкая контрастная окантовка (-2.8) и глубокая кино-тень (blur 14.0)
+///    - Фирменная типографика Shortcast: шрифт Russo One, кегль 44pt на эталонных 1080 строках
+///      с авто-усадкой (пол не ниже 30pt), чтобы слово никогда не занимало больше 60% ширины кадра;
+///      широкий кинематографический трекинг (kern 3.0), офф-вайт (#F5F5F7),
+///      тонкая контрастная окантовка (-2.2) и глубокая кино-тень (blur 10.0)
 /// 2. Плавные синхронные субтитры реплик под концептом:
 ///    - Располагаются строго под якорным словом по центру
 ///    - Плавное появление (fade-in 0.10с) и мягкое затухание (fade-out 0.10с) по таймкодам реплик
-///    - Фирменный акцент Shortcast: золото (#FFE45C / #F5D020), шрифт Russo One 26pt,
-///      четкая обводка (-3.2) и кино-тень
+///    - Фирменный акцент Shortcast: Russo One 32pt, четкая обводка (-3.6) и кино-тень;
+///      акцентный цвет принудительно поднимается до WCAG AA 4.5:1 против кадра (плашки запрещены)
 /// 3. Вступительный подзаголовок темы (Intro Hook, 0.0с – 4.5с):
-///    - Золотая линия и философский слоган под центральным словом, плавно затухающие к 4.5с
+///    - Золотая линия и философский слоган (20pt) под центральным словом, плавно затухающие к 4.5с
 /// 4. Маркеры драматургических актов (Act Chapter Cards):
-///    - Стильные бейджи смены актов («АКТ II • БОРЬБА», «АКТ III • КУЛЬМИНАЦИЯ») в верхнем углу
+///    - Карточки смены актов («— ЧАСТЬ II —» 20pt с обводкой + название 34pt), чистый текст без рамок
+///
+/// Все кегли, обводки, трекинги, тени и отступы объявлены один раз в разделе
+/// «Единый источник типографики» и масштабируются множителем k = renderSize.height / 1080.0,
+/// поэтому оверлей и превью (`renderPreviewImage`) не могут разъехаться по шрифтам.
 final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendable {
 
-    private let appearance: SubtitleAppearance
+    // MARK: - Единый источник типографики (его зовут ОБА пути: оверлей и превью)
 
-    init(appearance: SubtitleAppearance = .cinemaLongform) {
-        self.appearance = appearance
+    /// Эталонный кегль якорного слова темы при 1080 строках (исторически 56pt — визуально гигант)
+    static let themeBasePointSize: Double = 44.0
+    /// Пол авто-усадки якорного слова: ниже не опускаемся даже для очень длинного слова
+    static let themeMinPointSize: Double = 30.0
+    /// Якорное слово никогда не занимает больше этой доли ширины кадра
+    static let themeMaxWidthScale: Double = 0.60
+    /// Эталонный кегль субтитров при 1080 строках
+    static let captionBasePointSize: Double = 32.0
+    /// Эталонный кегль вступительного слогана
+    static let taglineBasePointSize: Double = 20.0
+    /// Эталонный кегль надстрочника карточки акта («— ЧАСТЬ II —»)
+    static let actOverlineBasePointSize: Double = 20.0
+    /// Эталонный кегль названия главы в карточке акта
+    static let actTitleBasePointSize: Double = 34.0
+
+    /// Масштаб всей типографики: k = высота кадра / 1080 (1920x1080 -> k == 1.0)
+    static func scaleFactor(renderSize: CGSize) -> Double {
+        Double(renderSize.height) / 1080.0
+    }
+
+    static func themePointSize(k: Double) -> Double { themeBasePointSize * k }
+    static func captionPointSize(k: Double) -> Double { captionBasePointSize * k }
+    static func taglinePointSize(k: Double) -> Double { taglineBasePointSize * k }
+    static func actOverlinePointSize(k: Double) -> Double { actOverlineBasePointSize * k }
+    static func actTitlePointSize(k: Double) -> Double { actTitleBasePointSize * k }
+
+    /// Шрифт якорного слова для уже разрешённого (после авто-усадки) кегля
+    static func themeFont(pointSize: Double) -> NSFont {
+        SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: CGFloat(pointSize), fallback: .heavy)
+    }
+
+    static func themeFont(k: Double) -> NSFont { themeFont(pointSize: themePointSize(k: k)) }
+
+    static func captionFont(k: Double) -> NSFont {
+        SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: CGFloat(captionPointSize(k: k)), fallback: .heavy)
+    }
+
+    static func taglineFont(k: Double) -> NSFont {
+        NSFont.systemFont(ofSize: CGFloat(taglinePointSize(k: k)), weight: .medium)
+    }
+
+    static func actOverlineFont(k: Double) -> NSFont {
+        SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: CGFloat(actOverlinePointSize(k: k)), fallback: .heavy)
+    }
+
+    static func actTitleFont(k: Double) -> NSFont {
+        SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: CGFloat(actTitlePointSize(k: k)), fallback: .heavy)
+    }
+
+    private static func centerParagraph() -> NSMutableParagraphStyle {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        return paragraph
+    }
+
+    static func cinematicShadow(blur: Double, offsetY: Double, alpha: CGFloat) -> NSShadow {
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(alpha)
+        shadow.shadowBlurRadius = CGFloat(blur)
+        shadow.shadowOffset = CGSize(width: 0, height: offsetY)
+        return shadow
+    }
+
+    /// Атрибуты якорного слова темы (офф-вайт #F5F5F7: 13,8:1 против тёмного кадра с L = 0,02 — WCAG AA проходит сам, клампинг не нужен)
+    static func themeAttributes(pointSize: Double, k: Double) -> [NSAttributedString.Key: Any] {
+        [
+            .font: themeFont(pointSize: pointSize),
+            .foregroundColor: NSColor(hex: "#F5F5F7") ?? .white,
+            .strokeColor: NSColor.black,
+            .strokeWidth: CGFloat(-2.2 * k),
+            .paragraphStyle: centerParagraph(),
+            .shadow: cinematicShadow(blur: 10.0 * k, offsetY: -2.0 * k, alpha: 0.92),
+            .kern: CGFloat(3.0 * k)
+        ]
+    }
+
+    /// Атрибуты субтитра: акцент обязательно проходит WCAG-клампинг против тёмного кадра
+    static func captionAttributes(k: Double, accentHex: String) -> [NSAttributedString.Key: Any] {
+        [
+            .font: captionFont(k: k),
+            .foregroundColor: String.legibleAccent(hex: accentHex),
+            .strokeColor: NSColor.black,
+            .strokeWidth: CGFloat(-3.6 * k),
+            .paragraphStyle: centerParagraph(),
+            .shadow: cinematicShadow(blur: 10.0 * k, offsetY: -2.0 * k, alpha: 0.95),
+            .kern: CGFloat(1.0 * k)
+        ]
+    }
+
+    /// Атрибуты вступительного слогана (офф-вайт #DCDCDE с тонкой обводкой)
+    static func taglineAttributes(k: Double) -> [NSAttributedString.Key: Any] {
+        [
+            .font: taglineFont(k: k),
+            .foregroundColor: NSColor(hex: "#DCDCDE") ?? .lightGray,
+            .strokeColor: NSColor.black,
+            .strokeWidth: CGFloat(-1.4 * k),
+            .paragraphStyle: centerParagraph(),
+            .shadow: cinematicShadow(blur: 10.0 * k, offsetY: -2.0 * k, alpha: 0.90),
+            .kern: CGFloat(1.8 * k)
+        ]
+    }
+
+    /// Атрибуты надстрочника акта: раньше был единственный текст в app вообще без обводки
+    static func actOverlineAttributes(k: Double, accentHex: String) -> [NSAttributedString.Key: Any] {
+        [
+            .font: actOverlineFont(k: k),
+            .foregroundColor: String.legibleAccent(hex: accentHex),
+            .strokeColor: NSColor.black,
+            .strokeWidth: CGFloat(-2.0 * k),
+            .paragraphStyle: centerParagraph(),
+            .shadow: cinematicShadow(blur: 8.0 * k, offsetY: -2.0 * k, alpha: 0.92),
+            .kern: CGFloat(5.0 * k)
+        ]
+    }
+
+    static func actTitleAttributes(k: Double) -> [NSAttributedString.Key: Any] {
+        [
+            .font: actTitleFont(k: k),
+            .foregroundColor: NSColor.white,
+            .strokeColor: NSColor.black,
+            .strokeWidth: CGFloat(-2.4 * k),
+            .paragraphStyle: centerParagraph(),
+            .shadow: cinematicShadow(blur: 16.0 * k, offsetY: -3.0 * k, alpha: 0.98),
+            .kern: CGFloat(3.0 * k)
+        ]
+    }
+
+    /// Фактическая ширина якорного слова при данном кегле (со штатным трекингом и обводкой)
+    static func measuredThemeWidth(word: String, pointSize: Double, k: Double) -> Double {
+        let str = NSAttributedString(string: word.uppercased(), attributes: themeAttributes(pointSize: pointSize, k: k))
+        return Double(str.size().width)
+    }
+
+    /// Авто-усадка якорного слова: стартовый кегль themePointSize(k), пока ширина слова
+    /// не влезет в maxWidth; пол — themeMinPointSize·k (подход тот же, что в LongformThumbnailGenerator).
+    static func resolvedThemePointSize(word: String, k: Double, maxWidth: Double) -> Double {
+        let minSize = themeMinPointSize * k
+        let cap = max(1.0, maxWidth)
+        var pointSize = themePointSize(k: k)
+        for _ in 0..<6 {
+            let width = measuredThemeWidth(word: word, pointSize: pointSize, k: k)
+            if width <= cap || pointSize <= minSize { break }
+            pointSize = max(minSize, pointSize * (cap / width))
+        }
+        return pointSize
+    }
+
+    /// Максимальная ширина якорного слова в данном кадре (60% ширины кадра)
+    static func themeMaxWidth(renderSizeWidth: Double) -> Double {
+        renderSizeWidth * themeMaxWidthScale
     }
 
     func makeOverlayLayer(
@@ -40,12 +320,13 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         rootLayer.isGeometryFlipped = false
 
         let calculatedTotalDuration = max(totalDuration, timedPhrases.last?.end ?? 300.0)
-        let W = renderSize.width
-        let H = renderSize.height
+        // Единый множитель типографики для всего оверлея (1920x1080 -> k = 1.0)
+        let k = Self.scaleFactor(renderSize: renderSize)
 
         // 1. Центральное якорное слово концепта (висит весь фильм, плавно растворяется в финале)
         let (conceptLayer, conceptY, _) = buildCentralConceptLayer(
             renderSize: renderSize,
+            k: k,
             concept: concept,
             totalDuration: calculatedTotalDuration
         )
@@ -54,6 +335,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         // 2. Плавные синхронные субтитры реплик персонажей прямо под концептом
         let subtitlePhrasesLayer = buildSynchronizedSubtitlesLayer(
             renderSize: renderSize,
+            k: k,
             concept: concept,
             conceptY: conceptY,
             timedPhrases: timedPhrases,
@@ -64,6 +346,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         // 3. Вступительная золотая линия и философский слоган (0.0с – 4.2с)
         let introTaglineLayer = buildIntroTaglineLayer(
             renderSize: renderSize,
+            k: k,
             concept: concept,
             conceptY: conceptY,
             totalDuration: calculatedTotalDuration
@@ -73,6 +356,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         // 4. Элегантные экранные карточки смены акта (Act Transition Cards)
         let actCardsLayer = buildActTransitionCardsLayer(
             renderSize: renderSize,
+            k: k,
             concept: concept,
             acts: acts,
             actStartTimes: actStartTimes,
@@ -87,6 +371,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
 
     private func buildCentralConceptLayer(
         renderSize: CGSize,
+        k: Double,
         concept: ThematicConcept,
         totalDuration: Double
     ) -> (layer: CALayer, conceptY: CGFloat, conceptH: CGFloat) {
@@ -94,29 +379,16 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         let H = renderSize.height
         let t = max(totalDuration, 5.0)
 
-        let font = SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: 56.0, fallback: .heavy)
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.96)
-        shadow.shadowBlurRadius = 14.0
-        shadow.shadowOffset = CGSize(width: 0, height: -3.0)
+        // Кегль 44pt на эталонных 1080 строках + авто-усадка, чтобы слово не лезло за 60% ширины кадра
+        let upperWord = concept.word.uppercased()
+        let maxWordWidth = Self.themeMaxWidth(renderSizeWidth: Double(W))
+        let themeSize = Self.resolvedThemePointSize(word: upperWord, k: k, maxWidth: maxWordWidth)
+        let attrs = Self.themeAttributes(pointSize: themeSize, k: k)
 
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
-
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor(hex: "#F5F5F7") ?? .white,
-            .strokeColor: NSColor.black,
-            .strokeWidth: -2.8,
-            .paragraphStyle: paragraph,
-            .shadow: shadow,
-            .kern: 5.0
-        ]
-
-        let conceptStr = NSAttributedString(string: concept.word.uppercased(), attributes: attrs)
+        let conceptStr = NSAttributedString(string: upperWord, attributes: attrs)
         let textSize = conceptStr.size()
-        let layerW = textSize.width + 48.0
-        let layerH = textSize.height + 24.0
+        let layerW = textSize.width + CGFloat(40.0 * k)
+        let layerH = textSize.height + CGFloat(20.0 * k)
 
         // Строго по центру экрана
         let conceptX = (W - layerW) / 2.0
@@ -237,6 +509,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
 
     private func buildSynchronizedSubtitlesLayer(
         renderSize: CGSize,
+        k: Double,
         concept: ThematicConcept,
         conceptY: CGFloat,
         timedPhrases: [TimedSubtitlePhrase],
@@ -249,28 +522,10 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         let H = renderSize.height
         let t = max(totalDuration, 1.0)
 
-        let subFont = SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: 26.0, fallback: .heavy)
-        let accentColor = NSColor(hex: concept.accentColorHex) ?? NSColor(hex: "#FFE45C") ?? .yellow
+        // Единый источник атрибутов: кегль 32pt·k + акцент, пропущенный через WCAG-клампинг
+        let subAttrs = Self.captionAttributes(k: k, accentHex: concept.accentColorHex)
 
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.95)
-        shadow.shadowBlurRadius = 10.0
-        shadow.shadowOffset = CGSize(width: 0, height: -2.0)
-
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
-
-        let subAttrs: [NSAttributedString.Key: Any] = [
-            .font: subFont,
-            .foregroundColor: accentColor,
-            .strokeColor: NSColor.black,
-            .strokeWidth: -3.2,
-            .paragraphStyle: paragraph,
-            .shadow: shadow,
-            .kern: 1.5
-        ]
-
-        let maxTextWidth = min(W * 0.75, 960.0)
+        let maxTextWidth = min(W * 0.78, CGFloat(1240.0 * k))
         let chunked = chunkTimedPhrases(timedPhrases)
 
         for phrase in chunked {
@@ -284,8 +539,8 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
                 with: CGSize(width: maxTextWidth, height: 200.0),
                 options: [.usesLineFragmentOrigin, .usesFontLeading]
             )
-            let subW = min(W * 0.85, max(120.0, ceil(boundingRect.width) + 36.0))
-            let subH = max(36.0, ceil(boundingRect.height) + 16.0)
+            let subW = min(W * 0.85, max(CGFloat(120.0 * k), ceil(boundingRect.width) + CGFloat(36.0 * k)))
+            let subH = max(CGFloat(44.0 * k), ceil(boundingRect.height) + CGFloat(16.0 * k))
 
             // Размещаем прямо под концептом (вниз от conceptY с безопасным отступом)
             let subX = (W - subW) / 2.0
@@ -336,6 +591,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
 
     private func buildIntroTaglineLayer(
         renderSize: CGSize,
+        k: Double,
         concept: ThematicConcept,
         conceptY: CGFloat,
         totalDuration: Double
@@ -363,31 +619,16 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         // Подзаголовок / тезис размещается строго ПОД золотой чертой с зазором
         let taglineText = concept.tagline.isEmpty ? concept.philosophicalPremise : concept.tagline
         if !taglineText.isEmpty {
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.alignment = .center
-
-            let shadow = NSShadow()
-            shadow.shadowColor = NSColor.black.withAlphaComponent(0.9)
-            shadow.shadowBlurRadius = 10.0
-            shadow.shadowOffset = CGSize(width: 0, height: -2.0)
-
-            let subFont = NSFont.systemFont(ofSize: 18.0, weight: .medium)
-            let subAttrs: [NSAttributedString.Key: Any] = [
-                .font: subFont,
-                .foregroundColor: NSColor(hex: "#E0E0E0") ?? .lightGray,
-                .paragraphStyle: paragraph,
-                .shadow: shadow,
-                .kern: 1.8
-            ]
+            let subAttrs = Self.taglineAttributes(k: k)
 
             let subStr = NSAttributedString(string: taglineText, attributes: subAttrs)
-            let maxTaglineW = min(W * 0.75, 960.0)
+            let maxTaglineW = min(W * 0.75, CGFloat(960.0 * k))
             let boundingRect = subStr.boundingRect(
                 with: CGSize(width: maxTaglineW, height: 160.0),
                 options: [.usesLineFragmentOrigin, .usesFontLeading]
             )
-            let subW = min(W * 0.85, ceil(boundingRect.width) + 40.0)
-            let subH = ceil(boundingRect.height) + 16.0
+            let subW = min(W * 0.85, ceil(boundingRect.width) + CGFloat(40.0 * k))
+            let subH = ceil(boundingRect.height) + CGFloat(16.0 * k)
 
             // Размещаем под линией с отступом 14.0px
             let subY = lineY - subH - 14.0
@@ -425,6 +666,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
 
     private func buildActTransitionCardsLayer(
         renderSize: CGSize,
+        k: Double,
         concept: ThematicConcept,
         acts: [LongformAct],
         actStartTimes: [Double] = [],
@@ -448,63 +690,38 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
                 : currentTimelineOffset
             currentTimelineOffset += actDuration
 
-            // Титры для последующих актов (начиная со второго: Акт II, III, IV), чтобы не перекрывать вступительный интро-слоган
-            guard index > 0, actStartTimeline < totalDuration else { continue }
+            // Титры для последующих актов (начиная со второго: Акт II, III, IV), чтобы не перекрывать вступительный интро-слоган.
+            // Пустой акт не получает карточку: объявлять «ЧАСТЬ» над кадром, где играть нечему, — обман зрителя.
+            guard index > 0, !act.segments.isEmpty, actStartTimeline < totalDuration else { continue }
 
             let roman = (index < romanNumerals.count) ? romanNumerals[index] : "\(index + 1)"
             let actPartText = "— ЧАСТЬ \(roman) —"
             let cleanedTitle = act.title.trimmingCharacters(in: CharacterSet(charactersIn: "«»\" ")).uppercased()
             let actTitleText = "«\(cleanedTitle)»"
 
-            // 1. Надстрочник части (золотой акцентный, разрядка 5.0, Russo One 18pt)
-            let partFont = SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: 18.0, fallback: .heavy)
-            let paragraphCenter = NSMutableParagraphStyle()
-            paragraphCenter.alignment = .center
-
-            let partShadow = NSShadow()
-            partShadow.shadowColor = NSColor.black.withAlphaComponent(0.92)
-            partShadow.shadowBlurRadius = 8.0
-            partShadow.shadowOffset = CGSize(width: 0, height: -2.0)
-
-            let partAttrs: [NSAttributedString.Key: Any] = [
-                .font: partFont,
-                .foregroundColor: accentColor,
-                .paragraphStyle: paragraphCenter,
-                .shadow: partShadow,
-                .kern: 5.0
-            ]
+            // 1. Надстрочник части (акцентный WCAG-легible, разрядка 5.0·k, Russo One 20pt·k, обводка -2.0·k)
+            let partAttrs = Self.actOverlineAttributes(k: k, accentHex: concept.accentColorHex)
             let partAttributed = NSAttributedString(string: actPartText, attributes: partAttrs)
             let partSize = partAttributed.size()
 
-            // 2. Название главы (монументальный белый Russo One 34pt, разрядка 3.5, глубокая кино-тень)
-            let titleFont = SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: 34.0, fallback: .heavy)
-            let titleShadow = NSShadow()
-            titleShadow.shadowColor = NSColor.black.withAlphaComponent(0.98)
-            titleShadow.shadowBlurRadius = 16.0
-            titleShadow.shadowOffset = CGSize(width: 0, height: -3.0)
-
-            let titleAttrs: [NSAttributedString.Key: Any] = [
-                .font: titleFont,
-                .foregroundColor: NSColor.white,
-                .strokeColor: NSColor.black,
-                .strokeWidth: -2.0,
-                .paragraphStyle: paragraphCenter,
-                .shadow: titleShadow,
-                .kern: 3.5
-            ]
+            // 2. Название главы (монументальный белый Russo One 34pt·k, разрядка 3.0·k, глубокая кино-тень)
+            let titleAttrs = Self.actTitleAttributes(k: k)
             let titleAttributed = NSAttributedString(string: actTitleText, attributes: titleAttrs)
             let titleBounding = titleAttributed.boundingRect(
                 with: CGSize(width: W * 0.85, height: 200.0),
                 options: [.usesLineFragmentOrigin, .usesFontLeading]
             )
-            let titleSize = CGSize(width: ceil(titleBounding.width) + 16.0, height: ceil(titleBounding.height) + 8.0)
+            let titleSize = CGSize(
+                width: ceil(titleBounding.width) + CGFloat(16.0 * k),
+                height: ceil(titleBounding.height) + CGFloat(8.0 * k)
+            )
 
             // Контейнер без рамок и без плашек (чистая кино-типографика)
-            let containerW = max(partSize.width, titleSize.width) + 40.0
+            let containerW = max(partSize.width, titleSize.width) + CGFloat(40.0 * k)
             let lineWidth: CGFloat = 120.0
             let lineHeight: CGFloat = 2.5
-            let spacingPartToTitle: CGFloat = 6.0
-            let spacingTitleToLine: CGFloat = 12.0
+            let spacingPartToTitle: CGFloat = 6.0 * CGFloat(k)
+            let spacingTitleToLine: CGFloat = 12.0 * CGFloat(k)
             let totalContentH = partSize.height + spacingPartToTitle + titleSize.height + spacingTitleToLine + lineHeight
 
             let containerX = (W - containerW) / 2.0
@@ -616,27 +833,19 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = nsContext
 
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.96)
-        shadow.shadowBlurRadius = 14.0
-        shadow.shadowOffset = NSSize(width: 0, height: -3.0)
+        // Тот же множитель и те же помощники типографики, что и в оверлее: пути не могут разъехаться
+        let k = Self.scaleFactor(renderSize: renderSize)
 
-        // 1. Центральное якорное слово темы (Russo One, kern 5.0, офф-вайт, обводка)
-        let conceptFont = SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: 56.0, fallback: .heavy)
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
+        // 1. Центральное якорное слово темы (Russo One 44pt·k с авто-усадкой до 60% ширины, офф-вайт, обводка)
+        let upperWord = concept.word.uppercased()
+        let themeSize = Self.resolvedThemePointSize(
+            word: upperWord,
+            k: k,
+            maxWidth: Self.themeMaxWidth(renderSizeWidth: Double(renderSize.width))
+        )
+        let conceptAttrs = Self.themeAttributes(pointSize: themeSize, k: k)
 
-        let conceptAttrs: [NSAttributedString.Key: Any] = [
-            .font: conceptFont,
-            .foregroundColor: NSColor(hex: "#F5F5F7") ?? .white,
-            .strokeColor: NSColor.black,
-            .strokeWidth: -2.8,
-            .paragraphStyle: paragraph,
-            .shadow: shadow,
-            .kern: 5.0
-        ]
-
-        let conceptStr = NSAttributedString(string: concept.word.uppercased(), attributes: conceptAttrs)
+        let conceptStr = NSAttributedString(string: upperWord, attributes: conceptAttrs)
         let conceptSize = conceptStr.size()
         let conceptOrigin = NSPoint(
             x: (renderSize.width - conceptSize.width) / 2.0,
@@ -644,20 +853,10 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         )
         conceptStr.draw(at: conceptOrigin)
 
-        // 2. Плавный субтитр диалога прямо под концептом (золото Shortcast, Russo One 26pt, обводка)
+        // 2. Плавный субтитр диалога прямо под концептом (акцент WCAG-легible, Russo One 32pt·k, обводка)
         let phraseText = currentPhrase?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "ПОТЕРЯЕШЬ ВСЁ"
         if !phraseText.isEmpty {
-            let accentColor = NSColor(hex: concept.accentColorHex) ?? NSColor(hex: "#FFE45C") ?? .yellow
-            let subFont = SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: 26.0, fallback: .heavy)
-            let subAttrs: [NSAttributedString.Key: Any] = [
-                .font: subFont,
-                .foregroundColor: accentColor,
-                .strokeColor: NSColor.black,
-                .strokeWidth: -3.2,
-                .paragraphStyle: paragraph,
-                .shadow: shadow,
-                .kern: 1.5
-            ]
+            let subAttrs = Self.captionAttributes(k: k, accentHex: concept.accentColorHex)
             let subStr = NSAttributedString(string: phraseText.uppercased(), attributes: subAttrs)
             let subSize = subStr.size()
             let subOrigin = NSPoint(

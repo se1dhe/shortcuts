@@ -18,9 +18,11 @@ struct TimedSubtitlePhrase: Sendable, Equatable {
 /// Протокол отрисовщика брендовых титров и кинематографических оверлеев Shortcast для длинных роликов (SOLID: ISP/DIP)
 protocol LongformSubtitleRenderingProtocol: Sendable {
     /// Создает анимированный оверлейный CALayer для AVVideoCompositionCoreAnimationTool.
-    /// Включает кинетическую пословную типографику Shortcast (1-2 слова, micro-punch),
-    /// кинематографическую вступительную титульную карточку (Intro Title Card)
-    /// и маркеры актов (Act Chapter Cards).
+    /// Включает фирменную кино-типографику Shortcast:
+    /// - якорное слово темы по центру кадра (кегль 44pt при 1080 строках, авто-усадка до 60% ширины),
+    /// - синхронные реплики строго под ним (32pt, акцент не ниже WCAG AA 4.5:1 против кадра),
+    /// - вступительный слоган под субтитрами и карточки актов.
+    /// Плашки, рамки и фоны под текстом запрещены — только обводка и кино-тень.
     func makeOverlayLayer(
         renderSize: CGSize,
         concept: ThematicConcept,
@@ -30,7 +32,9 @@ protocol LongformSubtitleRenderingProtocol: Sendable {
         totalDuration: Double
     ) async -> CALayer
 
-    /// Генерирует статический кадр для SwiftUI превью в фирменном стиле Shortcast
+    /// Генерирует статический кадр для SwiftUI превью в фирменном стиле Shortcast.
+    /// Обязан использовать те же помощники типографики, что и `makeOverlayLayer`
+    /// (единый масштаб k = renderSize.height / 1080), иначе превью молча разойдется с видео.
     func renderPreviewImage(
         renderSize: CGSize,
         concept: ThematicConcept,

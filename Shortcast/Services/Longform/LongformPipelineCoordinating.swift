@@ -1,7 +1,7 @@
 import Foundation
 
 /// Результат успешной сборки длинного ролика
-struct LongformBuildResult: Sendable {
+struct LongformBuildResult: Codable, Equatable, Sendable {
     let outputURL: URL
     let arc: LongformNarrativeArc
     let metadata: LongformYouTubeMetadata
@@ -33,6 +33,7 @@ struct LongformAudioSettings: Sendable, Equatable {
     var coldOpenEnabled: Bool = true
     var antiCopyrightEnabled: Bool = true
     var antiCopyrightPreset: AntiCopyrightPreset = .cinemaShield
+    var loudnessNormalizationEnabled: Bool = true
 
     init(
         backgroundMusicURL: URL? = nil,
@@ -42,7 +43,8 @@ struct LongformAudioSettings: Sendable, Equatable {
         originalMusicDucking: Float = 0.82,
         coldOpenEnabled: Bool = true,
         antiCopyrightEnabled: Bool = true,
-        antiCopyrightPreset: AntiCopyrightPreset = .cinemaShield
+        antiCopyrightPreset: AntiCopyrightPreset = .cinemaShield,
+        loudnessNormalizationEnabled: Bool = true
     ) {
         self.backgroundMusicURL = backgroundMusicURL
         self.musicVolume = musicVolume
@@ -52,6 +54,7 @@ struct LongformAudioSettings: Sendable, Equatable {
         self.coldOpenEnabled = coldOpenEnabled
         self.antiCopyrightEnabled = antiCopyrightEnabled
         self.antiCopyrightPreset = antiCopyrightPreset
+        self.loudnessNormalizationEnabled = loudnessNormalizationEnabled
     }
 }
 

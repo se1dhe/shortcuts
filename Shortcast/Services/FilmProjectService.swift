@@ -1,5 +1,5 @@
 import Foundation
-import os.log
+import os
 
 /// Протокол управления проектами фильмов (SOLID: Interface Segregation & Dependency Inversion).
 protocol FilmProjectServicing: Sendable {
@@ -7,6 +7,15 @@ protocol FilmProjectServicing: Sendable {
     func saveProject(_ project: FilmProject) async throws
     func deleteProject(id: UUID) async throws
     func listRecentProjects() async throws -> [FilmProject]
+
+    /// Есть ли на диске архив этого фильма — читаемый или битый. Нужен, чтобы
+    /// пустой проект не перезаписал то, что мы не смогли прочитать.
+    func hasStoredProjectFile(matching movieURL: URL) async -> Bool
+}
+
+extension FilmProjectServicing {
+    /// Реализация по умолчанию: архива нет — можно создавать новый проект.
+    func hasStoredProjectFile(matching movieURL: URL) async -> Bool { false }
 }
 
 /// Потокобезопасная реализация хранилища проектов фильмов.
@@ -18,6 +27,11 @@ final class FilmProjectService: FilmProjectServicing, Sendable {
     private static let logger = Logger(subsystem: "app.shortcast", category: "FilmProjectService")
 
     private let storageDirectory: URL
+    private let corruptionLock = OSAllocatedUnfairLock<Int>(initialState: 0)
+
+    /// Сколько архивов пострадало при последнем сканировании каталога: не читается
+    /// целиком или содержит поля, которые не удалось разобрать.
+    var corruptedProjectCount: Int { corruptionLock.withLock { $0 } }
 
     init(storageDirectory: URL? = nil) {
         if let custom = storageDirectory {
@@ -28,6 +42,12 @@ final class FilmProjectService: FilmProjectServicing, Sendable {
             self.storageDirectory = appSupport
         }
         try? FileManager.default.createDirectory(at: self.storageDirectory, withIntermediateDirectories: true)
+    }
+
+    private func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
     }
 
     private func fileURL(for id: UUID) -> URL {
@@ -112,18 +132,65 @@ final class FilmProjectService: FilmProjectServicing, Sendable {
             return []
         }
 
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = makeDecoder()
 
         var loaded: [FilmProject] = []
+        var corrupted = 0
         for file in files where file.pathExtension == "shortcastproj" {
-            guard let data = try? Data(contentsOf: file),
-                  let project = try? decoder.decode(FilmProject.self, from: data) else {
-                continue
+            do {
+                let data = try Data(contentsOf: file)
+                let project = try decoder.decode(FilmProject.self, from: data)
+                if !project.decodeDamage.isEmpty {
+                    // Проект загружен, но часть данных потеряна — это не молчаливая
+                    // потеря фильма, но и не норма: порчу видно в логе и в счётчике.
+                    Self.logger.error("Project \(file.lastPathComponent) loaded damaged at: \(project.decodeDamage.joined(separator: ", "))")
+                    corrupted += 1
+                }
+                loaded.append(project)
+            } catch {
+                // Молча пропущенный проект раньше приводил к перезаписи пустым.
+                Self.logger.error("Skipping unreadable project \(file.lastPathComponent): \(error.localizedDescription)")
+                corrupted += 1
             }
-            loaded.append(project)
+        }
+
+        let corruptedCount = corrupted
+        corruptionLock.withLock { $0 = corruptedCount }
+        if corruptedCount > 0 {
+            let folder = storageDirectory.path
+            Self.logger.error("\(corruptedCount) corrupted project archive(s) under \(folder)")
         }
 
         return loaded.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// Ищет архив этого фильма, не требуя, чтобы он читался: битый файл тоже
+    /// отвечает «да», и тогда пустой проект его не перезапишет.
+    func hasStoredProjectFile(matching movieURL: URL) async -> Bool {
+        let files = (try? FileManager.default.contentsOfDirectory(at: storageDirectory, includingPropertiesForKeys: nil)) ?? []
+        let decoder = makeDecoder()
+        let baseName = movieURL.deletingPathExtension().lastPathComponent
+        let fullName = movieURL.lastPathComponent
+
+        for file in files where file.pathExtension == "shortcastproj" {
+            guard let data = try? Data(contentsOf: file) else {
+                Self.logger.error("Project \(file.lastPathComponent) exists but cannot be read")
+                continue
+            }
+            if let project = try? decoder.decode(FilmProject.self, from: data) {
+                let matches = project.sourceMovieURL == movieURL
+                    || project.sourceMovieURL.lastPathComponent == fullName
+                    || project.movieFileName == baseName
+                    || project.movieFileName == fullName
+                if matches { return true }
+                continue
+            }
+            guard baseName.count > 2, let text = String(data: data, encoding: .utf8) else { continue }
+            if text.contains(movieURL.path) || text.contains(fullName) || text.contains(baseName) {
+                Self.logger.error("Found unreadable archive \(file.lastPathComponent) for \(movieURL.lastPathComponent)")
+                return true
+            }
+        }
+        return false
     }
 }

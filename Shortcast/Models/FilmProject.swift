@@ -33,7 +33,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
     /// Выбранный пользователем концепт эссе
     var selectedConcept: ThematicConcept?
 
-    /// Результат сборки 16:9 эссе (файл, таймлайн, метаданные YouTube) - сессионный объект в памяти
+    /// Результат сборки 16:9 эссе (файл, таймлайн, метаданные YouTube)
     var longformResult: LongformBuildResult?
 
     /// Отобранные вирусные кандидаты для коротких видео (Shorts / Reels / TikTok)
@@ -41,6 +41,11 @@ struct FilmProject: Identifiable, Codable, Sendable {
 
     var createdAt: Date
     var updatedAt: Date
+
+    /// Ключи, которые не удалось прочитать при загрузке архива. Проект при этом
+    /// остаётся рабочим, но молча терять данные нельзя: хранилище по этому списку
+    /// пишет в лог и считает повреждённые архивы.
+    private(set) var decodeDamage: [String] = []
 
     init(
         id: UUID = UUID(),
@@ -83,7 +88,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id, sourceMovieURL, movieFileName, movieTitle, movieYear, durationSeconds, fileSizeBytes
         case tmdbMetadata, transcript, scenes, discoveredConcepts, thematicAnalysis, selectedConcept
-        case candidates, createdAt, updatedAt
+        case longformResult, candidates, createdAt, updatedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -97,14 +102,41 @@ struct FilmProject: Identifiable, Codable, Sendable {
         fileSizeBytes = try container.decodeIfPresent(Int64.self, forKey: .fileSizeBytes)
         tmdbMetadata = try container.decodeIfPresent(MovieIdentity.self, forKey: .tmdbMetadata)
         transcript = try container.decodeIfPresent(Transcript.self, forKey: .transcript)
-        scenes = try container.decode([DetectedScene].self, forKey: .scenes)
-        discoveredConcepts = try container.decode([ThematicConcept].self, forKey: .discoveredConcepts)
+        // Один битый массив не имеет права «съедать» весь фильм: поле становится
+        // пустым, а ключ попадает в decodeDamage — хранилище его логирует и считает.
+        var damage: [String] = []
+        scenes = Self.readArray([DetectedScene].self, forKey: .scenes, in: container, damage: &damage)
+        discoveredConcepts = Self.readArray([ThematicConcept].self, forKey: .discoveredConcepts, in: container, damage: &damage)
         thematicAnalysis = try container.decodeIfPresent(ThematicAnalysisResult.self, forKey: .thematicAnalysis)
         selectedConcept = try container.decodeIfPresent(ThematicConcept.self, forKey: .selectedConcept)
-        candidates = try container.decode([ClipCandidate].self, forKey: .candidates)
+        longformResult = Self.read(LongformBuildResult.self, forKey: .longformResult, in: container, damage: &damage)
+        candidates = Self.readArray([ClipCandidate].self, forKey: .candidates, in: container, damage: &damage)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
-        longformResult = nil
+        decodeDamage = damage
+    }
+
+    /// Ключ отсутствует — нормально (старый архив). Ключ есть, но не читается —
+    /// повреждение: возвращаем nil и помечаем его в `damage`.
+    private static func read<T: Decodable>(
+        _ type: T.Type,
+        forKey key: CodingKeys,
+        in container: KeyedDecodingContainer<CodingKeys>,
+        damage: inout [String]
+    ) -> T? {
+        guard container.contains(key) else { return nil }
+        if let value = try? container.decode(T.self, forKey: key) { return value }
+        damage.append(key.rawValue)
+        return nil
+    }
+
+    private static func readArray<T: Decodable>(
+        _ type: [T].Type,
+        forKey key: CodingKeys,
+        in container: KeyedDecodingContainer<CodingKeys>,
+        damage: inout [String]
+    ) -> [T] {
+        read(type, forKey: key, in: container, damage: &damage) ?? []
     }
 
     func encode(to encoder: Encoder) throws {
@@ -122,6 +154,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
         try container.encode(discoveredConcepts, forKey: .discoveredConcepts)
         try container.encodeIfPresent(thematicAnalysis, forKey: .thematicAnalysis)
         try container.encodeIfPresent(selectedConcept, forKey: .selectedConcept)
+        try container.encodeIfPresent(longformResult, forKey: .longformResult)
         try container.encode(candidates, forKey: .candidates)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)

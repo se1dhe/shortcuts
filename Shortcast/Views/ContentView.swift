@@ -264,6 +264,7 @@ struct ContentView: View {
                 concepts: workspace.discoveredConcepts,
                 aiReasoning: workspace.thematicReasoning,
                 source: workspace.thematicAnalysis?.source ?? .unknown,
+                isRegenerating: workspace.isRegeneratingConcepts,
                 onSelect: { concept, confirmedTitle, audioSettings in
                     workspace.confirmLongformConcept(
                         concept,

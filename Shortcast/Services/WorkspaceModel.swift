@@ -427,9 +427,11 @@ final class WorkspaceModel {
         self.pipelineError = nil
         self.longformResult = nil
 
-        // МГНОВЕННЫЙ СТАРТ: если проект уже имеет транскрипт Whisper и сгенерированные концепты,
-        // открываем экран выбора концепта мгновенно (0.01 сек), без повторного Whisper и Gemma!
+        // МГНОВЕННЫЙ СТАРТ: если проект уже имеет транскрипт Whisper и анализ,
+        // реально выданный моделью, открываем экран выбора концепта мгновенно
+        // (0.01 сек), без повторного Whisper и Director.
         if let existingAnalysis = self.thematicAnalysis ?? self.currentProject?.thematicAnalysis,
+           existingAnalysis.source == .llm,
            let cachedTranscript = self.storedTranscript ?? self.currentProject?.transcript {
             self.storedTranscript = cachedTranscript
             self.thematicAnalysis = existingAnalysis
@@ -449,6 +451,10 @@ final class WorkspaceModel {
             Self.log("Instantly loaded cached thematic analysis for '\(newJob.effectiveTitle)': primary concept '\(existingAnalysis.primaryConcept.word)'")
             self.phase = .selectingLongformConcept
             return
+        }
+        if let staleAnalysis = self.thematicAnalysis ?? self.currentProject?.thematicAnalysis,
+           staleAnalysis.source != .llm {
+            Self.log("Discarding non-model thematic analysis (source=\(staleAnalysis.source.rawValue)) for '\(newJob.effectiveTitle)': Director must re-derive the theme")
         }
 
         self.selectedConcept = nil
@@ -511,8 +517,8 @@ final class WorkspaceModel {
                 ) {
                     movie = heuristic
                 } else {
-                    // Задействуем Director LLM (Qwen/Gemma) для идентификации по репликам
-                    await modelManager.prepareDirectorIfNeeded()
+                    // Задействуем Director LLM в выбранном пользователем профиле
+                    await modelManager.prepareDirector(profile: settings.copywriterModel.directorProfile)
                     if let inferred = await modelManager.momentFinder.detectMovieFromTranscript(sample: sampleDialogue, candidateTitle: initialCandidate) {
                         movie = await movieMetadata.resolveMovie(
                             filename: inferred.title,
@@ -561,9 +567,11 @@ final class WorkspaceModel {
                 effectiveMovieTitle = "Фильм"
             }
 
-            // 3. Выявление философских тем и автономный выбор ОДНОЙ главной темы (Shortcast Thematic Engine)
+            // 3. Выявление философских тем: кэш годен только когда анализ реально
+            // выдала модель, иначе обязан отработать Director.
             let analysis: ThematicAnalysisResult
-            if let existing = self.thematicAnalysis ?? self.currentProject?.thematicAnalysis {
+            if let existing = self.thematicAnalysis ?? self.currentProject?.thematicAnalysis,
+               existing.source == .llm {
                 analysis = existing
                 self.thematicAnalysis = existing
                 self.thematicReasoning = existing.aiReasoning
@@ -571,24 +579,31 @@ final class WorkspaceModel {
                 if self.selectedConcept == nil {
                     self.selectedConcept = existing.primaryConcept
                 }
+                Self.log("Reusing model-produced thematic analysis for '\(effectiveMovieTitle)': \(existing.primaryConcept.word)")
             } else {
                 let thematicService = LongformThematicService()
+                // Тема, не полученная от модели, не подставляется: ошибка уходит
+                // в catch ниже, и эссе не откроется с выдуманным лейтмотивом.
                 analysis = try await thematicService.discoverThematicAnalysis(
                     from: transcript,
                     movieTitle: effectiveMovieTitle,
                     movieOverview: movie?.overview,
-                    modelManager: modelManager
+                    modelManager: modelManager,
+                    directorProfile: settings.copywriterModel.directorProfile
                 )
                 self.thematicAnalysis = analysis
                 self.thematicReasoning = analysis.aiReasoning
                 self.discoveredConcepts = analysis.allConcepts
                 // АВТОНОМНЫЙ ВЫБОР: модель сама выбирает и предлагает ОДНУ главную тему
                 self.selectedConcept = analysis.primaryConcept
-                self.currentProject?.thematicAnalysis = analysis
-                self.currentProject?.discoveredConcepts = analysis.allConcepts
-                self.currentProject?.selectedConcept = analysis.primaryConcept
-                if let project = self.currentProject {
-                    try? await filmProjectService.saveProject(project)
+                Self.log("Director produced thematic analysis for '\(effectiveMovieTitle)': \(analysis.primaryConcept.word) (source=\(analysis.source.rawValue))")
+                if analysis.source == .llm {
+                    self.currentProject?.thematicAnalysis = analysis
+                    self.currentProject?.discoveredConcepts = analysis.allConcepts
+                    self.currentProject?.selectedConcept = analysis.primaryConcept
+                    if let project = self.currentProject {
+                        try? await filmProjectService.saveProject(project)
+                    }
                 }
             }
             self.phase = .selectingLongformConcept
@@ -873,8 +888,8 @@ final class WorkspaceModel {
         self.phase = .selectingLongformConcept
     }
 
-    /// Повторный запуск генерации альтернативных тем с помощью нейросети Director
-    func regenerateThematicConcepts(modelManager: ModelManager) async {
+    /// Повторный запуск генерации тем нейросетью Director в выбранном профиле модели
+    func regenerateThematicConcepts(modelManager: ModelManager, directorProfile: ChatModelProfile) async {
         guard let transcript = storedTranscript else { return }
         let effectiveTitle = detectedMovie?.title ?? job?.effectiveTitle ?? "Фильм"
         let overview = detectedMovie?.overview
@@ -885,19 +900,24 @@ final class WorkspaceModel {
                 from: transcript,
                 movieTitle: effectiveTitle,
                 movieOverview: overview,
-                modelManager: modelManager
+                modelManager: modelManager,
+                directorProfile: directorProfile
             )
             self.thematicAnalysis = freshAnalysis
             self.thematicReasoning = freshAnalysis.aiReasoning
             self.discoveredConcepts = freshAnalysis.allConcepts
             self.selectedConcept = freshAnalysis.primaryConcept
-            self.currentProject?.thematicAnalysis = freshAnalysis
-            self.currentProject?.discoveredConcepts = freshAnalysis.allConcepts
-            self.currentProject?.selectedConcept = freshAnalysis.primaryConcept
-            if let project = self.currentProject {
-                try? await filmProjectService.saveProject(project)
+            Self.log("Director regenerated themes for '\(effectiveTitle)': \(freshAnalysis.primaryConcept.word) (source=\(freshAnalysis.source.rawValue))")
+            if freshAnalysis.source == .llm {
+                self.currentProject?.thematicAnalysis = freshAnalysis
+                self.currentProject?.discoveredConcepts = freshAnalysis.allConcepts
+                self.currentProject?.selectedConcept = freshAnalysis.primaryConcept
+                if let project = self.currentProject {
+                    try? await filmProjectService.saveProject(project)
+                }
             }
         } catch {
+            errorMessage = "Ошибка подбора тем: \(error.localizedDescription)"
             Self.log("regenerateThematicConcepts failed: \(error.localizedDescription)")
         }
     }

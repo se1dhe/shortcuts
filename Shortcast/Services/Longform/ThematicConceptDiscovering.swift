@@ -1,54 +1,55 @@
 import Foundation
 
+/// Ошибки поиска темы. Раньше вместо них pipeline молча возвращал
+/// хардкод-таблицу, и под «выбором ИИ» скрывалась строка из кода.
+enum ThematicDiscoveryError: Error, LocalizedError {
+    case transcriptEmpty
+    case directorUnavailable(String)
+    case modelReturnedNoText
+    case unparseableOutput(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .transcriptEmpty:
+            return "Транскрипт пуст — модели нечего анализировать. Сначала прогоните Whisper."
+        case .directorUnavailable(let detail):
+            return "Director не загрузился (\(detail)). Тему для эссе выбирает только он."
+        case .modelReturnedNoText:
+            return "Director вернул пустой ответ."
+        case .unparseableOutput(let preview):
+            return "Director не выдал валидный JSON темы: \(preview)"
+        }
+    }
+}
+
 /// Протокол сервиса выявления философских лейтмотивов фильма для длинных видео (SOLID)
 protocol ThematicConceptDiscovering: Sendable {
-    /// Глубоко анализирует полный сценарий фильма и возвращает структурированный результат:
-    /// ОДНУ главную тему, обоснование выбора от лица режиссера-ИИ и альтернативные грани
+    /// Глубоко анализирует полный сценарий фильма моделью Director и возвращает
+    /// структурированный результат: ОДНУ главную тему, обоснование выбора и
+    /// альтернативные грани. Если тема не получена от модели — бросает ошибку:
+    /// тихой подмены на заготовку больше нет.
     func discoverThematicAnalysis(
         from transcript: Transcript,
         movieTitle: String,
         movieOverview: String?,
-        modelManager: ModelManager?
+        modelManager: ModelManager,
+        directorProfile: ChatModelProfile
     ) async throws -> ThematicAnalysisResult
-
-    /// Анализирует транскрипт или метаданные фильма и генерирует концепты
-    func discoverConcepts(
-        from transcript: Transcript,
-        movieTitle: String,
-        movieOverview: String?,
-        forceAI: Bool,
-        modelManager: ModelManager?
-    ) async throws -> [ThematicConcept]
-
-    /// Возвращает качественные темы по умолчанию, если модель недоступна или запрос завершился сбоем
-    func fallbackConcepts(for movieTitle: String) -> [ThematicConcept]
 }
 
 extension ThematicConceptDiscovering {
     func discoverThematicAnalysis(
         from transcript: Transcript,
         movieTitle: String,
-        modelManager: ModelManager? = nil
+        modelManager: ModelManager,
+        directorProfile: ChatModelProfile
     ) async throws -> ThematicAnalysisResult {
         try await discoverThematicAnalysis(
             from: transcript,
             movieTitle: movieTitle,
             movieOverview: nil,
-            modelManager: modelManager
-        )
-    }
-
-    func discoverConcepts(
-        from transcript: Transcript,
-        movieTitle: String,
-        modelManager: ModelManager? = nil
-    ) async throws -> [ThematicConcept] {
-        try await discoverConcepts(
-            from: transcript,
-            movieTitle: movieTitle,
-            movieOverview: nil,
-            forceAI: false,
-            modelManager: modelManager
+            modelManager: modelManager,
+            directorProfile: directorProfile
         )
     }
 }

@@ -30,6 +30,20 @@ final class MomentFinderService {
     private(set) var phase: Phase = .idle
     private var container: ModelContainer?
 
+    /// The single in-flight download/load. Callers join it rather than reading
+    /// `container == nil` as "ready" — that race is what let the essay theme
+    /// silently fall back to the hardcoded tables.
+    private var loadTask: Task<Void, Never>?
+
+    /// Bumped whenever the selection changes so an in-flight load can tell it is
+    /// stale and must not install its container.
+    private var loadGeneration = 0
+
+    /// Generation whose load ended in `.failed`. A joined waiter must not turn a
+    /// failure into a retry loop inside one call; the next call (or a retry from
+    /// the UI) gets the fresh attempt.
+    private var failedGeneration: Int?
+
     /// Which model plays the Director. Defaults to Qwen 3.5 9B; switched to match
     /// the user's pick via `setProfile(_:)` before the model loads.
     private(set) var profile = ChatModelProfile.qwen35_9b
@@ -40,6 +54,13 @@ final class MomentFinderService {
         case .downloading, .loading: return true
         default: return false
         }
+    }
+
+    /// Why the last load failed, else nil. Without it a caller that only sees
+    /// `isReady == false` can't tell "still loading" from "download refused".
+    var loadFailureDescription: String? {
+        if case .failed(let message) = phase { return message }
+        return nil
     }
 
     var displayName: String { profile.displayName }
@@ -57,18 +78,46 @@ final class MomentFinderService {
         guard newProfile.modelID != profile.modelID else { return }
         if container != nil { unload() }
         profile = newProfile
+        loadGeneration += 1
     }
 
-    /// Downloads (if needed) and loads the selected Director model. Safe to call
-    /// repeatedly. Loaded lazily on the first long-video drop — not at app launch.
+    /// Downloads (if needed) and loads the selected Director model and BLOCKS
+    /// until the outcome is known. Safe to call repeatedly and concurrently: a
+    /// second caller waits for the in-flight load instead of returning early
+    /// with `container == nil`, and a `.failed` phase falls through so a later
+    /// call really retries the download rather than no-oping.
     func prepareIfNeeded() async {
-        guard container == nil, !isBusy else { return }
+        var joinedInFlightLoad = false
+        while container == nil, let inflight = loadTask {
+            await inflight.value
+            joinedInFlightLoad = true
+        }
+        guard container == nil else { return }
+        if joinedInFlightLoad, case .failed = phase, failedGeneration == loadGeneration {
+            return
+        }
+
+        let requested = profile
+        let generation = loadGeneration
+        let task = Task { @MainActor in
+            await self.load(requested, generation: generation)
+            // Cleared as the task's last act, so a joiner that resumes after it
+            // sees "no load in flight" and can start a fresh attempt if needed.
+            loadTask = nil
+        }
+        loadTask = task
+        await task.value
+    }
+
+    /// One download + load pass for `requested`. Kept separate from
+    /// `prepareIfNeeded()` so the in-flight bookkeeping has a single owner.
+    private func load(_ requested: ChatModelProfile, generation: Int) async {
         phase = .downloading(fraction: 0)
 
         do {
             let downloader = #hubDownloader()
             let localDir = try await downloader.download(
-                id: profile.modelID,
+                id: requested.modelID,
                 revision: nil,
                 matching: ["*.safetensors", "*.json", "*.txt", "*.jinja"],
                 useLatest: false,
@@ -83,25 +132,37 @@ final class MomentFinderService {
             phase = .loading
             // Both models feed plain text and generate via ChatSession; they only
             // differ in how the container is built.
-            switch profile.loader {
+            let loaded: ModelContainer
+            switch requested.loader {
             case .vlm:
                 // Qwen 3.5 9B ships only as a VLM package on HF → VLMModelFactory.
                 // No chat-template patch is needed for plain text generation.
-                container = try await VLMModelFactory.shared.loadContainer(
+                loaded = try await VLMModelFactory.shared.loadContainer(
                     from: localDir, using: #huggingFaceTokenizerLoader())
             case .gemma4Text:
                 // Gemma 4 isn't in mlx-swift-lm's registry — register the custom
                 // "gemma4" type (text-only: we never pass it media) and load with
                 // the package's tokenizer loader.
                 await Gemma4Registration.register(multimodal: false)
-                container = try await loadModelContainer(
+                loaded = try await loadModelContainer(
                     from: localDir, using: Gemma4TokenizerLoader())
             }
+
+            guard generation == loadGeneration else {
+                // The user picked another model while this was running; publishing
+                // this container would silently run the wrong Director.
+                phase = .idle
+                Self.log("director load discarded (profile changed mid-load): \(requested.modelID)")
+                return
+            }
+            container = loaded
+            failedGeneration = nil
             phase = .ready
-            Self.log("director loaded: \(profile.displayName) (\(profile.modelID))")
+            Self.log("director loaded: \(requested.displayName) (\(requested.modelID))")
         } catch {
-            Self.log("director load FAILED for \(profile.modelID): \(error)")
+            Self.log("director load FAILED for \(requested.modelID): \(error)")
             phase = .failed(error.localizedDescription)
+            failedGeneration = generation
         }
     }
 
@@ -110,6 +171,8 @@ final class MomentFinderService {
     func unload() {
         container = nil
         phase = .idle
+        failedGeneration = nil
+        loadGeneration += 1
         MLX.Memory.clearCache()
     }
 
@@ -526,21 +589,25 @@ final class MomentFinderService {
     }
 
     /// Глубоко анализирует полный срез сценария по всем 4 актам и выбирает ОДНУ главную тему эссе с разбором ИИ
+    ///
+    /// Every failure is an error, never a nil: the caller cannot tell "the model
+    /// chose this" from "the model was never asked" otherwise, and the pipeline
+    /// used to paper over it with the hardcoded theme tables.
     func analyzeThematicCore(
         transcriptSample: String,
         movieTitle: String,
         movieOverview: String? = nil
-    ) async -> ThematicAnalysisResult? {
+    ) async throws -> ThematicAnalysisResult {
         guard let container else {
-            Self.log("analyzeThematicCore skipped: no model loaded")
-            return nil
+            Self.log("analyzeThematicCore: no model loaded")
+            throw ThematicDiscoveryError.directorUnavailable("модель не загружена")
         }
         let sample = transcriptSample.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !sample.isEmpty else { return nil }
+        guard !sample.isEmpty else { throw ThematicDiscoveryError.transcriptEmpty }
 
         let s = profile.sampling
         var params = GenerateParameters(
-            maxTokens: 2048,
+            maxTokens: Self.thematicMaxTokens,
             temperature: 0.35,
             topP: s.topP,
             topK: s.topK,
@@ -551,59 +618,132 @@ final class MomentFinderService {
 
         let instructions = LongformThematicService.thematicSystemPrompt(movieTitle: movieTitle)
 
-        let session = ChatSession(
-            container,
-            instructions: instructions,
-            generateParameters: params,
-            additionalContext: ["enable_thinking": false])
+        // The overview is prompt material too: cap it so it can't eat the budget
+        // the transcript was sized for.
+        let overview = (movieOverview?.trimmed ?? "").prefix(Self.thematicOverviewCharCap)
+        let headerChars = Self.thematicFrameCharOverhead + overview.count
+        let budgetChars = Self.thematicContextBudgetChars(
+            maxKVSize: s.maxKVSize, maxTokens: Self.thematicMaxTokens, headerChars: headerChars)
+
+        // Never `prefix(_:)` the tail away: thin every act evenly so the third
+        // act still reaches the model when the transcript exceeds the budget.
+        let (dialogue, lineStride) = Self.downsampleChronologically(sample, to: budgetChars)
 
         var promptParts: [String] = ["Фильм: «\(movieTitle)»"]
-        if let overview = movieOverview?.trimmingCharacters(in: .whitespacesAndNewlines), !overview.isEmpty {
+        if !overview.isEmpty {
             promptParts.append("Синопсис/сюжет фильма:\n\"\"\"\n\(overview)\n\"\"\"")
         }
-        // Отправляем ВЕСЬ сжатый транскрипт. Безопасный лимит ~40k символов
-        // (~35k токенов) покрывает префилл Qwen. Для очень длинных фильмов
-        // прореживаем строки равномерно по всей хронологии, а не обрезаем хвост,
-        // чтобы сохранить покрытие всех актов.
-        let maxContextChars = 40_000
-        let fullDialogueSample: String
-        if sample.count <= maxContextChars {
-            fullDialogueSample = sample
-        } else {
-            let lines = sample.components(separatedBy: "\n")
-            let targetLines = max(1, lines.count * maxContextChars / sample.count)
-            let step = max(1, lines.count / targetLines)
-            let sampled = stride(from: 0, to: lines.count, by: step).map { lines[$0] }
-            fullDialogueSample = String(sampled.joined(separator: "\n").prefix(maxContextChars))
-            Self.log("analyzeThematicCore: transcript \(sample.count) chars > \(maxContextChars), downsampled to \(fullDialogueSample.count) chars (step \(step))")
-        }
-        promptParts.append("Срез ключевых диалогов фильма (хронологически по всему сюжету):\n\"\"\"\n\(fullDialogueSample)\n\"\"\"")
+        promptParts.append("Срез ключевых диалогов фильма (хронологически по всему сюжету):\n\"\"\"\n\(dialogue)\n\"\"\"")
         promptParts.append("Выбери ОДНУ ГЛАВНУЮ тему эссе (primaryConcept), подробно обоснуй выбор (aiReasoning) и предложи альтернативные грани (alternativeConcepts). Верни СТРОГО валидный JSON-объект:")
         let userPrompt = promptParts.joined(separator: "\n\n")
 
-        do {
-            var raw = ""
-            for try await chunk in session.streamResponse(to: userPrompt) {
-                raw += chunk
+        let estimatedPromptTokens = Int(Double(userPrompt.count + instructions.count) / Self.approxCharsPerToken)
+        Self.log("""
+            analyzeThematicCore: profile=\(profile.displayName) maxKVSize=\(s.maxKVSize.map { "\($0)" } ?? "nil") \
+            budget=\(budgetChars) chars sample=\(sample.count)→\(dialogue.count) chars (stride \(lineStride)) \
+            maxTokens=\(Self.thematicMaxTokens) estPromptTokens=\(estimatedPromptTokens)
+            """)
+
+        // Same shape as `findMoments`: the model sometimes answers with prose or
+        // broken JSON, so nudge and retry before declaring it a failure.
+        var latestText: String?
+        var lastError: (any Error)?
+        let maxAttempts = 3
+        for attempt in 1...maxAttempts {
+            let prompt = attempt == 1
+                ? userPrompt
+                : userPrompt + "\n\nВНИМАНИЕ: предыдущий ответ был невалидным. Ответь ТОЛЬКО валидным JSON-объектом без markdown, без пояснений и без текста до или после объекта."
+
+            let session = ChatSession(
+                container,
+                instructions: instructions,
+                generateParameters: params,
+                additionalContext: ["enable_thinking": false])
+
+            do {
+                var raw = ""
+                for try await chunk in session.streamResponse(to: prompt) {
+                    raw += chunk
+                }
+                Self.log("analyzeThematicCore attempt \(attempt): \(raw.count) chars")
+                guard !raw.trimmed.isEmpty else { continue }
+                latestText = raw
+                if let parsed = LongformThematicService.parseThematicAnalysis(from: raw) {
+                    return parsed
+                }
+            } catch {
+                lastError = error
+                Self.log("analyzeThematicCore attempt \(attempt) failed: \(error.localizedDescription)")
             }
-            Self.log("analyzeThematicCore output (\(raw.count) chars)")
-            return LongformThematicService.parseThematicAnalysis(from: raw)
-        } catch {
-            Self.log("analyzeThematicCore failed: \(error.localizedDescription)")
-            return nil
         }
+
+        if let text = latestText {
+            throw ThematicDiscoveryError.unparseableOutput(String(text.prefix(200)))
+        }
+        if let error = lastError {
+            Self.log("analyzeThematicCore: every attempt errored")
+            throw error
+        }
+        throw ThematicDiscoveryError.modelReturnedNoText
     }
 
-    /// Generates deep philosophical themes/concepts for a film using the Director model (backward compatibility).
-    func generateThematicConcepts(transcriptSample: String, movieTitle: String, movieOverview: String? = nil) async -> [ThematicConcept] {
-        if let analysis = await analyzeThematicCore(
-            transcriptSample: transcriptSample,
-            movieTitle: movieTitle,
-            movieOverview: movieOverview
-        ) {
-            return analysis.allConcepts
+    /// Chars/token measured on the real Blade Runner 2049 corpus (~3.7 for this
+    /// Cyrillic/French mix); 3.5 keeps the estimate pessimistic so the rotating
+    /// KV cache never trips mid-prompt and silently eats the first acts.
+    nonisolated static let approxCharsPerToken = 3.5
+
+    /// Tokens the thematic call burns on framing: system prompt, section headers
+    /// and the chat template.
+    nonisolated static let thematicPromptOverheadTokens = 1_024
+
+    /// Assumed token budget when a profile leaves KV unbounded (`maxKVSize == nil`).
+    nonisolated static let unboundedKVTokenBudget = 16_384
+
+    /// Room for primaryConcept + aiReasoning + 3 alternatives as JSON.
+    nonisolated static let thematicMaxTokens = 3_072
+
+    nonisolated static let thematicOverviewCharCap = 2_000
+
+    /// Non-transcript characters in the user prompt (title line, section headers,
+    /// the closing instruction).
+    nonisolated static let thematicFrameCharOverhead = 900
+
+    /// Transcript character budget that provably fits the profile's KV window
+    /// together with the generation cap — `maxKVSize` is a rotation point, not a
+    /// context window, so anything larger silently loses the head of the film.
+    nonisolated static func thematicContextBudgetChars(
+        maxKVSize: Int?,
+        maxTokens: Int,
+        headerChars: Int
+    ) -> Int {
+        let kvTokens = maxKVSize ?? unboundedKVTokenBudget
+        let transcriptTokens = max(1_024, kvTokens - maxTokens - thematicPromptOverheadTokens)
+        let rawChars = Int(Double(transcriptTokens) * approxCharsPerToken)
+        return max(2_000, rawChars - headerChars)
+    }
+
+    /// Even-stride thinning over the WHOLE chronology; the first and the last
+    /// line always survive, unlike a head cut that drops the payoff.
+    nonisolated static func downsampleChronologically(
+        _ sample: String,
+        to budgetChars: Int
+    ) -> (text: String, stride: Int) {
+        let budget = max(1, budgetChars)
+        guard sample.count > budget else { return (sample, 1) }
+
+        let lines = sample.components(separatedBy: "\n")
+        guard lines.count > 1 else { return (String(sample.prefix(budget)), 1) }
+
+        var thin = max(2, Int(ceil(Double(sample.count) / Double(budget))))
+        while thin < lines.count {
+            var indices = Array(stride(from: 0, to: lines.count, by: thin))
+            if indices.last != lines.count - 1 { indices.append(lines.count - 1) }
+            let text = indices.map { lines[$0] }.joined(separator: "\n")
+            if text.count <= budget { return (text, thin) }
+            thin += max(1, thin / 2)
         }
-        return []
+        let text = [lines.first ?? "", lines.last ?? ""].joined(separator: "\n")
+        return (String(text.prefix(budget)), lines.count)
     }
 
     private func parseMovieInference(_ raw: String, fallbackTitle: String, fallbackYear: String?) -> TMDBMovie? {

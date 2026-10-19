@@ -2,57 +2,92 @@ import Testing
 import Foundation
 @testable import Shortcast
 
-@Suite("ThematicDiscovery Integration Tests")
-struct ThematicDiscoveryIntegrationTests {
+// The integration suite that used to live here asserted that `discoverThematicAnalysis`
+// returned a hardcoded theme when no model was passed — i.e. it certified the silent
+// fallback. That fallback is gone, so the file now pins the contract that replaced it.
+// File name kept: Shortcast.xcodeproj references this exact path.
 
-    @Test("discoverThematicAnalysis identifies ЭГО as primary concept for Револьвер with deep reasoning")
-    func testRevolverThematicDiscovery() async throws {
-        let service = LongformThematicService()
+@Suite("Thematic Discovery Contract Tests")
+struct ThematicDiscoveryContractTests {
 
-        var segments: [TranscriptSegment] = []
-        for i in 0..<120 {
-            let start = Double(i) * 20.0
-            let end = start + 18.0
-            let text = (i % 2 == 0)
-                ? "Ты думаешь, что это ты контролируешь ситуацию, но твой главный враг прячется в твоей собственной голове."
-                : "В любой игре всегда есть соперник и всегда есть жертва. Шахматы и разводка."
-            segments.append(TranscriptSegment(start: start, end: end, text: text, words: []))
+    /// The only discovery entry point: it takes a non-optional `ModelManager` plus a
+    /// `ChatModelProfile`, and `requireDirector(profile:)` runs before any generation.
+    private typealias ModelBoundDiscovery =
+        (Transcript, String, String?, ModelManager, ChatModelProfile) async throws -> ThematicAnalysisResult
+
+    @Test("discovery cannot be called without a ModelManager")
+    func testOnlyModelBoundDiscoveryEntryPointExists() {
+        // Type-checks only because every theme-producing call site demands a loaded
+        // Director. The closure is never invoked, so nothing here loads a model.
+        // Removed with the fallback tables: `discoverConcepts(from:movieTitle:)`,
+        // `fallbackConcepts(for:)`, `bespokeConcepts(for:)`, `universalFallbackConcepts()`,
+        // `LongformThematicService.parseConcepts(from:)`.
+        let modelBound: ModelBoundDiscovery? = {
+            (transcript: Transcript, title: String, overview: String?,
+             manager: ModelManager, profile: ChatModelProfile) in
+            try await LongformThematicService().discoverThematicAnalysis(
+                from: transcript,
+                movieTitle: title,
+                movieOverview: overview,
+                modelManager: manager,
+                directorProfile: profile
+            )
         }
-
-        let transcript = Transcript(segments: segments, language: "ru")
-
-        // Without loaded model, fallback gracefully selects the bespoke primary choice and reasoning
-        let result = try await service.discoverThematicAnalysis(
-            from: transcript,
-            movieTitle: "Револьвер",
-            movieOverview: "Фильм Гая Ричи о Джейке Грине и игре с собственным эго."
-        )
-
-        #expect(result.primaryConcept.word.lowercased() == "эго")
-        #expect(result.primaryConcept.isPrimaryChoice == true)
-        #expect(result.aiReasoning.contains("Джейка Грина") || result.aiReasoning.contains("Эго"))
-        #expect(!result.alternativeConcepts.isEmpty)
-        #expect(result.allConcepts.first?.word.lowercased() == "эго")
+        #expect(modelBound != nil)
     }
 
-    @Test("discoverThematicAnalysis identifies БУНТ as primary concept for Бойцовский клуб")
-    func testFightClubThematicDiscovery() async throws {
-        let service = LongformThematicService()
-
-        let segments = [
-            TranscriptSegment(start: 10.0, end: 20.0, text: "Вещи, которыми ты владеешь, в конце концов начинают владеть тобой.", words: []),
-            TranscriptSegment(start: 25.0, end: 35.0, text: "Самосовершенствование — это онанизм. Саморазрушение — вот ответ.", words: [])
+    @Test("every discovery failure announces itself in Russian instead of returning a theme")
+    func testDiscoveryErrorDescriptionsAreRussianAndActionable() throws {
+        let cases: [(ThematicDiscoveryError, [String])] = [
+            (.transcriptEmpty, ["Транскрипт", "Whisper"]),
+            (.directorUnavailable(" веса модели не найдены"), ["Director", "веса модели"]),
+            (.modelReturnedNoText, ["пустой"]),
+            (.unparseableOutput("{ без закрывающей скобки"), ["JSON", "без закрывающей"])
         ]
-        let transcript = Transcript(segments: segments, language: "ru")
 
-        let result = try await service.discoverThematicAnalysis(
-            from: transcript,
-            movieTitle: "Бойцовский клуб",
-            movieOverview: "Фильм Дэвида Финчера."
-        )
+        for (error, fragments) in cases {
+            let description = try #require(error.errorDescription)
+            #expect(description.isEmpty == false)
+            #expect(description.unicodeScalars.contains { (0x0400...0x04FF).contains($0.value) })
+            for fragment in fragments {
+                #expect(description.contains(fragment))
+            }
+        }
 
-        #expect(result.primaryConcept.word.lowercased() == "бунт")
-        #expect(result.primaryConcept.isPrimaryChoice == true)
-        #expect(result.aiReasoning.contains("Тайлера") || result.aiReasoning.contains("бунт"))
+        let bridged: any Error = ThematicDiscoveryError.transcriptEmpty
+        #expect(bridged.localizedDescription == ThematicDiscoveryError.transcriptEmpty.errorDescription)
+    }
+
+    @Test("a model that returns nothing yields no theme, not a theme from the codebase")
+    func testNothingProducesAThemeWithoutModelOutput() {
+        for silence in ["", "   ", "{}", "[]", "<|end|>", "Главная тема — это доверие."] {
+            #expect(LongformThematicService.parseThematicAnalysis(from: silence) == nil)
+        }
+
+        let emptyTranscript = Transcript(segments: [], language: "ru")
+        #expect(LongformThematicService.stratifiedThematicSample(from: emptyTranscript).isEmpty)
+        #expect(ThematicDiscoveryError.transcriptEmpty.errorDescription?.isEmpty == false)
+
+        let theme = LongformThematicService.parseThematicAnalysis(from: """
+        {"primaryConcept": {"word": "Иллюзия", "tagline": "Ты не у руля.", "suggestedTitle": "Тебя везёт."},
+         "aiReasoning": "Все четыре акта — про самообман."}
+        """)
+        #expect(theme?.source == .llm)
+        #expect(theme?.source.isTrustworthy == true)
+        #expect(theme?.primaryConcept.source == .llm)
+        #expect(theme?.primaryConcept.word == "Иллюзия")
+    }
+
+    @Test("the prompt asks the model for exactly the fields the parser refuses to invent")
+    func testPromptContractMatchesTheFieldsTheParserRequires() {
+        let prompt = LongformThematicService.thematicSystemPrompt(movieTitle: "Неизвестный фильм 2026")
+
+        #expect(prompt.contains("Неизвестный фильм 2026"))
+        for field in ["primaryConcept", "aiReasoning", "alternativeConcepts",
+                      "word", "tagline", "philosophicalPremise", "suggestedTitle"] {
+            #expect(prompt.contains(field))
+        }
+        #expect(prompt.contains("ОДНУ ГЛАВНУЮ ТЕМУ"))
+        #expect(prompt.contains("валидным JSON"))
     }
 }

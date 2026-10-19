@@ -17,7 +17,9 @@ struct SamplingConfig: Sendable {
     var repetitionPenalty: Float?
     /// Hard cap on generated tokens.
     var maxTokens: Int
-    /// nil → unbounded (full) KV cache; set to bound memory.
+    /// nil → unbounded (full) KV cache; set to bound memory. It is a rotation
+    /// point, not a context window: once prompt + generated tokens pass it the
+    /// cache silently drops everything except the first 4 tokens.
     var maxKVSize: Int?
     /// nil → no KV quantization.
     var kvBits: Int?
@@ -49,8 +51,9 @@ struct ChatModelProfile: Sendable {
     /// Vendor-recommended decoding parameters.
     let sampling: SamplingConfig
 
-    /// Qwen 3.5 9B — best multilingual reasoning in the small-model tier, huge
-    /// context window (the whole transcript fits in one pass). Loads as a VLM.
+    /// Qwen 3.5 9B — best multilingual reasoning in the small-model tier. Loads
+    /// as a VLM. Note `maxKVSize` is a ROTATION cap, not a context window: past
+    /// it the cache keeps 4 leading tokens and drops the middle of the film.
     static let qwen35_9b = ChatModelProfile(
         modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
         displayName: "Qwen 3.5 9B",
@@ -59,12 +62,21 @@ struct ChatModelProfile: Sendable {
         // Qwen3 non-thinking recommended sampling (temp 0.7 / topP 0.8 / topK 20).
         // Thinking is forced OFF via additionalContext, so these are correct.
         // maxTokens bumped from Hermes' 1536 → 4096: the clips JSON for a long
-        // video can be long and must not truncate. KV bounded + 8-bit to cap
-        // memory while still fitting a ~30k-token transcript prefill.
+        // video can be long and must not truncate.
+        // KV 8192 → 16384, measured from the downloaded config.json: 32 layers
+        // but `full_attention_interval: 4`, so only 8 layers hold a KV cache (the
+        // 24 linear-attention layers use a constant MambaCache); 4 KV heads × 256
+        // head_dim × 2 (K+V) × 8 layers × 2 bytes (bf16 — mlx-swift-lm's
+        // `maybeQuantizeKVCache` skips RotatingKVCache, so `kvBits` is inert
+        // here) = 32 KB/token. 16384 tokens ≈ 512 MB on an 18 GB machine already
+        // carrying 5.6 GB of 4-bit weights — the old 8192 truncated every film
+        // over ~12k transcript chars, and 32768 (1 GB) would buy nothing: the
+        // worst measured corpus (Blade Runner 2049, 36k chars ≈ 9.7k tokens) plus
+        // the generation cap fits inside 16384 with room to spare.
         sampling: SamplingConfig(
             temperature: 0.7, topP: 0.8, topK: 20, minP: 0,
             repetitionPenalty: nil, maxTokens: 4096,
-            maxKVSize: 8192, kvBits: 8))
+            maxKVSize: 16384, kvBits: 8))
 
     /// Gemma 4 12B — Google's new dense 12B (text+vision). We feed it the
     /// transcript text only, so it runs as a text LLM through the same

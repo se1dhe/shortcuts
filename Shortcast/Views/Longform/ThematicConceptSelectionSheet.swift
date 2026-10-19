@@ -6,6 +6,7 @@ struct ThematicConceptSelectionSheet: View {
     let initialMovieTitle: String
     let concepts: [ThematicConcept]
     let aiReasoning: String?
+    let source: ThematicSource
     let onSelect: (ThematicConcept, String, LongformAudioSettings) -> Void
     let onCancel: () -> Void
     let onRegenerate: (() -> Void)?
@@ -58,6 +59,7 @@ struct ThematicConceptSelectionSheet: View {
         movieTitle: String,
         concepts: [ThematicConcept],
         aiReasoning: String? = nil,
+        source: ThematicSource = .unknown,
         onSelect: @escaping (ThematicConcept, String, LongformAudioSettings) -> Void,
         onCancel: @escaping () -> Void,
         onRegenerate: (() -> Void)? = nil
@@ -66,12 +68,48 @@ struct ThematicConceptSelectionSheet: View {
         self._editedMovieTitle = State(initialValue: movieTitle)
         self.concepts = concepts
         self.aiReasoning = aiReasoning
+        self.source = source
         self.onSelect = onSelect
         self.onCancel = onCancel
         self.onRegenerate = onRegenerate
 
         let primaryId = concepts.first(where: { $0.isPrimaryChoice })?.id ?? concepts.first?.id
         self._selectedConceptId = State(initialValue: primaryId)
+    }
+
+    private var provenance: (header: String, badge: String, badgeIcon: String, reasoning: String, reasoningIcon: String, warning: String?) {
+        switch source {
+        case .llm:
+            return (
+                "Нейросеть проанализировала диалоги и выбрала фундаментальную тему для 5–8 минутного ролика:",
+                "ВЫБОР ИИ • ГЛАВНАЯ ТЕМА ЭССЕ",
+                "sparkles",
+                "Почему модель выбрала именно эту тему:",
+                "brain.head.profile",
+                nil
+            )
+        case .manual:
+            return (
+                "Тему выбрали вы, а не модель — это фиксированный лейтмотив для 5–8 минутного ролика:",
+                "ВЫБРАНО ВАМИ • ГЛАВНАЯ ТЕМА ЭССЕ",
+                "hand.tap.fill",
+                "Почему вы выбрали эту тему:",
+                "hand.tap.fill",
+                nil
+            )
+        case .unknown:
+            let base = "Провенанс темы не записан: она могла прийти из проекта, сохранённого до учёта источников, поэтому мы не утверждаем, что её выбрала модель."
+            return (
+                "Источник этой темы не записан, поэтому сказать, кто её выбрал, невозможно. Ниже тема, на которой стоит собрать 5–8 минутный ролик:",
+                "ИСТОЧНИК НЕ ЗАПИСАН • ГЛАВНАЯ ТЕМА ЭССЕ",
+                "questionmark.circle",
+                "Обоснование темы (кто её выбрал — не записано):",
+                "questionmark.circle",
+                onRegenerate == nil
+                    ? base
+                    : "\(base) Нажмите «Пересчитать темы с AI», чтобы тему действительно выбрала нейросеть."
+            )
+        }
     }
 
     private var primaryConcept: ThematicConcept? {
@@ -92,10 +130,26 @@ struct ThematicConceptSelectionSheet: View {
                 tagline: "Сквозное эссе вокруг идеи «\(word)».",
                 philosophicalPremise: "Исследование цены успеха и внутренней силы через тему «\(word)».",
                 suggestedTitle: title,
-                accentColorHex: "#F5D020"
+                accentColorHex: "#F5D020",
+                source: .manual
             )
         }
         return concepts.first(where: { $0.id == selectedConceptId }) ?? primaryConcept ?? concepts.first
+    }
+
+    private var userPickedAlternativeCard: Bool {
+        guard let selectedConceptId, let primaryId = primaryConcept?.id else { return false }
+        return selectedConceptId != primaryId
+    }
+
+    /// Тема, которая уходит в onSelect. Осознанный выбор пользователя надёжнее
+    /// незаписанного источника, но не перезаписывает доказанную генерацию модели.
+    private var conceptForConfirmation: ThematicConcept? {
+        guard var concept = activeSelection else { return nil }
+        if userPickedAlternativeCard, concept.source != .llm {
+            concept.source = .manual
+        }
+        return concept
     }
 
     private var resolvedMusicURL: URL? {
@@ -193,18 +247,26 @@ struct ThematicConceptSelectionSheet: View {
                 }
                 .frame(maxWidth: 540)
 
-                Text("Нейросеть проанализировала диалоги и выбрала фундаментальную тему для 5–8 минутного ролика:")
+                Text(provenance.header)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 680)
+
+                if let warning = provenance.warning {
+                    Label(warning, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: 620)
+                }
             }
             .padding(.top, 14)
 
             // Сетка карточек концептов
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 14) {
-                    // HERO CARD: Главный выбор нейросети (100% фокус эссе)
+                    // HERO CARD: главная тема эссе (100% фокус ролика, бейдж зависит от provenance)
                     if let primary = primaryConcept {
                         let isSelected = (selectedConceptId == primary.id || selectedConceptId == nil) && !showCustomInput
                         let isGenerated = LongformHistoryService.shared.isConceptGenerated(movieTitle: editedMovieTitle, conceptWord: primary.word)
@@ -218,9 +280,9 @@ struct ThematicConceptSelectionSheet: View {
                                 // Верхний бейдж Hero-карточки
                                 HStack(spacing: 8) {
                                     HStack(spacing: 5) {
-                                        Image(systemName: "sparkles")
+                                        Image(systemName: provenance.badgeIcon)
                                             .font(.caption2)
-                                        Text("ВЫБОР ИИ • ГЛАВНАЯ ТЕМА ЭССЕ")
+                                        Text(provenance.badge)
                                             .font(.system(size: 10, weight: .black, design: .rounded))
                                     }
                                     .padding(.horizontal, 8)
@@ -280,14 +342,14 @@ struct ThematicConceptSelectionSheet: View {
                                         .foregroundStyle(isSelected ? .yellow : .secondary.opacity(0.4))
                                 }
 
-                                // Драматургический разбор сценария от ИИ
+                                // Драматургический разбор выбранной темы
                                 if let reasoning = reasoningText, !reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                     HStack(alignment: .top, spacing: 10) {
-                                        Image(systemName: "brain.head.profile")
+                                        Image(systemName: provenance.reasoningIcon)
                                             .font(.subheadline)
                                             .foregroundStyle(.yellow)
                                         VStack(alignment: .leading, spacing: 3) {
-                                            Text("Почему модель выбрала именно эту тему:")
+                                            Text(provenance.reasoning)
                                                 .font(.caption.weight(.bold))
                                                 .foregroundStyle(.yellow)
                                             Text(reasoning)
@@ -641,7 +703,7 @@ struct ThematicConceptSelectionSheet: View {
 
                 Button {
                     previewController.stop()
-                    if let chosen = activeSelection {
+                    if let chosen = conceptForConfirmation {
                         let finalTitle = editedMovieTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             ? initialMovieTitle
                             : editedMovieTitle.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -263,6 +263,7 @@ struct ContentView: View {
                 movieTitle: workspace.detectedMovie?.title ?? workspace.job?.effectiveTitle ?? "Фильм",
                 concepts: workspace.discoveredConcepts,
                 aiReasoning: workspace.thematicReasoning,
+                source: workspace.thematicAnalysis?.source ?? .unknown,
                 onSelect: { concept, confirmedTitle, audioSettings in
                     workspace.confirmLongformConcept(
                         concept,
@@ -276,7 +277,10 @@ struct ContentView: View {
                 },
                 onRegenerate: {
                     Task {
-                        await workspace.regenerateThematicConcepts(modelManager: modelManager)
+                        await workspace.regenerateThematicConcepts(
+                            modelManager: modelManager,
+                            directorProfile: settings.copywriterModel.directorProfile
+                        )
                     }
                 }
             )

@@ -105,6 +105,19 @@ final class ModelManager {
         await momentFinder.prepareIfNeeded()
     }
 
+    /// Загружает Director в нужном профиле и требует, чтобы модель реально
+    /// была готова. Ошибка здесь — единственный способ узнать, что тему для
+    /// эссе выбирала не модель: молча подставлять заготовку больше некуда.
+    func requireDirector(profile: ChatModelProfile) async throws {
+        momentFinder.setProfile(profile)
+        await momentFinder.prepareIfNeeded()
+        guard momentFinder.isReady else {
+            throw ThematicDiscoveryError.directorUnavailable(
+                momentFinder.loadFailureDescription ?? "фаза \(momentFinder.phase)"
+            )
+        }
+    }
+
     /// Frees the Director to make room for the Gemma copywriter on tight RAM.
     func freeDirectorIfMemoryTight() {
         guard !canKeepBothResident else { return }

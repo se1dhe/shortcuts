@@ -40,6 +40,9 @@ struct EditableActModel: Identifiable, Equatable {
     let type: LongformActType
     var title: String
     var dramaticBeat: String
+    /// Провенанс названия акта — переносится через пересборку арки, иначе редактор
+    /// молча терял бы метку «это вывела модель» и UI врал бы про источник.
+    var titleProvenance: ActTitleProvenance?
     var scenes: [EditableSceneSegment]
 
     var duration: Double {
@@ -322,6 +325,20 @@ struct LongformActEditorView: View {
                             Text(act.title)
                                 .font(.headline)
                         }
+
+                        // Провенанс названия: честная подпись под строкой, которую зритель судит
+                        // как «работу ИИ». На видео её нет — раскладка эссе заморожена, отчётность
+                        // живёт только здесь.
+                        HStack(spacing: 5) {
+                            Image(systemName: act.titleProvenance?.source.isTrustworthy ?? false
+                                  ? "checkmark.seal" : "exclamationmark.seal")
+                                .font(.caption2)
+                            Text(act.titleProvenance?.source.displayCaption
+                                 ?? ActTitleSource.unknown.displayCaption)
+                                .font(.caption2)
+                        }
+                        .foregroundStyle(.tertiary)
+                        .help(act.titleProvenance?.evidence ?? "Источник названия не зафиксирован")
 
                         Text(act.dramaticBeat)
                             .font(.subheadline)
@@ -771,6 +788,7 @@ struct LongformActEditorView: View {
                 type: act.type,
                 title: act.title,
                 dramaticBeat: act.dramaticBeat,
+                titleProvenance: act.titleProvenance,
                 scenes: scenes
             )
         }
@@ -784,7 +802,8 @@ struct LongformActEditorView: View {
                 type: act.type,
                 title: act.title,
                 dramaticBeat: act.dramaticBeat,
-                segments: segs
+                segments: segs,
+                titleProvenance: act.titleProvenance
             ))
         }
 

@@ -687,6 +687,37 @@ final class MomentFinderService {
         throw ThematicDiscoveryError.modelReturnedNoText
     }
 
+    /// Сырой ответ модели на произвольный промпт — для второго прохода по материалу актов,
+    /// где парсер и повторы живёт в вызывающем сервисе. Возвращает `nil`, когда модель не
+    /// загружена или поток не дал ни одного куска: вызывающий трактует это как «нет LLM».
+    func completeForActTitles(instructions: String, prompt: String, maxTokens: Int) async -> String? {
+        guard let container else {
+            Self.log("completeForActTitles: no model loaded — falling back to transcript-line titles")
+            return nil
+        }
+        let session = ChatSession(
+            container,
+            instructions: instructions,
+            generateParameters: GenerateParameters(
+                maxTokens: maxTokens,
+                temperature: 0.35,
+                topP: profile.sampling.topP,
+                topK: profile.sampling.topK,
+                minP: profile.sampling.minP,
+                repetitionPenalty: profile.sampling.repetitionPenalty),
+            additionalContext: ["enable_thinking": false])
+        var raw = ""
+        do {
+            for try await chunk in session.streamResponse(to: prompt) {
+                raw += chunk
+            }
+        } catch {
+            Self.log("completeForActTitles stream failed: \(error.localizedDescription)")
+            return raw.trimmed.isEmpty ? nil : raw
+        }
+        return raw.trimmed.isEmpty ? nil : raw
+    }
+
     /// Chars/token measured on the real Blade Runner 2049 corpus (~3.7 for this
     /// Cyrillic/French mix); 3.5 keeps the estimate pessimistic so the rotating
     /// KV cache never trips mid-prompt and silently eats the first acts.

@@ -14,6 +14,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
     private let thumbnailGenerator: any LongformThumbnailGeneratingProtocol
     private let audioLooper: any SeamlessAudioLooping
     private let loudnessNormalizer: any LongformLoudnessNormalizing
+    private let actTitling: any LongformActTitling
 
     init(
         director: any LongformNarrativeDirecting = LongformNarrativeDirector(),
@@ -21,7 +22,8 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         subtitleRenderer: any LongformSubtitleRenderingProtocol = LongformSubtitleRenderer(),
         thumbnailGenerator: any LongformThumbnailGeneratingProtocol = LongformThumbnailGenerator(),
         audioLooper: any SeamlessAudioLooping = SeamlessAudioLoopService.shared,
-        loudnessNormalizer: any LongformLoudnessNormalizing = LongformLoudnessService()
+        loudnessNormalizer: any LongformLoudnessNormalizing = LongformLoudnessService(),
+        actTitling: any LongformActTitling = LongformActTitleService()
     ) {
         self.director = director
         self.audioMastering = audioMastering
@@ -29,6 +31,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         self.thumbnailGenerator = thumbnailGenerator
         self.audioLooper = audioLooper
         self.loudnessNormalizer = loudnessNormalizer
+        self.actTitling = actTitling
     }
 
     func buildLongformVideo(
@@ -39,6 +42,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         audioSettings: LongformAudioSettings,
         existingArc: LongformNarrativeArc? = nil,
         workingDirectory: URL? = nil,
+        channelLogoEnabled: Bool,
         progressHandler: (@Sendable (Double, String) -> Void)? = nil
     ) async throws -> LongformBuildResult {
 
@@ -49,12 +53,22 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             arc = existing
         } else {
             progressHandler?(0.10, "Режиссура 4-актной арки «\(concept.word)»...")
-            arc = try await director.buildArc(
+            let built = try await director.buildArc(
                 from: transcript,
                 concept: concept,
                 movieTitle: movieTitle,
                 targetDuration: 520.0
             )
+            // Второй LLM-проход: названия актов из РЕАЛЬНОГО диалога, вошедшего в каждый акт.
+            // Выполняется ровно один раз и до stagedArc, иначе LongformAct.id меняется под
+            // открытым редактором и правки сцен осиротевают.
+            let outcome = await actTitling.applyTitles(
+                to: built,
+                transcript: transcript,
+                movieTitle: movieTitle,
+                progress: { step in progressHandler?(0.15, step) }
+            )
+            arc = outcome.arc
         }
 
         let segments = arc.segments
@@ -319,13 +333,18 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         videoComposition.instructions = [instruction]
 
         // Накладываем оверлей Shortcast Cinema (титульная карточка темы, ритмичные субтитры, карточки актов)
+        let overlayLayout = LongformOverlayLayout(
+            bottomBarHeight: ty > 0.5 ? ceil(ty) + 2 : 0,
+            channelLogo: channelLogoEnabled ? .essay : nil
+        )
         let overlayLayer = await subtitleRenderer.makeOverlayLayer(
             renderSize: renderSize,
             concept: concept,
             timedPhrases: timedPhrases,
             acts: arc.acts,
             actStartTimes: actStartTimes,
-            totalDuration: totalDuration
+            totalDuration: totalDuration,
+            layout: overlayLayout
         )
 
         // Подложка глубокого чёрного цвета (YUV Black Fix — предотвращает появление зелёных полос)
@@ -395,20 +414,14 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             in: outputParentLayer
         )
 
-        // 5. Экспорт в файл (строго в папку Exports рабочего каталога проекта)
+        // 5. Экспорт в файл (строго в папку Exports/<Название Фильма>/ рабочего каталога)
         progressHandler?(0.85, "Экспорт видео в 1080p...")
-        let exportDir: URL
-        if let workingDirectory {
-            exportDir = workingDirectory.appendingPathComponent("Exports", isDirectory: true)
-        } else {
-            exportDir = FileManager.default.temporaryDirectory.appendingPathComponent("LongformExports", isDirectory: true)
-        }
-        try FileManager.default.createDirectory(at: exportDir, withIntermediateDirectories: true)
+        let filmDir = try ExportLayout.filmDirectory(workingDirectory: workingDirectory, movieTitle: movieTitle)
 
         let isAntiCopyrightActive = audioSettings.antiCopyrightEnabled && audioSettings.antiCopyrightPreset != .off
-        let cleanOutputURL = exportDir.appendingPathComponent("longform_\(concept.word.lowercased())_\(UUID().uuidString.prefix(6)).mp4")
+        let cleanOutputURL = ExportLayout.artifact(in: filmDir, kind: .longformVideo, base: concept.word, ext: "mp4")
         let intermediateURL = isAntiCopyrightActive
-            ? exportDir.appendingPathComponent("raw_render_\(concept.word.lowercased())_\(UUID().uuidString.prefix(6)).mp4")
+            ? ExportLayout.artifact(in: filmDir, kind: .rawRender, base: concept.word, ext: "mp4")
             : cleanOutputURL
 
         try await exportComposition(
@@ -458,7 +471,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
 
         // 6. Генерация кинематографической обложки YouTube Thumbnail (1920x1080)
         progressHandler?(0.95, "Создание обложки YouTube 1080p...")
-        let thumbOutputURL = exportDir.appendingPathComponent("thumbnail_\(concept.word.lowercased())_\(UUID().uuidString.prefix(6)).jpg")
+        let thumbOutputURL = ExportLayout.artifact(in: filmDir, kind: .cover, base: concept.word, ext: "jpg")
         let thumbnailURL = try? await thumbnailGenerator.generateThumbnail(
             sourceAsset: sourceAsset,
             segments: segments,

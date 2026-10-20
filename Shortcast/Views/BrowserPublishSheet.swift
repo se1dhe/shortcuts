@@ -434,8 +434,21 @@ struct BrowserPublishSheet: View {
                     )
                 }
 
+                // Обложка 9:16: сначала из модели (автогенерация), иначе поиск по файлу клипа.
+                // Путь детерминирован, поэтому фолбэк на ShortCoverStore всегда работает.
+                let thumbnailURL: URL? = clip.coverURL ?? clip.clipJob.flatMap { job in
+                    ShortCoverStore.existingCoverURL(
+                        clipURL: job.url,
+                        movieTitle: clip.detectedMovieTitle,
+                        workingDirectory: settings.workingDirectory
+                    )
+                }
+                logs.append(thumbnailURL.map { "Обложка 9:16: \($0.lastPathComponent)" }
+                    ?? "Обложка 9:16 не найдена — платформа возьмёт первый кадр.")
+
                 let job = BrowserUploadJob(
                     videoURL: renderedURL,
+                    thumbnailURL: thumbnailURL,
                     platforms: selectedPlatforms,
                     platformContent: platformContentMap,
                     title: clip.displayTitle,

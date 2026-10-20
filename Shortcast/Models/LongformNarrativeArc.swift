@@ -17,6 +17,40 @@ enum LongformActType: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// Откуда взялось название акта. Честная метка: «вывела модель» ставится только тогда,
+/// когда модель реально ответила и прошла гейты, иначе — реальная реплика Whisper или шаблон.
+enum ActTitleSource: String, Codable, Equatable, Sendable {
+    /// Название вывел LLM-проход по диалогам самого акта (quotedLine прошёл гейт подстроки)
+    case llm
+    /// Детерминированный запасной путь: самая сильная реальная реплика Whisper внутри сегментов акта
+    case transcriptLine
+    /// Самый нижний ярус: у акта нет ни одной реплики (синтетическая арка) — взята формула темы
+    case template
+    /// Поле отсутствует в архиве: источник названия не зафиксирован и выдумывать его нельзя
+    case unknown
+
+    /// Только эти два яруса можно показывать как «название опирается на материал фильма»
+    var isTrustworthy: Bool { self == .llm || self == .transcriptLine }
+
+    var displayCaption: String {
+        switch self {
+        case .llm: return "вывела модель по диалогу"
+        case .transcriptLine: return "по реплике акта"
+        case .template: return "шаблон"
+        case .unknown: return "источник не зафиксирован"
+        }
+    }
+}
+
+/// Провенанс названия акта: чем подтверждён, каким словом из транскрипта и какой моделью
+struct ActTitleProvenance: Codable, Equatable, Sendable {
+    var source: ActTitleSource
+    /// Дословная реплика-основание (для `.llm` — quotedLine, для `.transcriptLine` — сама строка)
+    var evidence: String?
+    /// Идентификатор модели, если название выводила модель
+    var modelID: String?
+}
+
 /// Отдельный акт длинного видео
 struct LongformAct: Codable, Identifiable, Equatable, Sendable {
     var id: String { "\(type.rawValue)_\(title)" }
@@ -24,6 +58,13 @@ struct LongformAct: Codable, Identifiable, Equatable, Sendable {
     var title: String
     var dramaticBeat: String
     var segments: [TimeSegment]
+
+    /// Провенанс названия. Опционален: старые архивы арок декодируются без него,
+    /// и отсутствие поля означает `.unknown`, а не «его выбрала модель».
+    var titleProvenance: ActTitleProvenance? = nil
+
+    /// Название акта в глазах UI: nil из архива — это `.unknown`, а не `.llm`
+    var effectiveTitleSource: ActTitleSource { titleProvenance?.source ?? .unknown }
 
     var duration: Double {
         segments.reduce(0) { $0 + $1.duration }

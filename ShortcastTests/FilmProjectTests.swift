@@ -133,7 +133,7 @@ struct FilmProjectTests {
             summary: "Эссе о том, что наблюдатель всегда соучастник."
         )
         return LongformBuildResult(
-            outputURL: URL(fileURLWithPath: "/Exports/longform_субъективность_262965.mp4"),
+            outputURL: URL(fileURLWithPath: "/Exports/Субъективность/longform_субъективность_262965.mp4"),
             arc: arc,
             metadata: LongformYouTubeMetadata(
                 title: "Ты наблюдаешь — и уже участвуешь",
@@ -142,7 +142,7 @@ struct FilmProjectTests {
                 pinnedComment: "А ты заметил, что выбираешь кадр, а не сюжет?"
             ),
             duration: 193.6,
-            thumbnailURL: URL(fileURLWithPath: "/Exports/longform_субъективность_262965.jpg")
+            thumbnailURL: URL(fileURLWithPath: "/Exports/Субъективность/thumbnail_субъективность_262965.jpg")
         )
     }
 

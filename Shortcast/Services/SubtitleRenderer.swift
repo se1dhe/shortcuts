@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import CoreGraphics
 import CoreMedia
+import os
 import SwiftUI
 
 /// Full appearance config for burned-in subtitles. Per-property so the user
@@ -356,6 +357,8 @@ struct SubtitleSegment: Sendable {
 /// Burns subtitle segments into a video using Core Animation overlay.
 enum SubtitleRenderer {
 
+    private static let logger = Logger(subsystem: "app.shortcast", category: "ShortLogoWatermark")
+
     enum SubtitleError: LocalizedError {
         case compositionFailed, exportFailed, trackNotFound
         var errorDescription: String? {
@@ -365,6 +368,50 @@ enum SubtitleRenderer {
             case .trackNotFound:     return "Video track not found."
             }
         }
+    }
+
+    // MARK: - Знак канала в шортсах (общая раскладка для однопроходного и многопроходного рендера)
+
+    /// Нижний запас, который знак обязан оставить под субтитрами (доля высоты кадра):
+    /// интерфейс платформы занимает нижнюю кромку вертикального кадра.
+    private static let shortLogoBottomSafeFraction: CGFloat = 0.02
+
+    /// Прямоугольник знака канала для шортса по ФАКТИЧЕСКИМ рамкам субтитров.
+    ///
+    /// Ничего не рисуем, если места нет: подделка из самодельной эмблемы хуже незабрендрованного
+    /// клипа. О деградации сообщает ровно одна строка `notice` на вызов (то есть на клип).
+    /// - Parameters:
+    ///   - captionRects: рамки прилипаний субтитров в координатах кадра (низ слева).
+    ///     Пустой массив — `ChannelLogoPlacement.short` берёт полосу по умолчанию (0.12·H).
+    ///   - excludedRects: чужие полосы в нижней зоне (рельс actions, lower third, текстовый
+    ///     вотермарк) — знак не должен с ними пересекаться.
+    static func shortChannelLogoBand(renderSize: CGSize, captionRects: [CGRect],
+                                     excludedRects: [CGRect] = [],
+                                     style: ChannelLogoStyle = .shorts) -> CGRect? {
+        guard let placed = ChannelLogoPlacement.short(renderSize: renderSize,
+                                                       subtitleSnapRects: captionRects,
+                                                       style: style) else {
+            reportMissingShortLogoRoom(renderSize: renderSize, captionRects: captionRects)
+            return nil
+        }
+        // Если нормальная позиция пересекается с чужой полосой (рельс действий, нижний тэглайн),
+        // знак не сдвигается на неё, а выключается вовсе: сдвиг ломает композицию и создаёт
+        // визуальный мусор, которого тесты и зритель не ждут.
+        if excludedRects.contains(where: { $0.intersects(placed) }) {
+            reportMissingShortLogoRoom(renderSize: renderSize, captionRects: captionRects)
+            return nil
+        }
+        return placed
+    }
+
+    /// Минимальная нижняя граница субтитров по фактическим рамкам (для отладки и тестов).
+    static func shortSubtitleBottom(captionRects: [CGRect], renderSize: CGSize) -> CGFloat {
+        captionRects.map(\.minY).min() ?? renderSize.height * 0.12
+    }
+
+    private static func reportMissingShortLogoRoom(renderSize: CGSize, captionRects: [CGRect]) {
+        let lowest = captionRects.map(\.minY).min()
+        logger.notice("ChannelLogo skipped in short: no room in bottom-left band (frame \(Int(renderSize.width))x\(Int(renderSize.height)), logo needs \(Int(0.11 * renderSize.height))px, captions \(Int((lowest ?? 0) - 0.012 * renderSize.height - max(16, renderSize.width * 0.02)))px free, caption rects \(captionRects.count), subtitleBottom \(Int(lowest ?? -1))px)")
     }
 
     // MARK: - Public
@@ -438,7 +485,24 @@ enum SubtitleRenderer {
 
             parentLayer.addSublayer(subtitleContainer)
 
-            if let watermarkText, !watermarkText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // Знак канала — резервный путь (когда однопроходный композитор бросил ошибку):
+            // незабрендрованный шортс из этого пути хуже, чем из основного.
+            let burnRenderSize = CGSize(width: renderW, height: renderH)
+            let captionRects = (subtitleContainer.sublayers ?? [])
+                .filter { $0.contents != nil }
+                .map(\.frame)
+            var didDrawLogo = false
+            if ChannelLogoWatermarkSettings.isEnabled(for: .shorts), ChannelLogo.isAvailable,
+               let band = shortChannelLogoBand(renderSize: burnRenderSize, captionRects: captionRects),
+               let logoLayer = ChannelLogo.makeLayer(frame: band, renderSize: burnRenderSize,
+                                                      opacity: ChannelLogoStyle.shorts.opacity) {
+                parentLayer.addSublayer(logoLayer)
+                didDrawLogo = true
+            }
+
+            // Текст — устаревший режим и он живёт в том же левом нижнем углу: два бренда
+            // в одной полосе читаются как артефакт, поэтому текст только когда знака нет.
+            if !didDrawLogo, let watermarkText, !watermarkText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 WatermarkRenderer.addWatermark(
                     to: parentLayer,
                     text: watermarkText,
@@ -824,6 +888,26 @@ enum SubtitleRenderer {
         videoSize: CGSize,
         totalDuration: Double
     ) async -> CALayer {
+        await buildKineticSubtitleLayerWithLayout(
+            asset: asset,
+            segments: segments,
+            appearance: appearance,
+            videoSize: videoSize,
+            totalDuration: totalDuration
+        ).layer
+    }
+
+    /// Тот же кинетический слой, но с реальной геометрией: помимо слоя возвращает рамки всех
+    /// прилипаний (`snapRects`) в координатах кадра с началом внизу слева. Нужено для раскладки
+    /// знака канала — полоса рассчитывается по фактическим позициям лица/безопасной зоны,
+    /// а не по догадке. Само posicionирование полос от этого не меняется.
+    static func buildKineticSubtitleLayerWithLayout(
+        asset: AVAsset? = nil,
+        segments: [SubtitleSegment],
+        appearance: SubtitleAppearance,
+        videoSize: CGSize,
+        totalDuration: Double
+    ) async -> (layer: CALayer, snapRects: [CGRect]) {
         let W = videoSize.width
         let H = videoSize.height
         var snaps = buildKineticSnaps(segments: segments, maxWords: appearance.normalized.maxWordsPerCaption)
@@ -831,7 +915,7 @@ enum SubtitleRenderer {
             let emptyContainer = CALayer()
             emptyContainer.frame = CGRect(origin: .zero, size: videoSize)
             emptyContainer.backgroundColor = CGColor(gray: 0, alpha: 0)
-            return emptyContainer
+            return (emptyContainer, [])
         }
         
         // Phase 3 & 4: Per-Shot Dynamic Face Detection with Temporal Hysteresis
@@ -880,7 +964,8 @@ enum SubtitleRenderer {
 
         let baseFontSize = W * appearance.normalized.fontSizeScale
         let usableW = min(W - 80.0, SubtitleLayoutEngine.defaultSafeWidth)
-        
+        var snapRects: [CGRect] = []
+
         for snap in snaps {
             let (attrStr, snapW, snapH) = createStyledSnap(
                 snap: snap,
@@ -904,6 +989,7 @@ enum SubtitleRenderer {
 
             let snapLayer = CALayer()
             snapLayer.frame = CGRect(x: snapX, y: snapY, width: snapW, height: snapH)
+            snapRects.append(snapLayer.frame)
             snapLayer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
             snapLayer.position = CGPoint(x: snapX + snapW / 2.0, y: snapY + snapH / 2.0)
             snapLayer.contentsScale = 3.0
@@ -970,7 +1056,7 @@ enum SubtitleRenderer {
             container.addSublayer(snapLayer)
         }
         
-        return container
+        return (container, snapRects)
     }
 
     // MARK: - Layer builder

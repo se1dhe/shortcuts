@@ -226,6 +226,27 @@ struct ClipRenderingService {
             clip.applyGeneratedCopy(result, detectedLanguage: result.detectedLanguage)
             clip.stage = .ready
         }
+
+        // Автогенерация обложки 9:16 после готовности клипа.
+        // Ошибки не бросает: обложка — отделка, клип обязан остаться готовым.
+        await generateCoverIfNeeded(for: clip, workingDirectory: settings.workingDirectory)
+    }
+
+    /// Генерирует обложку 9:16, если клип готов и файл на диске доступен.
+    /// Молча пропускает, если что-то пошло не так: обложка не блокирует публикацию.
+    private static func generateCoverIfNeeded(for clip: ShortClip, workingDirectory: URL?) async {
+        guard let clipURL = clip.clipJob?.url else { return }
+        let hook = clip.overlayText.trimmed.isEmpty ? clip.displayTitle : clip.overlayText
+        let generator = ShortCoverGenerator()
+        let coverURL = await generator.generateCover(for: ShortCoverRequest(
+            clipURL: clipURL,
+            trimStart: clip.trimStartSeconds,
+            trimEnd: clip.trimEndSeconds,
+            hook: hook,
+            movieTitle: clip.detectedMovieTitle,
+            workingDirectory: workingDirectory
+        ))
+        clip.coverURL = coverURL
     }
     
     static func generateCaption(

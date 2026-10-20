@@ -508,22 +508,161 @@ struct SentenceBoundaryTests {
             #expect(descriptors[2].title == "Точка слома")
             #expect(descriptors[3].title == "Прозрение")
         }
+        // Это нижний ярус — `.template`. Он больше НЕ является тем, что зритель видит по
+        // умолчанию: названия актов выводятся из их собственного диалога, и что именно
+        // так — проверяют тесты ниже (`testActTitlesAreGroundedInTheirOwnActDialogue`).
+    }
 
-        let transcript = syntheticFilm(runStarts: [600, 2200, 4400, 7700], lines: 3)
-        let revolverArc = try await director.buildArc(
-            from: transcript,
-            concept: syntheticConcept(word: "Иллюзия"),
+    // MARK: - Названия актов: функция диалога и темы, но никогда — имени фильма
+
+    /// Синтетический «фильм»: один связный запуск речи на акт, реплики заданы явно.
+    /// Монтаж акта = ровно этот запуск, поэтому проверка «название = строка СВОЕГО акта»
+    /// не может passed'ить за счёт чужого диалога.
+    private func groundedFixture(
+        _ runs: [[String]],
+        movieTitle: String,
+        concept: ThematicConcept,
+        lineSeconds: Double = 10.0
+    ) -> (transcript: Transcript, arc: LongformNarrativeArc) {
+        let runStarts: [Double] = [600, 2200, 4400, 7700]
+        let actTypes: [LongformActType] = [.hook, .downfall, .struggle, .catharsis]
+        var segments: [TranscriptSegment] = []
+        var acts: [LongformAct] = []
+        for (index, lines) in runs.enumerated() {
+            let start = runStarts[index]
+            for (lineIndex, text) in lines.enumerated() {
+                let lineStart = start + Double(lineIndex) * lineSeconds
+                segments.append(TranscriptSegment(
+                    start: lineStart,
+                    end: lineStart + lineSeconds - 0.4,
+                    text: text,
+                    words: []
+                ))
+            }
+            acts.append(LongformAct(
+                type: actTypes[index],
+                title: "Заготовка",
+                dramaticBeat: "Заготовка",
+                segments: [TimeSegment(start: start, end: start + Double(lines.count) * lineSeconds)]
+            ))
+        }
+        let arc = LongformNarrativeArc(
+            movieTitle: movieTitle,
+            concept: concept,
+            acts: acts,
+            summary: "Арка для проверки нейминга"
+        )
+        return (Transcript(segments: segments, language: "ru", provenance: .whisper), arc)
+    }
+
+    /// Реплики двух разных «фильмов»: тема и имена одинаковые, диалог — разный
+    private static let groundedFilmA: [[String]] = [
+        ["Ты никогда не знаешь главного правила этой игры.", "Каждый делает выбор сам.", "Смысл не в деньгах, а в контроле."],
+        ["Нет, ты проиграл, и это твоя ошибка.", "Уходи, пока не поздно.", "Ложь съела весь твой расчёт."],
+        ["Держись и смотри только вперед.", "Выход есть, но он против них.", "Бей, пока тебя не остановили."],
+        ["Теперь я понимаю цену свободе.", "Правда оказалась дороже выигрыша.", "Конец тот, с которого всё началось."]
+    ]
+
+    private static let groundedFilmB: [[String]] = [
+        ["В этом мире всегда выигрывает тот, кто ждёт.", "Запомни одно закон: никто не знает правду.", "Первое правило — смотреть на руки, а не в глаза."],
+        ["Нельзя проиграть дважды одному и тому же врагу.", "Ты сам выбрал эту ложь, хватит.", "Уходи, иначе ты пропал вместе со всеми."],
+        ["Стой и держись до самого конца.", "Пробуй ещё раз, против тебя весь мир.", "Вперёд, пока не закрыли выход."],
+        ["Я понял: настоящая свобода — это отказаться.", "Теперь выбор делает меня, а не деньги.", "Прости себя за то, что стал."]
+    ]
+
+    @Test("Grounded act titles are real lines of their own act: different dialogue, same theme -> different titles")
+    func testActTitlesAreGroundedInTheirOwnActDialogue() async throws {
+        // Модель не подключена: проверяем детерминированный путь, он обязан быть РЕАЛЬНОЙ строкой
+        let titling = LongformActTitleService()
+        let concept = syntheticConcept(word: "Иллюзия")
+
+        let filmA = groundedFixture(
+            Self.groundedFilmA,
+            movieTitle: "Один и тот же фильм",
+            concept: concept
+        )
+        let filmB = groundedFixture(
+            Self.groundedFilmB,
+            movieTitle: "Один и тот же фильм",
+            concept: concept
+        )
+
+        let outcomeA = await titling.applyTitles(
+            to: filmA.arc,
+            transcript: filmA.transcript,
+            movieTitle: "Один и тот же фильм",
+            progress: nil
+        )
+        let outcomeB = await titling.applyTitles(
+            to: filmB.arc,
+            transcript: filmB.transcript,
+            movieTitle: "Один и тот же фильм",
+            progress: nil
+        )
+
+        // Разный диалог — разные названия. Раньше этот же прогон давал четыре
+        // идентичных строки шаблона независимо от фильма.
+        #expect(outcomeA.arc.acts.map(\.title) != outcomeB.arc.acts.map(\.title))
+
+        func assertGrounded(_ outcome: TitlingOutcome, runs: [[String]], transcript: Transcript) async throws {
+            #expect(
+                outcome.arc.acts.map(\.effectiveTitleSource)
+                    == Array(repeating: ActTitleSource.transcriptLine, count: 4)
+            )
+            for (index, act) in outcome.arc.acts.enumerated() {
+                #expect(act.effectiveTitleSource.isTrustworthy, "Акт \(index): источник названия не помечен")
+                let evidence = try #require(act.titleProvenance?.evidence)
+                // Основание — дословная строка Whisper именно этого акта: и в её тексте,
+                // и в том, что gathering материала акта действительно её находит
+                #expect(runs[index].contains(evidence), "Акт \(index): основание взято не из его диалога")
+                #expect(
+                    LongformActTitleService.actDialogue(act: act, transcript: transcript).contains(evidence),
+                    "Акт \(index): основание вне сегментов этого акта"
+                )
+                // Название = та же строка, максимум обрезанная по типографии карточки
+                let stem = act.title.hasSuffix("…") ? String(act.title.dropLast()) : act.title
+                #expect(evidence.hasPrefix(stem), "Акт \(index): название не из реплики акта")
+                #expect(act.title.count <= LongformActTitleService.maxTitleGraphemes)
+            }
+        }
+
+        try await assertGrounded(outcomeA, runs: Self.groundedFilmA, transcript: filmA.transcript)
+        try await assertGrounded(outcomeB, runs: Self.groundedFilmB, transcript: filmB.transcript)
+    }
+
+    @Test("Act titles never depend on film identity: same dialogue and theme, different film name -> same titles")
+    func testActTitlesNeverDependOnFilmIdentity() async throws {
+        let titling = LongformActTitleService()
+        let concept = syntheticConcept(word: "Иллюзия")
+        let film = groundedFixture(Self.groundedFilmA, movieTitle: "Х", concept: concept)
+
+        let revolver = await titling.applyTitles(
+            to: film.arc,
+            transcript: film.transcript,
             movieTitle: "Револьвер",
-            targetDuration: 360.0
+            progress: nil
         )
-        let otherArc = try await director.buildArc(
-            from: transcript,
-            concept: syntheticConcept(word: "Иллюзия"),
+        let other = await titling.applyTitles(
+            to: film.arc,
+            transcript: film.transcript,
             movieTitle: "Совсем другой фильм",
-            targetDuration: 360.0
+            progress: nil
         )
-        #expect(revolverArc.acts.map(\.title) == otherArc.acts.map(\.title))
-        #expect(revolverArc.acts.map(\.dramaticBeat) == otherArc.acts.map(\.dramaticBeat))
+
+        // Честное наследие старого теста: название — функция диалога и темы, но НИКОГДА
+        // имени фильма. Ровно это раньше гарантировалось тем, что titres были константой.
+        #expect(revolver.arc.acts.map(\.title) == other.arc.acts.map(\.title))
+        #expect(revolver.arc.acts.map(\.dramaticBeat) == other.arc.acts.map(\.dramaticBeat))
+        #expect(revolver.arc.acts.map(\.titleProvenance) == other.arc.acts.map(\.titleProvenance))
+
+        // И фильмная константа не протекла в названия: они обязаны быть репликами
+        let forbidden = ["револьвер", "revolver", "шахмат", "разводк", "сопрано", "ниточк", "казин", "азарт"]
+        for act in revolver.arc.acts {
+            let haystack = act.title.lowercased()
+            for needle in forbidden {
+                #expect(!haystack.contains(needle), "Фильмоспецифичное название: \(act.title)")
+            }
+        }
     }
 
     @Test("LongformAudioMasteringService safely schedules non-overlapping volume ramps without AVFoundation exception")
@@ -638,6 +777,7 @@ struct SentenceBoundaryTests {
             audioSettings: audioSettings,
             existingArc: arc,
             workingDirectory: workingDirectory,
+            channelLogoEnabled: true,
             progressHandler: nil
         )
 

@@ -99,6 +99,11 @@ final class ShortClip: Identifiable {
     var promoCode: String
     /// Seconds the promo banner stays before it retracts. 0 = half the video.
     var promoDurationSeconds: Double
+
+    /// Обложка 9:16 этого шортса. Генерируется автоматически после готовности клипа
+    /// и лежит в `Exports/<ФИЛЬМ>/shorts/`. Поле convenience:.views могут использовать
+    /// его напрямую или искать через `ShortCoverStore.existingCoverURL`.
+    var coverURL: URL?
     // MARK: - Video enhancement (per-clip)
 
     /// Enhancement preset applied before export / publish.
@@ -195,6 +200,7 @@ final class ShortClip: Identifiable {
         self.videoEnhancementContrast = videoEnhancementContrast
         self.videoEnhancementSaturation = videoEnhancementSaturation
         self.videoEnhancementBitrate = videoEnhancementBitrate
+        self.coverURL = nil
     }
 
     var isReadyToPublish: Bool {
@@ -623,6 +629,9 @@ final class ShortClip: Identifiable {
 
     /// Renders the publish-ready file (reframe + overlay + subtitles) and copies it to
     /// `destination`. Used by the "Download" action on each clip.
+    ///
+    /// After a successful copy to the NSSavePanel destination, also writes a copy and
+    /// generates a cover in `Exports/<ФИЛЬМ>/shorts/` so the film directory stays complete.
     func export(to destination: URL, workingDirectory: URL? = nil,
                 customMusicDirectory: URL? = nil,
                 enhancementOptions: VideoEnhancementOptions? = nil) async {
@@ -639,8 +648,39 @@ final class ShortClip: Identifiable {
             defer { if isTemporary { try? FileManager.default.removeItem(at: url) } }
             try? FileManager.default.removeItem(at: destination)
             try FileManager.default.copyItem(at: url, to: destination)
+
+            // ALSO write a copy + cover into Exports/<ФИЛЬМ>/shorts/
+            await writeFilmDirectoryCopy(renderedURL: url, workingDirectory: workingDirectory)
         } catch {
             exportError = error.localizedDescription
+        }
+    }
+
+    /// Writes a copy of the rendered short and its cover into `Exports/<ФИЛЬМ>/shorts/`.
+    /// Non-fatal: errors are logged but do not fail the export.
+    private func writeFilmDirectoryCopy(renderedURL: URL, workingDirectory: URL?) async {
+        let movieTitle = detectedMovieTitle.trimmed.isEmpty ? ExportLayout.fallbackFilmName : detectedMovieTitle.trimmed
+        do {
+            let shortsDir = try ShortCoverStore.makeDirectory(movieTitle: movieTitle, workingDirectory: workingDirectory)
+
+            // Copy the video file into shorts/
+            let videoDest = ExportLayout.artifact(in: shortsDir, kind: .shortVideo, base: suggestedFileName.replacingOccurrences(of: ".mp4", with: ""), ext: "mp4")
+            try? FileManager.default.removeItem(at: videoDest)
+            try FileManager.default.copyItem(at: renderedURL, to: videoDest)
+
+            // Generate cover into the same directory
+            let hook = overlayText.trimmed.isEmpty ? displayTitle : overlayText
+            let request = ShortCoverRequest(
+                clipURL: renderedURL,
+                trimStart: trimStartSeconds,
+                trimEnd: trimEndSeconds,
+                hook: hook,
+                movieTitle: movieTitle,
+                workingDirectory: workingDirectory
+            )
+            _ = await ShortCoverGenerator().generateCover(for: request)
+        } catch {
+            Self.log("film directory copy failed: \(error.localizedDescription)")
         }
     }
 
@@ -714,6 +754,8 @@ final class ShortClip: Identifiable {
     private func renderCacheKey(enhancementOptions: VideoEnhancementOptions?) -> String {
         let sourceValues = try? clipJob?.url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         let subtitles = subtitleSegments.map { "\($0.start)|\($0.end)|\($0.text)" }.joined(separator: "\n")
+        let channelLogoOn = ChannelLogo.isAvailable && UserDefaults.standard.bool(forKey: "shortcast.channelLogoWatermarkOnShorts")
+        let legacyTextOn = watermarkEnabled && !watermarkText.isEmpty
         let payload = [
             clipJob?.url.path ?? "",
             String(sourceValues?.fileSize ?? 0),
@@ -724,6 +766,7 @@ final class ShortClip: Identifiable {
             detectedMovieTitle, detectedMovieYear,
             String(burnSubtitles), subtitles, String(describing: subtitleAppearance),
             String(watermarkEnabled), watermarkText, String(describing: watermarkAppearance),
+            String(channelLogoOn), String(legacyTextOn),
             String(promoOverlayEnabled), promoCode, String(promoDurationSeconds),
             String(enhancementOptions?.preset.rawValue ?? "off"),
             String(enhancementOptions?.rifeFrameRate ?? 0),

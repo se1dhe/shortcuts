@@ -439,10 +439,14 @@ struct SettingsView: View {
 
 
             Section("Watermark") {
-                Toggle("Show watermark on shorts", isOn: $settings.watermarkEnabled)
-                Toggle("Show watermark on full video", isOn: $settings.watermarkFullVideoEnabled)
+                Toggle("Логотип канала в шортсах", isOn: $settings.channelLogoWatermarkOnShorts)
+                Toggle("Логотип канала в эссе", isOn: $settings.channelLogoWatermarkEnabled)
+                Toggle("Прожигать и текстовый вотермарк (устаревшее)", isOn: $settings.legacyTextWatermarkEnabled)
 
-                if settings.watermarkEnabled || settings.watermarkFullVideoEnabled {
+                if settings.legacyTextWatermarkEnabled {
+                    Toggle("Show watermark on shorts", isOn: $settings.watermarkEnabled)
+                    Toggle("Show watermark on full video", isOn: $settings.watermarkFullVideoEnabled)
+
                     TextField("Watermark text",
                               text: $settings.watermarkText,
                               prompt: Text("@yourhandle"))
@@ -451,7 +455,7 @@ struct SettingsView: View {
                     WatermarkAppearanceEditor(appearance: $settings.watermarkAppearance)
                 }
 
-                Text("Burns a configurable watermark (typewriter / fade / static) into shorts and full video exports. The text is rendered as a monospace overlay in the chosen corner.")
+                Text("Знак канала — пятая полоса поверх кадра: в эссе по центру под субтитрами, в шортсах в левом нижнем углу. Неподвижный всю длительность, без фейдов; если места не осталось — не рисуем ничего. Текстовый вотермарк оставлен только как устаревший режим: новый бренд не требует его включения.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

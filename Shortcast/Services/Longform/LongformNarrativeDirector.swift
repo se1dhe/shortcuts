@@ -800,7 +800,9 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         "ые", "а", "я", "о", "е", "ы", "и"
     ]
 
-    private func actDramaticKeywords(for actType: LongformActType) -> [String] {
+    /// Драматургические маркеры акта: языковые, не фильмные. Internal — их же использует
+    /// детерминированный запасной путь naming-прохода (`LongformActTitleService`).
+    func actDramaticKeywords(for actType: LongformActType) -> [String] {
         switch actType {
         case .hook:
             return [

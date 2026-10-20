@@ -210,6 +210,21 @@ final class AppSettings {
         }
     }
 
+    /// Знак канала в эссе: пятая полоса оверлея, полупрозрачная, без фейдов.
+    var channelLogoWatermarkEnabled: Bool {
+        didSet { defaults.set(channelLogoWatermarkEnabled, forKey: Keys.channelLogoWatermark) }
+    }
+
+    /// Знак канала в шортсах: заменяет текстовый вотермарк по умолчанию.
+    var channelLogoWatermarkOnShorts: Bool {
+        didSet { defaults.set(channelLogoWatermarkOnShorts, forKey: Keys.channelLogoWatermarkOnShorts) }
+    }
+
+    /// Устаревший режим: прожигать ещё и текстовый вотермарк. Выключен по умолчанию.
+    var legacyTextWatermarkEnabled: Bool {
+        didSet { defaults.set(legacyTextWatermarkEnabled, forKey: Keys.legacyTextWatermark) }
+    }
+
     /// Default for burning the 1win partner promo banner at the top of each short.
     var promoOverlayEnabled: Bool {
         didSet { defaults.set(promoOverlayEnabled, forKey: Keys.promoOverlay) }
@@ -429,6 +444,9 @@ final class AppSettings {
         self.watermarkAppearance = (defaults.data(forKey: Keys.watermarkAppearance)
             .flatMap { try? JSONDecoder().decode(WatermarkAppearance.self, from: $0) })
             ?? .default
+        self.channelLogoWatermarkEnabled = defaults.object(forKey: Keys.channelLogoWatermark) as? Bool ?? true
+        self.channelLogoWatermarkOnShorts = defaults.object(forKey: Keys.channelLogoWatermarkOnShorts) as? Bool ?? true
+        self.legacyTextWatermarkEnabled = defaults.object(forKey: Keys.legacyTextWatermark) as? Bool ?? false
         self.promoOverlayEnabled = defaults.object(forKey: Keys.promoOverlay) as? Bool ?? false
         self.promoCode = defaults.string(forKey: Keys.promoCode) ?? PromoOverlayConfig.default.promoCode
         self.promoDurationSeconds = defaults.object(forKey: Keys.promoDuration) as? Double ?? 0
@@ -498,6 +516,9 @@ final class AppSettings {
         static let watermarkFullVideo = "shortcast.watermarkFullVideoEnabled"
         static let watermarkText = "shortcast.watermarkText"
         static let watermarkAppearance = "shortcast.watermarkAppearance"
+        static let channelLogoWatermark = "shortcast.channelLogoWatermarkEnabled"
+        static let channelLogoWatermarkOnShorts = "shortcast.channelLogoWatermarkOnShorts"
+        static let legacyTextWatermark = "shortcast.legacyTextWatermarkEnabled"
         static let promoOverlay = "shortcast.promoOverlayEnabled"
         static let promoCode = "shortcast.promoCode"
         static let promoDuration = "shortcast.promoDurationSeconds"

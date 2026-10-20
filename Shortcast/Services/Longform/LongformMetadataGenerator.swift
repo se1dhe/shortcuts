@@ -42,6 +42,17 @@ enum LongformMetadataGenerator {
 
     // MARK: - Вспомогательные генераторы
 
+    /// Устойчивый хеш слова (djb2 по UTF-16). `String.hashValue` пересевается на каждый
+    /// запуск процесса, поэтому выбор шаблона заголовка молча менялся между рендерами
+    /// одного и того же ролика — YouTube-тайтл переименовывал сам себя.
+    static func stableHash(_ text: String) -> Int {
+        var hash: UInt64 = 5381
+        for unit in text.utf16 {
+            hash = (hash &* 33) &+ UInt64(unit)
+        }
+        return Int(hash & 0x7FFF_FFFF_FFFF_FFFF)
+    }
+
     private static func buildPrrodanTitle(movieTitle: String, concept: ThematicConcept) -> String {
         let hook = concept.suggestedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let word = concept.word.capitalized
@@ -64,7 +75,7 @@ enum LongformMetadataGenerator {
             "Самая опасная ложь — та, в которую ты веришь сам | \(word)"
         ]
 
-        let selectedTemplate = templates[abs(concept.word.hashValue) % templates.count]
+        let selectedTemplate = templates[stableHash(concept.word) % templates.count]
         return selectedTemplate
     }
 

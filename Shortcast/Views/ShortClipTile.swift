@@ -12,7 +12,14 @@ struct ShortClipTile: View {
 
     @State private var showEditor = false
     @State private var showPlayer = false
+    @State private var showCover = false
     @State private var isHovered = false
+    @State private var isGeneratingCover = false
+    @State private var coverError: String?
+
+    /// Обложка 9:16 этого шортса. Имя выводится из файла клипа, поэтому поле в модели
+    /// не нужно: сгенерировалась — показываем и отдаём на сохранение, нет — предлагаем собрать.
+    @State private var coverURL: URL?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -28,6 +35,25 @@ struct ShortClipTile: View {
         .sheet(isPresented: $showPlayer) {
             ClipPlayerSheet(clip: clip)
         }
+        .sheet(isPresented: $showCover) { coverSheet }
+        .task(id: clip.clipJob?.url) { refreshCover() }
+    }
+
+    private func refreshCover() {
+        // Сначала из модели (автогенерация после готовности), иначе поиск по файлу клипа.
+        if let modelCover = clip.coverURL {
+            coverURL = modelCover
+            return
+        }
+        guard let job = clip.clipJob else {
+            coverURL = nil
+            return
+        }
+        coverURL = ShortCoverStore.existingCoverURL(
+            clipURL: job.url,
+            movieTitle: clip.detectedMovieTitle,
+            workingDirectory: settings.workingDirectory
+        )
     }
 
     // MARK: - Phone preview + overlays
@@ -126,6 +152,9 @@ struct ShortClipTile: View {
                 } else {
                     tileButton("arrow.down.circle", "Скачать MP4") { downloadClip() }
                 }
+                if clip.clipJob != nil {
+                    tileButton("photo.on.rectangle.angled", "Обложка 9:16") { showCover = true }
+                }
             }
             .padding(6)
             .background(.black.opacity(0.4), in: Capsule())
@@ -166,6 +195,121 @@ struct ShortClipTile: View {
                     workingDirectory: settings.workingDirectory,
                     customMusicDirectory: settings.customMusicDirectory,
                     enhancementOptions: enhance)
+            }
+        }
+    }
+
+    // MARK: - Cover 9:16
+
+    @ViewBuilder
+    private var coverSheet: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Обложка шортса 9:16").font(.headline)
+                Spacer()
+                Button("Закрыть") { showCover = false }.keyboardShortcut(.cancelAction)
+            }
+            .padding(14)
+            Divider()
+
+            VStack(spacing: 12) {
+                if let coverURL, let image = NSImage(contentsOf: coverURL) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxHeight: 560)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+                } else {
+                    VStack(spacing: 8) {
+                        Image(systemName: "photo")
+                            .font(.system(size: 34, weight: .light))
+                            .foregroundStyle(.secondary)
+                        Text("Обложки ещё нет — можно собрать из текущего файла клипа.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: 560)
+                    .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+                }
+
+                if let coverError {
+                    Text(coverError)
+                        .font(.caption).foregroundStyle(.orange)
+                        .lineLimit(3).multilineTextAlignment(.center)
+                }
+
+                HStack(spacing: 10) {
+                    Button {
+                        saveCover()
+                    } label: {
+                        Label("Сохранить JPEG…", systemImage: "square.and.arrow.down")
+                    }
+                    .disabled(coverURL == nil)
+
+                    Button {
+                        Task { await generateCover() }
+                    } label: {
+                        if isGeneratingCover {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label(coverURL == nil ? "Собрать обложку" : "Собрать заново",
+                                  systemImage: "wand.and.stars")
+                        }
+                    }
+                    .disabled(isGeneratingCover || clip.clipJob == nil)
+
+                    Spacer()
+                    if let coverURL {
+                        Text(coverURL.lastPathComponent)
+                            .font(.caption2).foregroundStyle(.tertiary)
+                            .lineLimit(1).truncationMode(.middle)
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+            .padding(16)
+        }
+        .frame(width: 420)
+    }
+
+    private func generateCover() async {
+        guard let job = clip.clipJob else { return }
+        isGeneratingCover = true
+        coverError = nil
+        defer { isGeneratingCover = false }
+
+        let hook = clip.overlayText.trimmed.isEmpty ? clip.displayTitle : clip.overlayText
+        let url = await ShortCoverGenerator().generateCover(for: ShortCoverRequest(
+            clipURL: job.url,
+            trimStart: clip.trimStartSeconds,
+            trimEnd: clip.trimEndSeconds,
+            hook: hook,
+            movieTitle: clip.detectedMovieTitle,
+            workingDirectory: settings.workingDirectory
+        ))
+        coverURL = url
+        if url == nil {
+            coverError = "Не удалось собрать обложку — кадр клипа недоступен. Видео при этом готово и публикуется."
+        }
+    }
+
+    private func saveCover() {
+        guard let source = coverURL else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.jpeg]
+        panel.nameFieldStringValue = source.lastPathComponent
+        panel.canCreateDirectories = true
+        panel.title = String(localized: "Save cover")
+        panel.begin { response in
+            guard response == .OK, let destination = panel.url else { return }
+            do {
+                try? FileManager.default.removeItem(at: destination)
+                try FileManager.default.copyItem(at: source, to: destination)
+            } catch {
+                coverError = error.localizedDescription
             }
         }
     }

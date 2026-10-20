@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import CoreGraphics
+import os
 import QuartzCore
 
 // MARK: - WCAG 2.1 контраст (чистая арифметика: без CALayer и без графического контекста)
@@ -153,6 +154,8 @@ fileprivate func longformRGB(hue: Double, saturation: Double, brightness: Double
 /// поэтому оверлей и превью (`renderPreviewImage`) не могут разъехаться по шрифтам.
 final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendable {
 
+    private static let logger = Logger(subsystem: "app.shortcast", category: "LongformLogoWatermark")
+
     // MARK: - Единый источник типографики (его зовут ОБА пути: оверлей и превью)
 
     /// Эталонный кегль якорного слова темы при 1080 строках (исторически 56pt — визуально гигант)
@@ -169,6 +172,11 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
     static let actOverlineBasePointSize: Double = 20.0
     /// Эталонный кегль названия главы в карточке акта
     static let actTitleBasePointSize: Double = 34.0
+
+    /// Запас под самой нижней строкой субтитров (в единицах `k`): там живёт слоган интро
+    /// (20·k кегль + отступы) и нижняя золотая черта. Знак канала отступает на эту величину,
+    /// чтобы не сесть на слоган. Единый источник для оверлея, превью и теста.
+    static let subtitleLogoClearance: CGFloat = 64.0
 
     /// Масштаб всей типографики: k = высота кадра / 1080 (1920x1080 -> k == 1.0)
     static func scaleFactor(renderSize: CGSize) -> Double {
@@ -307,13 +315,62 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         renderSizeWidth * themeMaxWidthScale
     }
 
+    /// Нижняя граница слоя слова темы (тот же расчёт, что в `buildCentralConceptLayer`):
+    /// слой = высота текста + 20·k запаса, строго по центру кадра. Нужна знаку канала и тестам.
+    static func conceptBottomY(renderSize: CGSize, textSize: CGSize, k: Double) -> CGFloat {
+        (renderSize.height - (textSize.height + CGFloat(20.0 * k))) / 2.0
+    }
+
+    /// Авто-усадка названия акта: старт `actTitlePointSize(k)` (34·k), пол 24·k, текст обязан
+    /// влезть в `maxWidth` НЕ БОЛЕЕ ЧЕМ В ДВЕ СТРОКИ — при 34pt вторая строка названия
+    /// залезает в верхнюю литербокс-полосу карточки. Измерение — теми же атрибутами, что
+    /// рисует карточка (Russo One, трекинг 3.0·k, обводка −2.4·k); передавать ровно тот
+    /// текст, что рисуется, вместе с кавычками-«ёлочками». Идеал усадки общий с
+    /// `resolvedThemePointSize`, чтобы в repo оставался ОДИН приём «усаживаем, чтобы влезло».
+    static func resolvedActTitlePointSize(text: String, k: Double, maxWidth: Double) -> Double {
+        let minSize = 24.0 * k
+        let cap = max(1.0, maxWidth)
+        let title = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return actTitlePointSize(k: k) }
+
+        var pointSize = actTitlePointSize(k: k)
+        for _ in 0..<8 {
+            let font = SubtitleRenderer.resolveFont(
+                name: "RussoOne-Regular",
+                size: CGFloat(pointSize),
+                fallback: .heavy
+            )
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.alignment = .center
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: NSColor.white,
+                .strokeColor: NSColor.black,
+                .strokeWidth: CGFloat(-2.4 * k),
+                .paragraphStyle: paragraph,
+                .kern: CGFloat(3.0 * k)
+            ]
+            let bounding = NSAttributedString(string: title, attributes: attributes).boundingRect(
+                with: CGSize(width: cap, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading]
+            )
+            // NSFont не отдаёт lineHeight (это UIFont-API): высота строки берём из
+            // boundingRectForFont, ровно столько занимает одна строка этим шрифтом
+            let lineHeight = ceil(font.boundingRectForFont.height)
+            if bounding.height <= lineHeight * 2.0 + 1.0 || pointSize <= minSize { break }
+            pointSize = max(minSize, pointSize - 2.0 * k)
+        }
+        return pointSize
+    }
+
     func makeOverlayLayer(
         renderSize: CGSize,
         concept: ThematicConcept,
         timedPhrases: [TimedSubtitlePhrase],
         acts: [LongformAct] = [],
         actStartTimes: [Double] = [],
-        totalDuration: Double = 0.0
+        totalDuration: Double = 0.0,
+        layout: LongformOverlayLayout = LongformOverlayLayout()
     ) async -> CALayer {
         let rootLayer = CALayer()
         rootLayer.frame = CGRect(origin: .zero, size: renderSize)
@@ -333,7 +390,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         rootLayer.addSublayer(conceptLayer)
 
         // 2. Плавные синхронные субтитры реплик персонажей прямо под концептом
-        let subtitlePhrasesLayer = buildSynchronizedSubtitlesLayer(
+        let (subtitlePhrasesLayer, subtitleBottom) = buildSynchronizedSubtitlesLayer(
             renderSize: renderSize,
             k: k,
             concept: concept,
@@ -364,7 +421,50 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         )
         rootLayer.addSublayer(actCardsLayer)
 
+        // 5. Знак канала — пятая полоса, ВСЕГДА добавляется последней (индекс [4]) и только если
+        // для неё реально есть место. Раньше вставать в середину нельзя: тесты читают
+        // sublayers по позициям, а у слоя-картинки ненулевой `contents`.
+        appendChannelLogoBand(to: rootLayer, renderSize: renderSize,
+                              subtitleBottom: subtitleBottom, layout: layout)
+
         return rootLayer
+    }
+
+    /// Единственная точка, решающая «рисовать ли знак в эссе».
+    /// Места нет — не рисуем ничего (никаких самодельных эмблем) и пишем ОДНО notice на рендер.
+    private func appendChannelLogoBand(
+        to rootLayer: CALayer,
+        renderSize: CGSize,
+        subtitleBottom: CGFloat,
+        layout: LongformOverlayLayout
+    ) {
+        guard let style = layout.channelLogo else { return }
+        let rect = ChannelLogoPlacement.essay(
+            renderSize: renderSize,
+            subtitleBottom: subtitleBottom,
+            bottomBarHeight: layout.bottomBarHeight,
+            style: style
+        )
+        guard let rect else {
+            Self.reportMissingLogoRoom(renderSize: renderSize, subtitleBottom: subtitleBottom,
+                                       bottomBarHeight: layout.bottomBarHeight, style: style)
+            return
+        }
+        guard let logoLayer = ChannelLogo.makeLayer(frame: rect, renderSize: renderSize,
+                                                   opacity: style.opacity) else { return }
+        rootLayer.addSublayer(logoLayer)
+    }
+
+    /// Одна строка на рендер: молча обесбренденное видео — худший из вариантов,
+    /// но и писать по строке на каждый из сотен кадров — шум.
+    static func reportMissingLogoRoom(renderSize: CGSize, subtitleBottom: CGFloat,
+                                      bottomBarHeight: CGFloat, style: ChannelLogoStyle) {
+        let height = renderSize.height
+        let k = height / 1080.0
+        let gap = style.gapBelowSubtitles * k
+        let floorY = bottomBarHeight + style.edgeInset * k
+        let available = subtitleBottom - gap - floorY
+        logger.notice("ChannelLogo skipped in essay: needs \(Int(style.sizeFraction * height))px, free \(Int(available))px (subtitleBottom \(Int(subtitleBottom))px, bottomBar \(Int(bottomBarHeight))px, gap \(Int(gap))px, floor \(Int(floorY))px, min \(Int(style.minSizeFraction * height))px)")
     }
 
     // MARK: - 1. Центральное якорное слово концепта (Shortcast Cinema Typography)
@@ -376,7 +476,6 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         totalDuration: Double
     ) -> (layer: CALayer, conceptY: CGFloat, conceptH: CGFloat) {
         let W = renderSize.width
-        let H = renderSize.height
         let t = max(totalDuration, 5.0)
 
         // Кегль 44pt на эталонных 1080 строках + авто-усадка, чтобы слово не лезло за 60% ширины кадра
@@ -392,7 +491,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
 
         // Строго по центру экрана
         let conceptX = (W - layerW) / 2.0
-        let conceptY = (H - layerH) / 2.0
+        let conceptY = Self.conceptBottomY(renderSize: renderSize, textSize: textSize, k: k)
 
         let layer = CALayer()
         layer.frame = CGRect(x: conceptX, y: conceptY, width: layerW, height: layerH)
@@ -507,6 +606,52 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         return result
     }
 
+    // MARK: - Геометрия полосы субтитров (один расчёт для раскладки, знака канала и теста)
+
+    /// Рамка слоя реплики: та же формула, что в цикле раскладки. Вынесена, чтобы полоса,
+    /// из которой считается место под знак, и реальная раскладка не могли разъехаться.
+    static func captionRect(textWidth: CGFloat, textHeight: CGFloat, renderSize: CGSize,
+                            conceptY: CGFloat, k: Double) -> CGRect {
+        let W = renderSize.width
+        let subW = min(W * 0.85, max(CGFloat(120.0 * k), ceil(textWidth) + CGFloat(36.0 * k)))
+        let subH = max(CGFloat(44.0 * k), ceil(textHeight) + CGFloat(16.0 * k))
+        return CGRect(x: (W - subW) / 2.0, y: conceptY - subH - 18.0, width: subW, height: subH)
+    }
+
+    /// Полоса субтитров при заданном числе строк — тот же путь, что и в рендере.
+    /// Чистая функция (без Layers и анимаций), чтобы тест проверял реальную раскладку, а не догадку.
+    static func essaySubtitleBand(renderSize: CGSize, conceptY: CGFloat, lines: Int,
+                                  accentHex: String = "#FFE45C") -> CGRect {
+        let k = scaleFactor(renderSize: renderSize)
+        let attrs = captionAttributes(k: k, accentHex: accentHex)
+        let text = Array(repeating: "—", count: max(1, lines)).joined(separator: "\n")
+        let measured = NSAttributedString(string: text, attributes: attrs)
+            .boundingRect(with: CGSize(width: 10_000, height: 10_000),
+                          options: [.usesLineFragmentOrigin, .usesFontLeading])
+        return captionRect(textWidth: measured.width, textHeight: measured.height,
+                           renderSize: renderSize, conceptY: conceptY, k: k)
+    }
+
+    /// Место под знак канала, которое оставляет раскладка субтитров при `lines` строках.
+    /// Ровно та цепочка, что проходит `makeOverlayLayer`: полоса → запас на слоган → placement.
+    static func essayLogoBand(renderSize: CGSize, conceptY: CGFloat, lines: Int,
+                              bottomBarHeight: CGFloat = 0,
+                              style: ChannelLogoStyle = .essay) -> CGRect? {
+        let k = scaleFactor(renderSize: renderSize)
+        let subtitleBottom = max(0, essaySubtitleBand(renderSize: renderSize, conceptY: conceptY, lines: lines).minY
+                                    - subtitleLogoClearance * CGFloat(k))
+        return ChannelLogoPlacement.essay(renderSize: renderSize, subtitleBottom: subtitleBottom,
+                                          bottomBarHeight: bottomBarHeight, style: style)
+    }
+
+    /// Рамка карточки акта в той же системе координат (низ слева): знак канала обязан
+    /// оставлять её свободной — это и проверяет тест коллизии.
+    static func actCardY(renderSize: CGSize) -> CGFloat { renderSize.height * 0.77 }
+
+    static func actCardRect(renderSize: CGSize, contentHeight: CGFloat = 120.0) -> CGRect {
+        CGRect(x: 0, y: actCardY(renderSize: renderSize), width: renderSize.width, height: contentHeight)
+    }
+
     private func buildSynchronizedSubtitlesLayer(
         renderSize: CGSize,
         k: Double,
@@ -514,7 +659,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         conceptY: CGFloat,
         timedPhrases: [TimedSubtitlePhrase],
         totalDuration: Double
-    ) -> CALayer {
+    ) -> (layer: CALayer, subtitleBottom: CGFloat) {
         let container = CALayer()
         container.frame = CGRect(origin: .zero, size: renderSize)
 
@@ -527,6 +672,9 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
 
         let maxTextWidth = min(W * 0.78, CGFloat(1240.0 * k))
         let chunked = chunkTimedPhrases(timedPhrases)
+        // Фактическая нижняя граница самой нижней реплики — знак канала отступает от неё,
+        // а не от выдуманного запаса.
+        var lowestCaptionY = CGFloat.greatestFiniteMagnitude
 
         for phrase in chunked {
             let cleanText = phrase.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -539,15 +687,14 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
                 with: CGSize(width: maxTextWidth, height: 200.0),
                 options: [.usesLineFragmentOrigin, .usesFontLeading]
             )
-            let subW = min(W * 0.85, max(CGFloat(120.0 * k), ceil(boundingRect.width) + CGFloat(36.0 * k)))
-            let subH = max(CGFloat(44.0 * k), ceil(boundingRect.height) + CGFloat(16.0 * k))
 
             // Размещаем прямо под концептом (вниз от conceptY с безопасным отступом)
-            let subX = (W - subW) / 2.0
-            let subY = conceptY - subH - 18.0
+            let captionFrame = Self.captionRect(textWidth: boundingRect.width, textHeight: boundingRect.height,
+                                                 renderSize: renderSize, conceptY: conceptY, k: k)
 
             let phraseLayer = CALayer()
-            phraseLayer.frame = CGRect(x: subX, y: subY, width: subW, height: subH)
+            phraseLayer.frame = captionFrame
+            lowestCaptionY = min(lowestCaptionY, captionFrame.minY)
             phraseLayer.contentsScale = 2.0
             phraseLayer.contents = renderAttributedText(subStr, size: phraseLayer.frame.size)
             phraseLayer.opacity = 0.0
@@ -584,7 +731,15 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             container.addSublayer(phraseLayer)
         }
 
-        return container
+        // Реплик не было (например, всё вступление) — считаем полосу от одной строки по умолчанию.
+        let referenceBottom: CGFloat
+        if lowestCaptionY == .greatestFiniteMagnitude {
+            referenceBottom = Self.essaySubtitleBand(renderSize: renderSize, conceptY: conceptY, lines: 1).minY
+        } else {
+            referenceBottom = lowestCaptionY
+        }
+        // Под полосой субтитров живёт слоган интро (шрифт 20·k + отступы): запас 64·k.
+        return (container, max(0, referenceBottom - Self.subtitleLogoClearance * CGFloat(k)))
     }
 
     // MARK: - 3. Вступительный подзаголовок темы (Intro Hook, 0.0с – 4.5с)
@@ -725,7 +880,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             let totalContentH = partSize.height + spacingPartToTitle + titleSize.height + spacingTitleToLine + lineHeight
 
             let containerX = (W - containerW) / 2.0
-            let containerY = H * 0.77 // В верхней трети экрана
+            let containerY = Self.actCardY(renderSize: renderSize) // В верхней трети экрана
 
             let containerLayer = CALayer()
             containerLayer.frame = CGRect(x: containerX, y: containerY, width: containerW, height: totalContentH)
@@ -810,7 +965,8 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
     func renderPreviewImage(
         renderSize: CGSize,
         concept: ThematicConcept,
-        currentPhrase: String?
+        currentPhrase: String?,
+        layout: LongformOverlayLayout = LongformOverlayLayout()
     ) -> CGImage? {
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
@@ -864,6 +1020,21 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
                 y: conceptOrigin.y - subSize.height - 12.0
             )
             subStr.draw(at: subOrigin)
+        }
+
+        // 3. Знак канала — ровно та же цепочка раскладки, что в видео, иначе превью разойдётся с рендером.
+        if let style = layout.channelLogo {
+            let conceptY = Self.conceptBottomY(renderSize: renderSize, textSize: conceptSize, k: k)
+            let logoRect = Self.essayLogoBand(renderSize: renderSize, conceptY: conceptY, lines: 1,
+                                              bottomBarHeight: layout.bottomBarHeight, style: style)
+            if let logoRect {
+                ChannelLogo.composite(in: context, rect: logoRect, opacity: CGFloat(style.opacity))
+            } else {
+                let subtitleBottom = Self.essaySubtitleBand(renderSize: renderSize, conceptY: conceptY, lines: 1).minY
+                    - Self.subtitleLogoClearance * CGFloat(k)
+                Self.reportMissingLogoRoom(renderSize: renderSize, subtitleBottom: max(0, subtitleBottom),
+                                           bottomBarHeight: layout.bottomBarHeight, style: style)
+            }
         }
 
         NSGraphicsContext.restoreGraphicsState()

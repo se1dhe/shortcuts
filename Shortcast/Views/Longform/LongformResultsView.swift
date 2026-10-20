@@ -114,6 +114,21 @@ struct LongformResultsView: View {
                             Text(act.type.rawValue)
                                 .font(.caption2.weight(.bold))
                                 .foregroundStyle(.primary)
+
+                            // Отчётность за название акта: тут, в UI, а не на кадре ролика
+                            Text(act.title)
+                                .font(.caption2)
+                                .lineLimit(2)
+                                .foregroundStyle(.primary)
+                            HStack(spacing: 3) {
+                                Image(systemName: act.effectiveTitleSource.isTrustworthy
+                                      ? "checkmark.seal" : "exclamationmark.seal")
+                                Text(act.effectiveTitleSource.displayCaption)
+                            }
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .help(act.titleProvenance?.evidence ?? "Источник названия не зафиксирован")
+
                             Text(formatDuration(act.duration))
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)

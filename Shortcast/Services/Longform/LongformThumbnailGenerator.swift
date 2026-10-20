@@ -34,6 +34,83 @@ enum ThumbnailLayoutMode: Sendable {
     case centerBottomFallback
 }
 
+/// Геометрия текстовых полос обложки эссе и полос кино-виньетки.
+///
+/// Все координаты — доли канваса (эталон 1920×1080), а не пиксели формата: обложка
+/// остаётся самой собой при любом размере рендера. Это единственный источник истины:
+/// его рисует `LongformThumbnailComposer` и его же проверяет тест на коллизию с
+/// логотипом канала, поэтому тест не может разойтись с отрисовкой.
+struct LongformCoverTextSlots: Sendable, Equatable {
+    /// Надстрочник «ФИЛОСОФИЯ ФИЛЬМА …»
+    let badge: CGRect
+    /// Якорное слово темы
+    let themeWord: CGRect
+    /// Золотая разделительная черта
+    let rule: CGRect
+    /// Смысловой тезис / хук
+    let hook: CGRect
+
+    /// Верхняя виньетка: эталон 200 pt при 1080 строках.
+    static let topVignetteScale: CGFloat = 200.0 / 1080.0
+    /// Нижняя виньетка: эталон 220 pt при 1080 строках.
+    static let bottomVignetteScale: CGFloat = 220.0 / 1080.0
+    /// Худший случай высоты блока хука: измерение ограничено 300 pt + 20 pt запаса.
+    static let hookMaxHeightScale: CGFloat = 320.0 / 1080.0
+
+    var all: [CGRect] { [badge, themeWord, rule, hook] }
+    var highestTextY: CGFloat { all.map(\.maxY).max() ?? 0 }
+
+    static func topVignette(canvas: CGSize) -> CGRect {
+        let height = canvas.height * topVignetteScale
+        return CGRect(x: 0, y: canvas.height - height, width: canvas.width, height: height)
+    }
+
+    static func bottomVignette(canvas: CGSize) -> CGRect {
+        CGRect(x: 0, y: 0, width: canvas.width, height: canvas.height * bottomVignetteScale)
+    }
+
+    static func make(layoutMode: ThumbnailLayoutMode, canvas: CGSize, hookHeight: CGFloat) -> LongformCoverTextSlots {
+        let w = canvas.width
+        let h = canvas.height
+        let textX: CGFloat
+        let textMaxW: CGFloat
+        let baseY: CGFloat
+        let isCentered: Bool
+
+        switch layoutMode {
+        case .leftTextRightFace:
+            textX = 110.0 / 1920.0 * w
+            textMaxW = 820.0 / 1920.0 * w
+            baseY = 340.0 / 1080.0 * h
+            isCentered = false
+        case .rightTextLeftFace:
+            textX = 990.0 / 1920.0 * w
+            textMaxW = 820.0 / 1920.0 * w
+            baseY = 340.0 / 1080.0 * h
+            isCentered = false
+        case .centerBottomFallback:
+            textX = 140.0 / 1920.0 * w
+            textMaxW = 1640.0 / 1920.0 * w
+            baseY = 160.0 / 1080.0 * h
+            isCentered = true
+        }
+
+        let badge = CGRect(x: textX, y: baseY + 360.0 / 1080.0 * h, width: textMaxW, height: 40.0 / 1080.0 * h)
+        let themeWord = CGRect(x: textX, y: baseY + 190.0 / 1080.0 * h, width: textMaxW, height: 160.0 / 1080.0 * h)
+        let ruleW: CGFloat = isCentered ? 160.0 / 1920.0 * w : min(140.0 / 1920.0 * w, textMaxW)
+        let ruleX: CGFloat = isCentered ? (w - ruleW) / 2.0 : textX
+        let rule = CGRect(x: ruleX, y: baseY + 160.0 / 1080.0 * h, width: ruleW, height: 4.5 / 1080.0 * h)
+        let hook = CGRect(x: textX, y: baseY - 15.0 / 1080.0 * h, width: textMaxW, height: hookHeight)
+
+        return LongformCoverTextSlots(badge: badge, themeWord: themeWord, rule: rule, hook: hook)
+    }
+
+    /// Полосы при максимально допустимом блоке хука — то, чем оперирует тест на коллизию.
+    static func worstCase(layoutMode: ThumbnailLayoutMode, canvas: CGSize) -> LongformCoverTextSlots {
+        make(layoutMode: layoutMode, canvas: canvas, hookHeight: hookMaxHeightScale * canvas.height)
+    }
+}
+
 /// Сервис умного подбора и скоринга кадров через Apple Vision (SOLID: Single Responsibility)
 final class LongformThumbnailCandidateSelector: Sendable {
 
@@ -320,6 +397,15 @@ final class LongformThumbnailComposer: Sendable {
             renderSize: renderSize
         )
 
+        // 6. Логотип канала — ПОСЛЕ типографики, чтобы знак оставался верхним слоем.
+        // Правый верх (ChannelLogoPlacement.essayCover) не пересекает ни один текстовый
+        // слот и целиком попадает в верхнюю виньетку, то есть лежит на гарантированно
+        // тёмном участке кадра. Если ассета нет — композит молча ничего не рисует.
+        ChannelLogo.composite(
+            in: context,
+            rect: ChannelLogoPlacement.essayCover(canvas: renderSize)
+        )
+
         guard let finalImage = context.makeImage() else {
             throw NSError(domain: "ThumbnailComposer", code: -2, userInfo: [NSLocalizedDescriptionKey: "Не удалось сформировать изображение."])
         }
@@ -378,21 +464,23 @@ final class LongformThumbnailComposer: Sendable {
             }
         }
 
-        // Мягкая виньетка сверху и снизу
+        // Мягкая виньетка сверху и снизу (полосы — доли канваса, общий источник с тестом)
         let edgeColors = [CGColor(gray: 0.0, alpha: 0.60), CGColor(gray: 0.0, alpha: 0.0)] as CFArray
         if let edgeGrad = CGGradient(colorsSpace: colorSpace, colors: edgeColors, locations: [0.0, 1.0]) {
+            let topBand = LongformCoverTextSlots.topVignette(canvas: renderSize)
+            let bottomBand = LongformCoverTextSlots.bottomVignette(canvas: renderSize)
             // Верх
             context.drawLinearGradient(
                 edgeGrad,
-                start: CGPoint(x: renderSize.width / 2.0, y: renderSize.height),
-                end: CGPoint(x: renderSize.width / 2.0, y: renderSize.height - 200.0),
+                start: CGPoint(x: renderSize.width / 2.0, y: topBand.maxY),
+                end: CGPoint(x: renderSize.width / 2.0, y: topBand.minY),
                 options: []
             )
             // Низ
             context.drawLinearGradient(
                 edgeGrad,
-                start: CGPoint(x: renderSize.width / 2.0, y: 0),
-                end: CGPoint(x: renderSize.width / 2.0, y: 220.0),
+                start: CGPoint(x: renderSize.width / 2.0, y: bottomBand.minY),
+                end: CGPoint(x: renderSize.width / 2.0, y: bottomBand.maxY),
                 options: []
             )
         }
@@ -410,28 +498,18 @@ final class LongformThumbnailComposer: Sendable {
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = nsContext
 
-        // Координаты размещения текстового блока
-        let textX: CGFloat
-        let textMaxW: CGFloat
-        let baseY: CGFloat
+        // Координаты размещения текстового блока — из общего источника геометрии
+        // (`LongformCoverTextSlots`), который проверяет тест на коллизию с логотипом.
+        let layout = LongformCoverTextSlots.make(
+            layoutMode: layoutMode,
+            canvas: renderSize,
+            hookHeight: 160.0 / 1080.0 * renderSize.height
+        )
+        let textMaxW = layout.hook.width
         let isCentered: Bool
-
         switch layoutMode {
-        case .leftTextRightFace:
-            textX = 110.0
-            textMaxW = 820.0
-            baseY = 340.0
-            isCentered = false
-        case .rightTextLeftFace:
-            textX = 990.0
-            textMaxW = 820.0
-            baseY = 340.0
-            isCentered = false
-        case .centerBottomFallback:
-            textX = 140.0
-            textMaxW = 1640.0
-            baseY = 160.0
-            isCentered = true
+        case .leftTextRightFace, .rightTextLeftFace: isCentered = false
+        case .centerBottomFallback: isCentered = true
         }
 
         // Кинематографическая глубокая тень
@@ -456,11 +534,10 @@ final class LongformThumbnailComposer: Sendable {
         ]
         let badgeText = "ФИЛОСОФИЯ ФИЛЬМА «\(movieTitle.uppercased())»"
         let badgeStr = NSAttributedString(string: badgeText, attributes: badgeAttrs)
-        let badgeY = baseY + 360.0
         if isCentered {
-            badgeStr.draw(in: CGRect(x: textX, y: badgeY, width: textMaxW, height: 40.0))
+            badgeStr.draw(in: layout.badge)
         } else {
-            badgeStr.draw(at: NSPoint(x: textX, y: badgeY))
+            badgeStr.draw(at: layout.badge.origin)
         }
 
         // 2. Главное якорное слово темы (монументально 125-130pt с авто-масштабированием)
@@ -488,19 +565,15 @@ final class LongformThumbnailComposer: Sendable {
             .kern: 4.0
         ]
         let titleStr = NSAttributedString(string: rawAnchor, attributes: titleAttrs)
-        let titleY = baseY + 190.0
         if isCentered {
-            titleStr.draw(in: CGRect(x: textX, y: titleY, width: textMaxW, height: 160.0))
+            titleStr.draw(in: layout.themeWord)
         } else {
-            titleStr.draw(at: NSPoint(x: textX, y: titleY))
+            titleStr.draw(at: layout.themeWord.origin)
         }
 
         // 3. Золотая акцентная разделительная черта
-        let lineW: CGFloat = isCentered ? 160.0 : min(140.0, textMaxW)
-        let lineX: CGFloat = isCentered ? (renderSize.width - lineW) / 2.0 : textX
-        let lineRect = CGRect(x: lineX, y: baseY + 160.0, width: lineW, height: 4.5)
         context.setFillColor(accentColor.cgColor)
-        context.fill(lineRect)
+        context.fill(layout.rule)
 
         // 4. Смысловой тезис / хук (жесткий перенос слов по строкам, защита от обрезания)
         var hookFontSize: CGFloat = 34.0
@@ -539,7 +612,13 @@ final class LongformThumbnailComposer: Sendable {
             )
         }
 
-        let hookRect = CGRect(x: textX, y: baseY - 15.0, width: textMaxW, height: max(measuredRect.height + 20.0, 160.0))
+        let hookRect = CGRect(
+            origin: layout.hook.origin,
+            size: CGSize(
+                width: textMaxW,
+                height: max(measuredRect.height + 20.0, 160.0 / 1080.0 * renderSize.height)
+            )
+        )
         hookStr.draw(in: hookRect)
 
         NSGraphicsContext.restoreGraphicsState()

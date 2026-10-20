@@ -52,6 +52,12 @@ tools/
 *.srt
 films/
 
+# Locally dropped soundtrack — kept on disk, not in the repo
+Shortcast/Resources/Music/The Day Of Night.mp3
+
+# Editor backups
+*.bak
+
 # One-off patch / fix / test scripts
 patch_*.py
 fix_*.py

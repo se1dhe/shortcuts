@@ -808,7 +808,8 @@ final class WorkspaceModel {
                     concept: concept,
                     audioSettings: audioSettings,
                     existingArc: existingArc,
-                    workingDirectory: workDir
+                    workingDirectory: workDir,
+                    channelLogoEnabled: settings.channelLogoWatermarkEnabled
                 ) { [weak self] frac, step in
                     Task { @MainActor in
                         self?.longformBuildProgress = (frac, step)
@@ -884,7 +885,8 @@ final class WorkspaceModel {
                     transcript: transcript,
                     concept: concept,
                     audioSettings: audioSettings,
-                    workingDirectory: workDir
+                    workingDirectory: workDir,
+                    channelLogoEnabled: settings.channelLogoWatermarkEnabled
                 ) { [weak self] frac, step in
                     Task { @MainActor in
                         self?.longformBuildProgress = (frac, step)

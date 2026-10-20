@@ -223,6 +223,8 @@ final class SinglePassClipCompositor: SinglePassClipCompositing {
 
         // Субтитры (с учетом смещения тримминга startSec)
         let wantSubtitles = clip.isCinemaMode ? !clip.subtitleSegments.isEmpty : (clip.burnSubtitles && !clip.subtitleSegments.isEmpty)
+        // Реальные рамки каптовок — нужны, чтобы знак канала встал под субтитры, а не на них.
+        var subtitleSnapRects: [CGRect] = []
         if wantSubtitles {
             let shiftedSegments = clip.subtitleSegments.compactMap { seg -> SubtitleSegment? in
                 let segStart = seg.start - startSec
@@ -242,18 +244,23 @@ final class SinglePassClipCompositor: SinglePassClipCompositing {
                 )
             }
 
-            let subtitleContainer = await SubtitleRenderer.buildKineticSubtitleLayer(
+            let kinetic = await SubtitleRenderer.buildKineticSubtitleLayerWithLayout(
                 asset: asset,
                 segments: shiftedSegments,
                 appearance: clip.subtitleAppearance,
                 videoSize: renderSize,
                 totalDuration: clipDurationSec
             )
-            parentLayer.addSublayer(subtitleContainer)
+            subtitleSnapRects = kinetic.snapRects
+            parentLayer.addSublayer(kinetic.layer)
         }
 
-        // Водяной знак
-        if clip.watermarkEnabled && !clip.watermarkText.isEmpty {
+        // Водяной знак: сначала фирменный логотип канала, текстовый вотермарк — только
+        // как устаревший режим (или когда знака нет: нет ассета либо честно нет места).
+        if let logoLayer = makeShortChannelLogoLayer(renderSize: renderSize,
+                                                     captionRects: subtitleSnapRects) {
+            parentLayer.addSublayer(logoLayer)
+        } else if clip.watermarkEnabled, !clip.watermarkText.isEmpty {
             WatermarkRenderer.addWatermark(
                 to: parentLayer,
                 text: clip.watermarkText,
@@ -380,5 +387,84 @@ final class SinglePassClipCompositor: SinglePassClipCompositing {
 
         Self.logger.notice("Single-Pass Render completed in 1 pass: \(outputURL.path)")
         return outputURL
+    }
+}
+
+// MARK: - Знак канала в шортсах
+
+/// Где именно нужен знак: режим прожига определяет и геометрию полосы, и настройку.
+enum ChannelLogoMode: Sendable {
+    case essay
+    case shorts
+}
+
+/// Единое место, где ОБА пути прожига (однопроходный композитор и резервный многопроходный
+/// `SubtitleRenderer.burn`) решают, брендовать ли клип знаком канала.
+///
+/// Ключи — ровно те, под которыми `AppSettings` кладёт значения в `UserDefaults` (префикс
+/// `shortcast.`); без этого настройка в UI молча не действовала бы. Пока нового ключа нет,
+/// для шортсов фолбачимся на старый `watermarkEnabled`: молча незабрендрованный клип из-за
+/// отсутствующего ключа хуже, чем включённый знак.
+///
+/// Если `clipWants != nil` (клип сам знает, хочет ли знак — когда поле добавят в `ShortClip`),
+/// настройка из `UserDefaults` к нему только применяется, не перекрывает его.
+enum ChannelLogoWatermarkSettings {
+    static let shortsKey = "shortcast.channelLogoWatermarkOnShorts"
+    static let essayKey = "shortcast.channelLogoWatermarkEnabled"
+    static let legacyWatermarkKey = "shortcast.watermarkEnabled"
+    static let legacyFullVideoWatermarkKey = "shortcast.watermarkFullVideoEnabled"
+
+    static func isEnabled(for mode: ChannelLogoMode, clipWants: Bool? = nil,
+                          defaults: UserDefaults = .standard) -> Bool {
+        switch mode {
+        case .essay:
+            // Знак в эссе не привязан к текстовому вотермарку: `watermarkFullVideoEnabled`
+            // включает именно текст, подменять им логотип нельзя.
+            return clipWants ?? (bool(essayKey, defaults: defaults) ?? true)
+        case .shorts:
+            return clipWants ?? (bool(shortsKey, defaults: defaults) ?? bool(legacyWatermarkKey, defaults: defaults) ?? true)
+        }
+    }
+
+    private static func bool(_ key: String, defaults: UserDefaults) -> Bool? {
+        guard defaults.object(forKey: key) != nil else { return nil }
+        return defaults.bool(forKey: key)
+    }
+}
+
+extension SinglePassClipCompositor {
+
+    /// Слой знака канала для шортса либо `nil` — тогда вызывающий ставит устаревший текстовый
+    /// вотермарк. О том, что места не нашлось, сообщает ровно одна строка `notice` (внутри
+    /// `SubtitleRenderer.shortChannelLogoBand`), без повторов на каждый кадр.
+    private func makeShortChannelLogoLayer(renderSize: CGSize, captionRects: [CGRect]) -> CALayer? {
+        guard ChannelLogoWatermarkSettings.isEnabled(for: .shorts) else { return nil }
+        guard ChannelLogo.isAvailable else { return nil }
+        let style = ChannelLogoStyle.shorts
+        guard let band = SubtitleRenderer.shortChannelLogoBand(
+            renderSize: renderSize,
+            captionRects: captionRects,
+            excludedRects: shortChannelLogoExclusions(renderSize: renderSize),
+            style: style
+        ) else { return nil }
+        return ChannelLogo.makeLayer(frame: band, renderSize: renderSize, opacity: style.opacity)
+    }
+
+    /// Чужие полосы в нижней зоне кадра, которые знак перекрывать не должен.
+    /// Все координаты — bottom-left origin, как у слоёв оверлея.
+    private func shortChannelLogoExclusions(renderSize: CGSize) -> [CGRect] {
+        let W = renderSize.width
+        let H = renderSize.height
+        var exclusions: [CGRect] = []
+
+        // Рельс действий платформы: только вертикальные 9:16 и 1:1 (у горизонтальных шортсов
+        // нижнего правого рельса нет). Доля, а не пиксели: размеры рендера различаются.
+        if W < H {
+            exclusions.append(CGRect(x: 0.84 * W, y: 0, width: 0.16 * W, height: 0.34 * H))
+        }
+        // Соперничество с устаревшим текстовым вотермарком решено выше по коду, а не геометрией:
+        // текст рисуется только тогда, когда знака нет (else-if), поэтому в одной полосе они
+        // не оказываются никогда.
+        return exclusions
     }
 }

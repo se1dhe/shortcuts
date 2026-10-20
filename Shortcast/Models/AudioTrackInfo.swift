@@ -104,4 +104,13 @@ struct AudioTrackInfo: Identifiable, Sendable, Equatable, Hashable {
         if t.contains("дубляж") || t.contains("dub") || t.contains("проф") || t.contains("рус") { return true }
         return false
     }
+
+    /// Whether this track is likely a Ukrainian dub or Ukrainian voiceover.
+    var isUkrainianVoiceover: Bool {
+        let lang = language?.lowercased() ?? ""
+        let t = title?.lowercased() ?? ""
+        if lang == "ukr" || lang == "uk" || lang == "українська" || lang == "український" { return true }
+        if t.contains("українськ") || t.contains("ukrainian") { return true }
+        return false
+    }
 }

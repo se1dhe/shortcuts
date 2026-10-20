@@ -169,6 +169,7 @@ enum ForeignSidecarReason: String, Codable, Sendable, Equatable, CaseIterable {
     case noIntegrityProof
     case segmentCountMismatch
     case emptySidecar
+    case languageMismatch
 }
 
 /// Verdict of the provenance gate — the pure seam `transcript(for:)` branches on
@@ -327,18 +328,20 @@ final class TranscriptionService {
     nonisolated static func sidecarDecision(
         for videoURL: URL,
         reader: SidecarFileReading = FileSystemSidecarReader(),
-        cachesDir: URL? = defaultCachesDir()
+        cachesDir: URL? = defaultCachesDir(),
+        requestedLanguage: String? = nil
     ) -> SidecarDecision {
         guard let sidecar = findSidecar(for: videoURL, reader: reader, cachesDir: cachesDir) else {
             return .noSidecar
         }
-        return sidecarDecision(forSidecar: sidecar, reader: reader)
+        return sidecarDecision(forSidecar: sidecar, reader: reader, requestedLanguage: requestedLanguage)
     }
 
     /// Same verdict for an already-resolved sidecar path.
     nonisolated static func sidecarDecision(
         forSidecar sidecar: URL,
-        reader: SidecarFileReading = FileSystemSidecarReader()
+        reader: SidecarFileReading = FileSystemSidecarReader(),
+        requestedLanguage: String? = nil
     ) -> SidecarDecision {
         let markerURL = sidecarMarkerURL(for: sidecar)
         guard reader.exists(markerURL) else {
@@ -352,6 +355,12 @@ final class TranscriptionService {
         }
         guard marker.provenance.isOurs else {
             return .foreign(url: sidecar, reason: .markerClaimsForeignProvenance)
+        }
+        // Language gate: if a specific language was requested, the sidecar must match.
+        if let requested = requestedLanguage?.lowercased().trimmed, !requested.isEmpty,
+           let sidecarLang = marker.language?.lowercased().trimmed, !sidecarLang.isEmpty,
+           requested != sidecarLang {
+            return .foreign(url: sidecar, reason: .languageMismatch)
         }
         guard let size = reader.size(of: sidecar) else {
             return .foreign(url: sidecar, reason: .sidecarUnreadable)
@@ -612,7 +621,7 @@ final class TranscriptionService {
 
     /// Maps a user language hint to a Whisper 2-letter code, or nil to auto-detect.
     /// Accepts codes ("es") and common names ("Spanish", "español").
-    static func languageCode(from hint: String) -> String? {
+    nonisolated static func languageCode(from hint: String) -> String? {
         let h = hint.trimmed.lowercased()
         guard !h.isEmpty else { return nil }
         let names: [String: String] = [
@@ -623,6 +632,8 @@ final class TranscriptionService {
             "german": "de", "alemán": "de", "aleman": "de", "deutsch": "de",
             "italian": "it", "italiano": "it",
             "catalan": "ca", "català": "ca",
+            "ukrainian": "uk", "ukr": "uk", "українська": "uk", "український": "uk",
+            "russian": "ru", "rus": "ru", "російська": "ru", "російський": "ru",
         ]
         if let mapped = names[h] { return mapped }
         if h.count == 2 { return h }     // already a code

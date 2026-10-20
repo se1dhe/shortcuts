@@ -32,6 +32,8 @@ enum MediaExtractorError: LocalizedError {
 /// audio out of a video container, so that is this type's job.
 enum MediaExtractor {
 
+    private static let logger = Logger(subsystem: "app.shortcast", category: "MediaExtractor")
+
     /// Containers such as Matroska are accepted by the picker, but AVFoundation
     /// cannot reliably decode every codec combination they contain. Normalize
     /// them before any AVFoundation or ML code sees the input.
@@ -588,49 +590,61 @@ enum MediaExtractor {
         return resultTracks
     }
 
-    /// Selects the most suitable audio track by default (prioritizing Russian dubs).
+    /// Selects the most suitable audio track by default (prioritizing Ukrainian dubs).
     static func pickRecommendedAudioTrack(from tracks: [AudioTrackInfo]) -> AudioTrackInfo? {
         guard !tracks.isEmpty else { return nil }
 
-        // 1. Priority to Russian Dubs (contains "дубляж", "dub", "проф")
+        // 1. Priority to Ukrainian language code (ukr/uk/українська)
+        for track in tracks {
+            let l = (track.language ?? "").lowercased()
+            if l == "ukr" || l == "uk" || l == "українська" || l == "український" {
+                logger.info("Обрано українську аудіодоріжку за мовним кодом: \(track.title ?? "без назви", privacy: .public) (\(l, privacy: .public))")
+                return track
+            }
+        }
+
+        // 2. Priority to Ukrainian title match
+        for track in tracks {
+            let t = (track.title ?? "").lowercased()
+            if t.contains("українськ") || t.contains("ukrainian") {
+                logger.info("Обрано українську аудіодоріжку за назвою: \(t, privacy: .public)")
+                return track
+            }
+        }
+
+        // 3. Priority to Russian Dubs (contains "дубляж", "dub", "проф") — legacy fallback
         for track in tracks {
             let t = (track.title ?? "").lowercased()
             if t.contains("дубляж") || t.contains("dub") || t.contains("dvd") || t.contains("проф") {
+                logger.warning("Українську доріжку не знайдено → використано «\(t, privacy: .public)» (російський дубляж)")
                 return track
             }
         }
 
-        // 2. Priority to 'rus' or 'ru' language track
+        // 4. Priority to 'rus' or 'ru' language track
         for track in tracks {
             let l = (track.language ?? "").lowercased()
             if l == "rus" || l == "ru" {
+                logger.warning("Українську доріжку не знайдено → використано мову \(l, privacy: .public)")
                 return track
             }
         }
 
-        // 3. Fallback to track flagged as Russian voiceover
+        // 5. Fallback to track flagged as Russian voiceover
         if let rus = tracks.first(where: { $0.isRussianVoiceover }) {
+            logger.warning("Українську доріжку не знайдено → використано російську озвучку")
             return rus
         }
 
-        // 4. Fallback to container default track
+        // 6. Fallback to container default track
         if let def = tracks.first(where: { $0.isDefault }) {
+            logger.warning("Українську доріжку не знайдено → використано дефолтну доріжку контейнера")
             return def
         }
 
-        // 5. First track
+        // 7. First track
+        logger.warning("Українську доріжку не знайдено → використано першу доступну доріжку")
         return tracks.first
-    }
-
-    private static func determineBestAudioTrack(
-        sourceURL: URL,
-        ffprobe: URL
-    ) async -> String {
-        let tracks = await inspectAudioTracks(sourceURL: sourceURL, ffprobe: ffprobe)
-        if let best = pickRecommendedAudioTrack(from: tracks) {
-            return "0:\(best.id)"
-        }
-        return "0:a:0?"
     }
 }
 

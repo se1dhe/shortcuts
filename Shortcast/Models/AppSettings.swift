@@ -4,12 +4,12 @@ import SwiftUI
 
 enum MovieShortsSearchDefaults {
     static let queryText = [
-        "нарезка из фильма дубляж",
-        "сцена из фильма русская озвучка",
-        "зарубежный фильм на русском нарезка",
-        "момент из сериала дубляж",
-        "нарезка сериал русская озвучка",
-        "movie clip русская озвучка",
+        "нарізка з фільму дубляж",
+        "сцена з фільму українська озвучка",
+        "зарубіжний фільм українською нарізка",
+        "момент з серіалу дубляж",
+        "нарізка серіал українська озвучка",
+        "movie clip українська озвучка",
     ].joined(separator: "\n")
 
     static var queries: [String] {
@@ -408,11 +408,11 @@ final class AppSettings {
         self.telegramChannelId = defaults.string(forKey: Keys.telegramChannelId) ?? "@telonyx_club"
         self.autoPostToTelegram = defaults.object(forKey: Keys.autoPostToTelegram) as? Bool ?? true
         self.profileName = defaults.string(forKey: Keys.profile) ?? ""
-        self.languageOverride = defaults.string(forKey: Keys.language) ?? ""
+        self.languageOverride = defaults.string(forKey: Keys.language) ?? "uk"
         self.styleExamples = defaults.string(forKey: Keys.style) ?? ""
         // Defaults to true on first launch (no stored value yet).
         self.tiktokAsDraft = defaults.object(forKey: Keys.tiktokDraft) as? Bool ?? true
-        // Default to Qwen 3.5 9B: hardware-accelerated Metal SDPA, top-tier Russian/multilingual
+        // Default to Qwen 3.5 9B: hardware-accelerated Metal SDPA, top-tier Ukrainian/multilingual
         // reasoning and structured JSON generation in a single pass (4x faster than Gemma 12B).
         let modelMigrated = defaults.bool(forKey: "shortcast.defaultModelGemma12BMigrated")
         if !modelMigrated {

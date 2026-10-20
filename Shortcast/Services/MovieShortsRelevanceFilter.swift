@@ -2,9 +2,9 @@ import Foundation
 
 /// Heuristic gate for the "Trending movie shorts" feed.
 ///
-/// The goal: keep only clips from **foreign** films/series that have a **Russian
-/// voiceover (dub)** — and drop Russian/Soviet productions and subtitle-only
-/// (undubbed) clips. YouTube's Data API exposes no "has Russian dub" field, so we
+/// The goal: keep only clips from **foreign** films/series that have a **Ukrainian
+/// or Russian voiceover (dub)** — and drop Russian/Soviet productions and subtitle-only
+/// (undubbed) clips. YouTube's Data API exposes no "has Ukrainian dub" field, so we
 /// score the title + description + channel text against marker lists. It's
 /// deliberately conservative and easy to tune: edit the arrays below.
 enum MovieShortsRelevanceFilter {
@@ -19,12 +19,12 @@ enum MovieShortsRelevanceFilter {
         }
 
         // 2. Hard-exclude subtitle-only / original-audio clips (not dubbed).
-        if containsAny(text, undubbedMarkers), !containsAny(text, russianDubMarkers) {
+        if containsAny(text, undubbedMarkers), !containsAny(text, ukrainianDubMarkers + russianDubMarkers) {
             return false
         }
 
-        // 3. Keep if there's an explicit Russian-dub / Russian-studio marker.
-        if containsAny(text, russianDubMarkers) {
+        // 3. Keep if there's an explicit Ukrainian-dub or Russian-dub marker.
+        if containsAny(text, ukrainianDubMarkers) || containsAny(text, russianDubMarkers) {
             return true
         }
 
@@ -41,6 +41,15 @@ enum MovieShortsRelevanceFilter {
     }
 
     // MARK: - Marker lists (lowercased, no leading '#')
+
+    /// Explicit "this has a Ukrainian dub" signals.
+    static let ukrainianDubMarkers: [String] = [
+        "дубляж", "дубльовано", "дубльований", "в дубляжі",
+        "озвучка", "озвучення", "озвучено", "українська озвучка", "укр озвучка",
+        "укр. озвучка", "українською", "український дубляж", "багатоголос", "багатоголосий",
+        "професійний переклад", "переклад і озвучка",
+        "дубльований трейлер", "український трейлер",
+    ]
 
     /// Explicit "this has a Russian dub" signals, incl. well-known RU dub studios.
     static let russianDubMarkers: [String] = [

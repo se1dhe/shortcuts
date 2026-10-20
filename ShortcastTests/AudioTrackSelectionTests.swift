@@ -25,6 +25,36 @@ final class AudioTrackSelectionTests: XCTestCase {
         XCTAssertEqual(chosen?.id, 0, "Should match Ukrainian by title when language code is missing")
     }
 
+    func testBladeRunner2049UkrainianTrackSelection() {
+        // Real audio tracks from Blade Runner 2049 (2017) WEB-DL 4K MKV
+        let tracks = [
+            AudioTrackInfo(
+                id: 1,
+                audioIndex: 0,
+                title: "Ukrainian | DTS | 5.1 | 768 kbps | DUB | LeDoyen",
+                language: "ukr",
+                codec: "dts",
+                channels: 6,
+                isDefault: false,
+                isForced: false
+            ),
+            AudioTrackInfo(
+                id: 2,
+                audioIndex: 1,
+                title: "English | E-AC-3 JOC | 5.1 | 640 kbps",
+                language: "eng",
+                codec: "eac3",
+                channels: 6,
+                isDefault: true,
+                isForced: false
+            )
+        ]
+        let chosen = MediaExtractor.pickRecommendedAudioTrack(from: tracks)
+        XCTAssertEqual(chosen?.id, 1, "Should select Ukrainian track over English default")
+        XCTAssertEqual(chosen?.language, "ukr")
+        XCTAssertTrue(chosen?.isUkrainianVoiceover == true, "Track should be recognized as Ukrainian voiceover")
+    }
+
     func testFallbackToRussianWhenNoUkrainian() {
         let tracks = [
             AudioTrackInfo(id: 0, audioIndex: 0, title: "DUB", language: "rus", codec: "ac3", channels: 2, isDefault: false, isForced: false),

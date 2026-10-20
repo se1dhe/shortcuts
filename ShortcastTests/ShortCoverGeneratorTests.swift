@@ -192,7 +192,7 @@ struct ShortCoverGeneratorTests {
         let image = try generator.composeCover(
             baseImage: makeLandscapeFrame(),
             hook: "Он понял это только спустя двадцать лет",
-            movieTitle: "Бегущий по лезвию 2049",
+            movieTitle: "Той, що біжить по лезу 2049",
             faceBox: CGRect(x: 0.55, y: 0.4, width: 0.16, height: 0.22),
             canvas: ShortCoverLayout.canvas
         )
@@ -306,7 +306,7 @@ struct ShortCoverGeneratorTests {
         let cover = await generator.generateCover(for: ShortCoverRequest(
             clipURL: missing,
             hook: "Хук",
-            movieTitle: "Фильм",
+            movieTitle: "Фільм",
             workingDirectory: FileManager.default.temporaryDirectory
         ))
         #expect(cover == nil)
@@ -325,11 +325,11 @@ struct ShortCoverGeneratorTests {
             trimStart: 10,
             trimEnd: 0,
             hook: "Хук",
-            movieTitle: "Фильм",
+            movieTitle: "Фільм",
             workingDirectory: working
         ))
         #expect(cover == nil)
         #expect(ShortCoverStore.existingCoverURL(
-            clipURL: clip, movieTitle: "Фильм", workingDirectory: working) == nil)
+            clipURL: clip, movieTitle: "Фільм", workingDirectory: working) == nil)
     }
 }

@@ -43,7 +43,7 @@ struct LongformThumbnailGeneratorTests {
         )
 
         let concept = ThematicConcept(
-            word: "ИЛЛЮЗИЯ",
+            word: "ІЛЮЗІЯ",
             tagline: "Твой главный враг — это ложь, которую ты сам себе рассказываешь",
             philosophicalPremise: "Самообман",
             suggestedTitle: "Иллюзия выбора",
@@ -74,7 +74,7 @@ struct LongformThumbnailGeneratorTests {
         )
 
         let concept = ThematicConcept(
-            word: "ПРЕДОПРЕДЕЛЕННОСТЬ", // Очень длинное слово
+            word: "ПЕРЕДВИЗНАЧЕНІСТЬ", // Очень длинное слово
             tagline: "Каждый шаг, который ты делаешь, пытаясь избежать своей судьбы, на самом деле лишь приближает тебя к неизбежному финалу", // Очень длинный тезис
             philosophicalPremise: "Рок и свобода воли",
             suggestedTitle: "Судьба",
@@ -84,7 +84,7 @@ struct LongformThumbnailGeneratorTests {
         let rendered = try composer.composeThumbnail(
             candidate: candidate,
             concept: concept,
-            movieTitle: "Бойцовский клуб"
+            movieTitle: "Бійцівський клуб"
         )
 
         #expect(rendered.width == 1920)
@@ -105,7 +105,7 @@ struct LongformThumbnailGeneratorTests {
         )
 
         let concept = ThematicConcept(
-            word: "ВРЕМЯ",
+            word: "ЧАС",
             tagline: "Оно не лечит, оно лишь стирает воспоминания",
             philosophicalPremise: "Необратимость",
             suggestedTitle: "Время",

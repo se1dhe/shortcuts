@@ -5,33 +5,33 @@ import Foundation
 private let validAnalysisJSON = """
 {
   "primaryConcept": {
-    "word": "Иллюзия",
-    "tagline": "Ты держишь руль, которого никогда не касался.",
-    "philosophicalPremise": "Свобода, которую ты не выбирал, всё равно тебя выбирает.",
-    "suggestedTitle": "Ты не у руля. Просто тебе так кажется.",
+    "word": "Ілюзія",
+    "tagline": "Ти тримаєш кермо, якого ніколи не торкався.",
+    "philosophicalPremise": "Свобода, яку ти не обирав, все одно тебе обирає.",
+    "suggestedTitle": "Ти не за кермом. Просто тобі так здається.",
     "accentColorHex": "#1C7FD8"
   },
-  "aiReasoning": "Каждый акт возвращает героя к одному и тому же самообману: он принимает наблюдение за своей жизнью за право ею управлять. Именно эта иллюзия, а не внешний враг, приводит его к финальному срыву.",
+  "aiReasoning": "Кожен акт повертає героя до того самого самообману: він приймає спостереження за своє життя за право ним керувати. Саме ця ілюзія, а не зовнішній ворог, приводить його до фінального зриву.",
   "alternativeConcepts": [
     {
-      "word": "Привычка",
-      "tagline": "Повторение заменяет решение.",
-      "philosophicalPremise": "То, что ты делаешь по привычке, делает тебя.",
-      "suggestedTitle": "Твой самый опасный выбор — тот, который ты не делал.",
+      "word": "Звичка",
+      "tagline": "Повторення замінює рішення.",
+      "philosophicalPremise": "Те, що ти робиш звичкою, робить тебе.",
+      "suggestedTitle": "Твій найнебезпечніший вибір — той, який ти не зробив.",
       "accentColorHex": "#E50914"
     },
     {
-      "word": "Память",
-      "tagline": "Ты помнишь только то, что выгодно тебе.",
-      "philosophicalPremise": "Прошлое — черновик, который ты переписываешь каждый день.",
-      "suggestedTitle": "Твоя память врёт тебе в пользу.",
+      "word": "Пам'ять",
+      "tagline": "Ти пам'ятаєш тільки те, що вигідно тобі.",
+      "philosophicalPremise": "Минуле — чернетка, яку ти переписуєш щодня.",
+      "suggestedTitle": "Твоя пам'ять бреше тобі на користь.",
       "accentColorHex": "#2BB673"
     },
     {
-      "word": "Стыд",
-      "tagline": "Чужой взгляд поселился у тебя в голове.",
-      "philosophicalPremise": "Стыд — это налог на чужое мнение.",
-      "suggestedTitle": "Ты платишь за то, чего никто не видел.",
+      "word": "Сором",
+      "tagline": "Чужий погляд поселився у тебе в голові.",
+      "philosophicalPremise": "Сором — це податок на чужу думку.",
+      "suggestedTitle": "Ти платиш за те, чого ніхто не бачив.",
       "accentColorHex": "#8A4FD1"
     }
   ]
@@ -56,36 +56,36 @@ struct ThematicParsingTests {
         let analysis = try #require(result)
         try expectFieldsFromModel(analysis)
 
-        #expect(analysis.primaryConcept.word == "Иллюзия")
-        #expect(analysis.primaryConcept.tagline == "Ты держишь руль, которого никогда не касался.")
-        #expect(analysis.primaryConcept.philosophicalPremise == "Свобода, которую ты не выбирал, всё равно тебя выбирает.")
-        #expect(analysis.primaryConcept.suggestedTitle == "Ты не у руля. Просто тебе так кажется.")
+        #expect(analysis.primaryConcept.word == "Ілюзія")
+        #expect(analysis.primaryConcept.tagline == "Ти тримаєш кермо, якого ніколи не торкався.")
+        #expect(analysis.primaryConcept.philosophicalPremise == "Свобода, яку ти не обирав, все одно тебе обирає.")
+        #expect(analysis.primaryConcept.suggestedTitle == "Ти не за кермом. Просто тобі так здається.")
         #expect(analysis.primaryConcept.accentColorHex == "#1C7FD8")
-        #expect(analysis.aiReasoning.contains("финальному срыву"))
+        #expect(analysis.aiReasoning.contains("фінального зриву"))
 
         let alts = analysis.alternativeConcepts
         #expect(alts.count == 3)
-        #expect(alts.map(\.word) == ["Привычка", "Память", "Стыд"])
+        #expect(alts.map(\.word) == ["Звичка", "Пам'ять", "Сором"])
         #expect(alts.map(\.tagline) == [
-            "Повторение заменяет решение.",
-            "Ты помнишь только то, что выгодно тебе.",
-            "Чужой взгляд поселился у тебя в голове."
+            "Повторення замінює рішення.",
+            "Ти пам'ятаєш тільки те, що вигідно тобі.",
+            "Чужий погляд поселився у тебе в голові."
         ])
         #expect(alts.map(\.philosophicalPremise) == [
-            "То, что ты делаешь по привычке, делает тебя.",
-            "Прошлое — черновик, который ты переписываешь каждый день.",
-            "Стыд — это налог на чужое мнение."
+            "Те, що ти робиш звичкою, робить тебе.",
+            "Минуле — чернетка, яку ти переписуєш щодня.",
+            "Сором — це податок на чужу думку."
         ])
         #expect(alts.map(\.suggestedTitle) == [
-            "Твой самый опасный выбор — тот, который ты не делал.",
-            "Твоя память врёт тебе в пользу.",
-            "Ты платишь за то, чего никто не видел."
+            "Твій найнебезпечніший вибір — той, який ти не зробив.",
+            "Твоя пам'ять бреше тобі на користь.",
+            "Ти платиш за те, чого ніхто не бачив."
         ])
         #expect(alts.map(\.accentColorHex) == ["#E50914", "#2BB673", "#8A4FD1"])
         #expect(alts.map(\.philosophicalPremise) != alts.map(\.tagline))
         #expect(alts.allSatisfy { $0.isPrimaryChoice == false })
         #expect(analysis.allConcepts.count == 4)
-        #expect(analysis.allConcepts.first?.word == "Иллюзия")
+        #expect(analysis.allConcepts.first?.word == "Ілюзія")
     }
 
     @Test("JSON fenced in ```json with prose before and after still parses")
@@ -100,8 +100,8 @@ struct ThematicParsingTests {
 
         let analysis = try #require(LongformThematicService.parseThematicAnalysis(from: modelReply))
         try expectFieldsFromModel(analysis)
-        #expect(analysis.primaryConcept.word == "Иллюзия")
-        #expect(analysis.primaryConcept.suggestedTitle == "Ты не у руля. Просто тебе так кажется.")
+        #expect(analysis.primaryConcept.word == "Ілюзія")
+        #expect(analysis.primaryConcept.suggestedTitle == "Ти не за кермом. Просто тобі так здається.")
         #expect(analysis.alternativeConcepts.count == 3)
     }
 
@@ -122,7 +122,7 @@ struct ThematicParsingTests {
 
         let analysis = try #require(LongformThematicService.parseThematicAnalysis(from: modelReply))
         try expectFieldsFromModel(analysis)
-        #expect(analysis.primaryConcept.word == "Иллюзия")
+        #expect(analysis.primaryConcept.word == "Ілюзія")
         #expect(analysis.allConcepts.count == 4)
     }
 
@@ -131,7 +131,7 @@ struct ThematicParsingTests {
         let drifted = """
         {
           "primaryConcept": {,
-            "word": "Иллюзия",
+            "word": "Ілюзія",
             "tagline": "Ты держишь руль, которого никогда не касался.",
             "philosophicalPremise": "Свобода, которую ты не выбирал, всё равно тебя выбирает.",
             "suggestedTitle": "Ты не у руля. Просто тебе так кажется.",
@@ -140,14 +140,14 @@ struct ThematicParsingTests {
           "aiReasoning": "Каждый акт возвращает героя к одному и тому же самообману.",,
           "alternativeConcepts": [
             {
-              "word": "Привычка",
+              "word": "Звичка",
               "tagline": "Повторение заменяет решение.",
               "philosophicalPremise": "То, что ты делаешь по привычке, делает тебя.",
               "suggestedTitle": "Твой самый опасный выбор — тот, который ты не делал.",
               "accentColorHex": "#E50914",
             },
             {
-              "word": "Память",
+              "word": "Пам'ять",
               "tagline": "Ты помнишь только то, что выгодно тебе.",
               "philosophicalPremise": "Прошлое — черновик, который ты переписываешь каждый день.",
               "suggestedTitle": "Твоя память врёт тебе в пользу.",
@@ -159,10 +159,10 @@ struct ThematicParsingTests {
 
         let analysis = try #require(LongformThematicService.parseThematicAnalysis(from: drifted))
         try expectFieldsFromModel(analysis)
-        #expect(analysis.primaryConcept.word == "Иллюзия")
+        #expect(analysis.primaryConcept.word == "Ілюзія")
         #expect(analysis.primaryConcept.accentColorHex == "#1C7FD8")
         #expect(analysis.aiReasoning == "Каждый акт возвращает героя к одному и тому же самообману.")
-        #expect(analysis.alternativeConcepts.map(\.word) == ["Привычка", "Память"])
+        #expect(analysis.alternativeConcepts.map(\.word) == ["Звичка", "Пам'ять"])
     }
 
     @Test("a key missing its opening quote is repaired in a top-level array reply")
@@ -170,17 +170,17 @@ struct ThematicParsingTests {
         let drifted = """
         [
           {
-            word": "Иллюзия",
-            "tagline": "Ты держишь руль, которого никогда не касался.",
-            "philosophicalPremise": "Свобода, которую ты не выбирал, всё равно тебя выбирает.",
-            "suggestedTitle": "Ты не у руля. Просто тебе так кажется.",,
+            word": "Ілюзія",
+            "tagline": "Ти тримаєш кермо, якого ніколи не торкався.",
+            "philosophicalPremise": "Свобода, яку ти не обирав, все одно тебе обирає.",
+            "suggestedTitle": "Ти не за кермом. Просто тобі так здається.",,
             "accentColorHex": "#1C7FD8",,
           },,
           {
-            "word": "Привычка",
-            "tagline": "Повторение заменяет решение.",
-            "philosophicalPremise": "То, что ты делаешь по привычке, делает тебя.",
-            "suggestedTitle": "Твой самый опасный выбор — тот, который ты не делал.",
+            "word": "Звичка",
+            "tagline": "Повторення замінює рішення.",
+            "philosophicalPremise": "Те, що ти робиш звичкою, робить тебе.",
+            "suggestedTitle": "Твій найнебезпечніший вибір — той, який ти не зробив.",
             "accentColorHex": "#E50914"
           },
         ]
@@ -188,9 +188,9 @@ struct ThematicParsingTests {
 
         let analysis = try #require(LongformThematicService.parseThematicAnalysis(from: drifted))
         try expectFieldsFromModel(analysis)
-        #expect(analysis.primaryConcept.word == "Иллюзия")
-        #expect(analysis.primaryConcept.suggestedTitle == "Ты не у руля. Просто тебе так кажется.")
-        #expect(analysis.alternativeConcepts.map(\.word) == ["Привычка"])
+        #expect(analysis.primaryConcept.word == "Ілюзія")
+        #expect(analysis.primaryConcept.suggestedTitle == "Ти не за кермом. Просто тобі так здається.")
+        #expect(analysis.alternativeConcepts.map(\.word) == ["Звичка"])
     }
 
     @Test("an unquoted key inside an object desyncs the brace scanner: honest nil")
@@ -201,7 +201,7 @@ struct ThematicParsingTests {
         let drifted = """
         {
           "primaryConcept": {
-            word": "Иллюзия",
+            word": "Ілюзія",
             "tagline": "Ты держишь руль, которого никогда не касался.",
             "philosophicalPremise": "Свобода, которую ты не выбирал, всё равно тебя выбирает.",
             "suggestedTitle": "Ты не у руля. Просто тебе так кажется.",
@@ -218,7 +218,7 @@ struct ThematicParsingTests {
         let cutMidReasoning = """
         {
           "primaryConcept": {
-            "word": "Иллюзия",
+            "word": "Ілюзія",
             "tagline": "Ты держишь руль, которого никогда не касался.",
             "philosophicalPremise": "Свобода, которую ты не выбирал, всё равно тебя выбирает.",
             "suggestedTitle": "Ты не у руля. Просто тебе так кажется.",
@@ -231,14 +231,14 @@ struct ThematicParsingTests {
         let cutMidArray = """
         {
           "primaryConcept": {
-            "word": "Иллюзия",
+            "word": "Ілюзія",
             "tagline": "Ты держишь руль, которого никогда не касался.",
             "suggestedTitle": "Ты не у руля.",
             "accentColorHex": "#1C7FD8"
           },
           "aiReasoning": "Каждый акт возвращает героя к самообману.",
           "alternativeConcepts": [
-            {"word": "Привычка", "tagline": "Повторение заменяет
+            {"word": "Звичка", "tagline": "Повторение заменяет
         """
         #expect(LongformThematicService.parseThematicAnalysis(from: cutMidArray) == nil)
     }
@@ -248,7 +248,7 @@ struct ThematicParsingTests {
         let missing = """
         {
           "primaryConcept": {
-            "word": "Иллюзия",
+            "word": "Ілюзія",
             "tagline": "Ты держишь руль, которого никогда не касался.",
             "philosophicalPremise": "Свобода, которую ты не выбирал, всё равно тебя выбирает.",
             "accentColorHex": "#1C7FD8"
@@ -261,7 +261,7 @@ struct ThematicParsingTests {
         let blank = """
         {
           "primaryConcept": {
-            "word": "Иллюзия",
+            "word": "Ілюзія",
             "tagline": "Ты держишь руль, которого никогда не касался.",
             "philosophicalPremise": "Свобода, которую ты не выбирал, всё равно тебя выбирает.",
             "suggestedTitle": "   ",
@@ -278,7 +278,7 @@ struct ThematicParsingTests {
         let withoutReasoning = """
         {
           "primaryConcept": {
-            "word": "Иллюзия",
+            "word": "Ілюзія",
             "tagline": "Ты держишь руль, которого никогда не касался.",
             "philosophicalPremise": "Свобода, которую ты не выбирал, всё равно тебя выбирает.",
             "suggestedTitle": "Ты не у руля. Просто тебе так кажется."
@@ -290,7 +290,7 @@ struct ThematicParsingTests {
         let blankReasoning = """
         {
           "primaryConcept": {
-            "word": "Иллюзия",
+            "word": "Ілюзія",
             "tagline": "Ты держишь руль, которого никогда не касался.",
             "suggestedTitle": "Ты не у руля."
           },
@@ -305,20 +305,20 @@ struct ThematicParsingTests {
         let legacy = """
         [
           {
-            "word": "Иллюзия",
+            "word": "Ілюзія",
             "tagline": "Ты держишь руль, которого никогда не касался.",
             "philosophicalPremise": "Свобода, которую ты не выбирал, всё равно тебя выбирает.",
             "suggestedTitle": "Ты не у руля. Просто тебе так кажется.",
             "accentColorHex": "#1C7FD8"
           },
           {
-            "word": "Привычка",
+            "word": "Звичка",
             "tagline": "Повторение заменяет решение.",
             "philosophicalPremise": "То, что ты делаешь по привычке, делает тебя.",
             "suggestedTitle": "Твой самый опасный выбор — тот, который ты не делал."
           },
           {
-            "word": "Память",
+            "word": "Пам'ять",
             "tagline": "Ты помнишь только то, что выгодно тебе.",
             "philosophicalPremise": "Прошлое — черновик, который ты переписываешь каждый день.",
             "suggestedTitle": "Твоя память врёт тебе в пользу."
@@ -328,8 +328,8 @@ struct ThematicParsingTests {
 
         let analysis = try #require(LongformThematicService.parseThematicAnalysis(from: legacy))
         try expectFieldsFromModel(analysis)
-        #expect(analysis.primaryConcept.word == "Иллюзия")
-        #expect(analysis.alternativeConcepts.map(\.word) == ["Привычка", "Память"])
+        #expect(analysis.primaryConcept.word == "Ілюзія")
+        #expect(analysis.alternativeConcepts.map(\.word) == ["Звичка", "Пам'ять"])
         #expect(analysis.aiReasoning == "Свобода, которую ты не выбирал, всё равно тебя выбирает.")
         #expect(analysis.allConcepts.count == 3)
     }

@@ -51,7 +51,7 @@ struct ChannelLogoWatermarkTests {
 
     @Test("полный размер знака остаётся при одной и при трёх строках субтитров")
     func testFullSizeAtOneAndThreeLineCaptions() throws {
-        let y = conceptY("ТЕРПЕНИЕ", renderSize: essay)
+        let y = conceptY("ТЕРПІННЯ", renderSize: essay)
         let nominal = style.sizeFraction * essay.height
         for lines in [1, 3] {
             let rect = try #require(LongformSubtitleRenderer.essayLogoBand(
@@ -64,7 +64,7 @@ struct ChannelLogoWatermarkTests {
 
     @Test("четыре строки + летбокс: знак ужимается, но не ниже пола 0.06·H")
     func testShrinkAtFourLines() throws {
-        let y = conceptY("ТЕРПЕНИЕ", renderSize: essay)
+        let y = conceptY("ТЕРПІННЯ", renderSize: essay)
         let bottomBar = 0.135 * essay.height // реальный летбокс 16:9-исходника в 9:16-монтаже
         let rect = try #require(LongformSubtitleRenderer.essayLogoBand(
             renderSize: essay, conceptY: y, lines: 4, bottomBarHeight: bottomBar, style: style
@@ -84,7 +84,7 @@ struct ChannelLogoWatermarkTests {
         #expect(ChannelLogoPlacement.essay(
             renderSize: essay, subtitleBottom: 95, bottomBarHeight: 0, style: style
         ) == nil)
-        let y = conceptY("ТЕРПЕНИЕ", renderSize: essay)
+        let y = conceptY("ТЕРПІННЯ", renderSize: essay)
         #expect(LongformSubtitleRenderer.essayLogoBand(
             renderSize: essay, conceptY: y, lines: 5, bottomBarHeight: 0.135 * essay.height, style: style
         ) == nil, "пять строк + летбокс: места нет — не рисуем ничего")
@@ -104,7 +104,7 @@ struct ChannelLogoWatermarkTests {
 
     @Test("знак никогда не накрывает карточку акта на H*0.77")
     func testNeverCoversActCard() throws {
-        let y = conceptY("ПАМЯТЬ", renderSize: essay)
+        let y = conceptY("ПАМ'ЯТЬ", renderSize: essay)
         let actCard = LongformSubtitleRenderer.actCardRect(renderSize: essay)
         let bars: [CGFloat] = [0, 0.06 * essay.height, 0.135 * essay.height]
         for lines in [1, 2, 3, 4, 5] {
@@ -220,7 +220,7 @@ struct ChannelLogoWatermarkTests {
         }
         let renderer = LongformSubtitleRenderer()
         let concept = ThematicConcept(
-            word: "ТЕРПЕНИЕ",
+            word: "ТЕРПІННЯ",
             tagline: "Ты держишь руль, которого никогда не касался.",
             philosophicalPremise: "Свобода, которую ты не выбирал, всё равно тебя выбирает.",
             suggestedTitle: "Ты не у руля",

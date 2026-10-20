@@ -13,13 +13,13 @@ struct ThematicConceptTests {
     @Test("a hand built concept carries no provenance until someone records it")
     func testConceptDefaultsToUnknownSource() {
         let concept = ThematicConcept(
-            word: "ИЛЛЮЗИЯ",
+            word: "ІЛЮЗІЯ",
             tagline: "Ты держишь руль, которого никогда не касался.",
             philosophicalPremise: "Свобода, которую ты не выбирал, всё равно тебя выбирает.",
             suggestedTitle: "Ты не у руля. Просто тебе так кажется."
         )
 
-        #expect(concept.word == "ИЛЛЮЗИЯ")
+        #expect(concept.word == "ІЛЮЗІЯ")
         #expect(concept.isPrimaryChoice == false)
         #expect(concept.aiReasoning == nil)
         #expect(concept.accentColorHex == "#F5D020")
@@ -40,7 +40,7 @@ struct ThematicConceptTests {
     @Test("an analysis result passes its llm provenance to a primary concept built without one")
     func testAnalysisInitBackfillsLLMSourceOntoPrimaryConcept() {
         let primary = ThematicConcept(
-            word: "ИЛЛЮЗИЯ",
+            word: "ІЛЮЗІЯ",
             tagline: "Ты держишь руль, которого никогда не касался.",
             philosophicalPremise: "Свобода, которую ты не выбирал, всё равно тебя выбирает.",
             suggestedTitle: "Ты не у руля. Просто тебе так кажется."
@@ -64,7 +64,7 @@ struct ThematicConceptTests {
     @Test("a concept that already records its own provenance keeps it")
     func testAnalysisInitDoesNotOverrideExplicitConceptSource() {
         let curated = ThematicConcept(
-            word: "ИЛЛЮЗИЯ",
+            word: "ІЛЮЗІЯ",
             tagline: "Ты держишь руль, которого никогда не касался.",
             philosophicalPremise: "Свобода, которую ты не выбирал, всё равно тебя выбирает.",
             suggestedTitle: "Ты не у руля. Просто тебе так кажется.",
@@ -93,7 +93,7 @@ struct ThematicConceptTests {
     func testLLMProvenanceSurvivesRoundTrip() throws {
         let analysis = ThematicAnalysisResult(
             primaryConcept: ThematicConcept(
-                word: "ИЛЛЮЗИЯ",
+                word: "ІЛЮЗІЯ",
                 tagline: "Ты держишь руль, которого никогда не касался.",
                 philosophicalPremise: "Свобода, которую ты не выбирал, всё равно тебя выбирает.",
                 suggestedTitle: "Ты не у руля. Просто тебе так кажется.",
@@ -133,7 +133,7 @@ struct ThematicConceptTests {
     @Test("a manually written theme round trips as manual")
     func testManualProvenanceRoundTrips() throws {
         let concept = ThematicConcept(
-            word: "ДОЛГ",
+            word: "БОРГ",
             tagline: "Выбор, который ты не делал, но от которого не отвертишься.",
             philosophicalPremise: "Свобода без ответственности — это просто малодушие.",
             suggestedTitle: "Ты думаешь, что выбрал. Тебя выбрали.",
@@ -153,7 +153,7 @@ struct ThematicConceptTests {
     func testLegacyDecodingWithoutSourceKey() throws {
         let legacyConcept = """
         {
-          "word": "ДОЛГ",
+          "word": "БОРГ",
           "tagline": "Выбор, который ты не делал, но от которого не отвертишься.",
           "philosophicalPremise": "Свобода без ответственности — это просто малодушие.",
           "suggestedTitle": "Ты думаешь, что выбрал. Тебя выбрали."
@@ -187,7 +187,7 @@ struct ThematicConceptTests {
         let json = """
         {
           "primaryConcept": {
-            "word": "ДОЛГ",
+            "word": "БОРГ",
             "tagline": "Выбор, который ты не делал, но от которого не отвертишься.",
             "philosophicalPremise": "Свобода без ответственности — это просто малодушие.",
             "suggestedTitle": "Ты думаешь, что выбрал. Тебя выбрали."
@@ -208,7 +208,7 @@ struct ThematicConceptTests {
         let json = """
         {
           "primaryConcept": {
-            "word": "Иллюзия",
+            "word": "Ілюзія",
             "tagline": "Ты держишь руль, которого никогда не касался.",
             "philosophicalPremise": "Свобода, которую ты не выбирал, всё равно тебя выбирает.",
             "suggestedTitle": "Ты не у руля. Просто тебе так кажется.",
@@ -232,7 +232,7 @@ struct ThematicConceptTests {
 
         #expect(restored == parsed)
         #expect(restored.source == .llm)
-        #expect(restored.primaryConcept.word == "Иллюзия")
+        #expect(restored.primaryConcept.word == "Ілюзія")
         #expect(restored.alternativeConcepts.first?.accentColorHex == "#E50914")
     }
 }

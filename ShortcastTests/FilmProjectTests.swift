@@ -9,7 +9,7 @@ struct FilmProjectTests {
     func testSerialization() throws {
         let testURL = URL(fileURLWithPath: "/tmp/interstellar.mp4")
         let concept = ThematicConcept(
-            word: "ТЕРПЕНИЕ",
+            word: "ТЕРПІННЯ",
             tagline: "Испытание расстоянием и временем",
             philosophicalPremise: "Идеально раскрывает лейтмотив Купера через жертву временем",
             suggestedTitle: "Почему время — самое безжалостное измерение",
@@ -46,7 +46,7 @@ struct FilmProjectTests {
         #expect(restored.movieTitle == "Интерстеллар")
         #expect(restored.movieYear == "2014")
         #expect(restored.discoveredConcepts.count == 1)
-        #expect(restored.discoveredConcepts.first?.word == "ТЕРПЕНИЕ")
+        #expect(restored.discoveredConcepts.first?.word == "ТЕРПІННЯ")
         #expect(restored.candidates.count == 1)
         #expect(restored.candidates.first?.hook == "Он понял это только спустя 20 лет...")
     }
@@ -122,9 +122,9 @@ struct FilmProjectTests {
     }
 
     private func renderResult() -> LongformBuildResult {
-        let essayConcept = concept("СУБЪЕКТИВНОСТЬ", reasoning: "Герой путает наблюдение с участием.")
+        let essayConcept = concept("СУБ'ЄКТИВНІСТЬ", reasoning: "Герой путает наблюдение с участием.")
         let arc = LongformNarrativeArc(
-            movieTitle: "Субъективность",
+            movieTitle: "Суб'єктивність",
             concept: essayConcept,
             acts: [
                 LongformAct(type: .hook, title: "Хук и Тезис", dramaticBeat: "Тезис", segments: [TimeSegment(start: 0, end: 12.5)]),
@@ -138,7 +138,7 @@ struct FilmProjectTests {
             metadata: LongformYouTubeMetadata(
                 title: "Ты наблюдаешь — и уже участвуешь",
                 description: "Эссе о субъективности.",
-                tags: ["кино-эссе", "субъективность"],
+                tags: ["кино-эссе", "суб'єктивність"],
                 pinnedComment: "А ты заметил, что выбираешь кадр, а не сюжет?"
             ),
             duration: 193.6,
@@ -163,7 +163,7 @@ struct FilmProjectTests {
         let project = FilmProject(
             sourceMovieURL: movieURL,
             movieFileName: "subjektivnost",
-            movieTitle: "Субъективность",
+            movieTitle: "Суб'єктивність",
             durationSeconds: 6000,
             thematicAnalysis: analysis,
             selectedConcept: result.arc.concept,
@@ -194,7 +194,7 @@ struct FilmProjectTests {
         let project = FilmProject(
             sourceMovieURL: movieURL,
             movieFileName: "subjektivnost",
-            movieTitle: "Субъективность",
+            movieTitle: "Суб'єктивність",
             durationSeconds: 6000
         )
         try await service.saveProject(project)
@@ -224,7 +224,7 @@ struct FilmProjectTests {
           "id": "ED083F8F-DDA9-47B6-B701-ACF61C7D675D",
           "sourceMovieURL": "file:///movies/subjektivnost.mp4",
           "movieFileName": "subjektivnost",
-          "movieTitle": "Субъективность",
+          "movieTitle": "Суб'єктивність",
           "durationSeconds": 6000,
           "candidates": [],
           "createdAt": "2026-10-05T10:00:00Z",
@@ -232,7 +232,7 @@ struct FilmProjectTests {
         }
         """
         let legacy = try decoder.decode(FilmProject.self, from: Data(withoutScenes.utf8))
-        #expect(legacy.movieTitle == "Субъективность")
+        #expect(legacy.movieTitle == "Суб'єктивність")
         #expect(legacy.scenes.isEmpty)
         #expect(legacy.decodeDamage.isEmpty)
 
@@ -241,7 +241,7 @@ struct FilmProjectTests {
           "id": "ED083F8F-DDA9-47B6-B701-ACF61C7D675D",
           "sourceMovieURL": "file:///movies/subjektivnost.mp4",
           "movieFileName": "subjektivnost",
-          "movieTitle": "Субъективность",
+          "movieTitle": "Суб'єктивність",
           "durationSeconds": 6000,
           "scenes": "здесь должен был быть массив сцен",
           "candidates": [],
@@ -251,7 +251,7 @@ struct FilmProjectTests {
         """
         let damaged = try decoder.decode(FilmProject.self, from: Data(brokenScenes.utf8))
         #expect(damaged.scenes.isEmpty)
-        #expect(damaged.movieTitle == "Субъективность")
+        #expect(damaged.movieTitle == "Суб'єктивність")
         #expect(damaged.decodeDamage == ["scenes"])
     }
 
@@ -265,7 +265,7 @@ struct FilmProjectTests {
         let good = FilmProject(
             sourceMovieURL: movieURL,
             movieFileName: "subjektivnost",
-            movieTitle: "Субъективность",
+            movieTitle: "Суб'єктивність",
             durationSeconds: 6000
         )
         try await service.saveProject(good)
@@ -341,7 +341,7 @@ struct FilmProjectTests {
           "id": "\(brokenID.uuidString)",
           "sourceMovieURL": "file:///movies/subjektivnost.mp4",
           "movieFileName": "subjektivnost",
-          "movieTitle": "Субъективность",
+          "movieTitle": "Суб'єктивність",
           "durationSeconds": "не число",
           "scenes": [],
           "candidates": [],
@@ -371,14 +371,14 @@ struct FilmProjectTests {
         let seed = FilmProject(
             sourceMovieURL: movieURL,
             movieFileName: "subjektivnost",
-            movieTitle: "Субъективность",
+            movieTitle: "Суб'єктивність",
             durationSeconds: 6000
         )
         try await service.saveProject(seed)
 
         // Генерация A — разбор, который лежит в архиве.
         let analysisA = ThematicAnalysisResult(
-            primaryConcept: concept("ИЛЛЮЗИЯ", reasoning: "Разбор A: наблюдатель соучастник."),
+            primaryConcept: concept("Ілюзія", reasoning: "Разбор A: наблюдатель соучастник."),
             aiReasoning: "Разбор A: наблюдатель соучастник.",
             alternativeConcepts: [concept("ПАМЯТЬ", reasoning: "Разбор A: память переписывает выбор.")],
             source: .llm
@@ -421,7 +421,7 @@ struct FilmProjectTests {
     func testStartOverClearsEssayState() {
         let workspace = WorkspaceModel(filmProjectService: FilmProjectService(storageDirectory: tempStorage()))
         let analysis = ThematicAnalysisResult(
-            primaryConcept: concept("ИЛЛЮЗИЯ", reasoning: "Разбор A."),
+            primaryConcept: concept("Ілюзія", reasoning: "Разбор A."),
             aiReasoning: "Разбор A.",
             source: .llm
         )
@@ -429,13 +429,13 @@ struct FilmProjectTests {
         workspace.selectedConcept = analysis.primaryConcept
         workspace.longformResult = renderResult()
         workspace.stagedConcept = analysis.primaryConcept
-        workspace.stagedConfirmedMovieTitle = "Субъективность"
+        workspace.stagedConfirmedMovieTitle = "Суб'єктивність"
         workspace.stagedAudioSettings = LongformAudioSettings()
         workspace.stagedArc = renderResult().arc
         workspace.currentProject = FilmProject(
             sourceMovieURL: URL(fileURLWithPath: "/movies/subjektivnost.mp4"),
             movieFileName: "subjektivnost",
-            movieTitle: "Субъективность"
+            movieTitle: "Суб'єктивність"
         )
 
         workspace.startOver()
@@ -480,7 +480,7 @@ struct FilmProjectTests {
         workspace.currentProject = FilmProject(
             sourceMovieURL: movieURL,
             movieFileName: "subjektivnost",
-            movieTitle: "Субъективность",
+            movieTitle: "Суб'єктивність",
             durationSeconds: 6000
         )
 

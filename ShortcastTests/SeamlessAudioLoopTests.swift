@@ -138,7 +138,7 @@ private func makeLoudnessRender(size: Int = 4_096) throws -> (directory: URL, vi
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("ShortcastLoudnessTests-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    let videoURL = directory.appendingPathComponent("longform_субъективность_262965.mp4")
+    let videoURL = directory.appendingPathComponent("longform_суб'єктивність_262965.mp4")
     try Data(count: size).write(to: videoURL)
     return (directory, videoURL)
 }

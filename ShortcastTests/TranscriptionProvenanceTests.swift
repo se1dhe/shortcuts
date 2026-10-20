@@ -58,7 +58,7 @@ struct TranscriptionProvenanceTests {
     }
 
     /// A stand-in for the 9.8 GB film: the gate never opens it.
-    private func makeVideo(in dir: URL, named name: String = "Бегущий_по_лезвию_2049_Blade_Runner_2049.mkv") throws -> URL {
+    private func makeVideo(in dir: URL, named name: String = "Той_що_біжить_по_лезу_2049_Blade_Runner_2049.mkv") throws -> URL {
         let video = dir.appendingPathComponent(name)
         try Data([0x00]).write(to: video)
         return video
@@ -540,7 +540,7 @@ struct TranscriptionProvenanceTests {
           "id": "ED083F8F-DDA9-47B6-B701-ACF61C7D675D",
           "sourceMovieURL": "file:///Users/tester/Movies/blade_runner_2049.mkv",
           "movieFileName": "blade_runner_2049.mkv",
-          "movieTitle": "Бегущий по лезвию 2049",
+          "movieTitle": "Той, що біжить по лезу 2049",
           "durationSeconds": 10140.0,
           "createdAt": "2026-02-01T12:00:00Z",
           "updatedAt": "2026-02-01T12:00:00Z",
@@ -550,7 +550,7 @@ struct TranscriptionProvenanceTests {
         let project = try decoder.decode(FilmProject.self, from: Data(legacyProjectJSON.utf8))
         #expect(project.transcript?.provenance == .foreign)
         #expect(project.transcript?.segments.count == 2)
-        #expect(project.movieTitle == "Бегущий по лезвию 2049")
+        #expect(project.movieTitle == "Той, що біжить по лезу 2049")
     }
 
     @Test("declared provenance survives an encode/decode round trip")

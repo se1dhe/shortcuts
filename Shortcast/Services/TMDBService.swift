@@ -59,7 +59,7 @@ struct TMDBService {
         guard !apiKey.trimmed.isEmpty else { throw TMDBError.noAPIKey }
         var items = [
             URLQueryItem(name: "query", value: title.trimmed),
-            URLQueryItem(name: "language", value: "ru-RU"),
+            URLQueryItem(name: "language", value: "uk-UA"),
             URLQueryItem(name: "page", value: "1"),
         ]
         if let year = year?.trimmed, !year.isEmpty {
@@ -126,7 +126,7 @@ struct TMDBService {
     }
 
     private func resolveCast(movieId: Int) async -> [String] {
-        guard let request = buildRequest(path: "/movie/\(movieId)/credits", queryItems: [URLQueryItem(name: "language", value: "ru-RU")]) else { return [] }
+        guard let request = buildRequest(path: "/movie/\(movieId)/credits", queryItems: [URLQueryItem(name: "language", value: "uk-UA")]) else { return [] }
         guard let (data, _) = try? await URLSession.shared.data(for: request),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let castArray = json["cast"] as? [[String: Any]] else {
@@ -136,7 +136,7 @@ struct TMDBService {
     }
 
     private func resolveDirector(movieId: Int) async -> String? {
-        guard let request = buildRequest(path: "/movie/\(movieId)/credits", queryItems: [URLQueryItem(name: "language", value: "ru-RU")]) else { return nil }
+        guard let request = buildRequest(path: "/movie/\(movieId)/credits", queryItems: [URLQueryItem(name: "language", value: "uk-UA")]) else { return nil }
         guard let (data, _) = try? await URLSession.shared.data(for: request),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let crewArray = json["crew"] as? [[String: Any]] else {
@@ -146,7 +146,7 @@ struct TMDBService {
     }
 
     private func resolveGenreMap() async -> [Int: String] {
-        guard let request = buildRequest(path: "/genre/movie/list", queryItems: [URLQueryItem(name: "language", value: "ru-RU")]) else { return [:] }
+        guard let request = buildRequest(path: "/genre/movie/list", queryItems: [URLQueryItem(name: "language", value: "uk-UA")]) else { return [:] }
         guard let (data, _) = try? await URLSession.shared.data(for: request),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let all = json["genres"] as? [[String: Any]] else {

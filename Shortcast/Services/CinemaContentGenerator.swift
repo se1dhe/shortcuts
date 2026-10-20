@@ -159,7 +159,7 @@ enum CinemaContentGenerator {
         if replaceHook {
             let channel = settings?.telegramChannelId.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !channel.isEmpty {
-                clip.overlayText = "🍿 Название в Telegram: \(channel)"
+                clip.overlayText = "🍿 Назва в Telegram: \(channel)"
             }
         }
 
@@ -269,12 +269,12 @@ enum CinemaContentGenerator {
 
     /// Words that describe the clip, not the film — stripped from title guesses.
     private static let titleStopwords: Set<String> = [
-        "нарезка", "нарезки", "нарезкой", "дубляж", "дубляже", "дубляжом",
-        "озвучка", "озвучке", "озвучкой", "озвучка.", "сцена", "сцены", "сцену",
-        "момент", "моменты", "моментов", "фильм", "фильма", "фильмы", "фильме",
-        "сериал", "сериала", "сериалы", "кино", "смотреть", "онлайн", "трейлер",
-        "обзор", "часть", "серия", "сезон", "полностью", "полный", "лучшие",
-        "лучший", "топ", "из", "по",
+        "нарізка", "нарізки", "нарізкою", "дубляж", "дубляжі", "дубляжем",
+        "озвучка", "озвучці", "озвучкою", "озвучка.", "сцена", "сцени", "сцену",
+        "момент", "моменти", "моментів", "фільм", "фільму", "фільми", "фільмі",
+        "серіал", "серіалу", "серіали", "кіно", "дивитися", "онлайн", "трейлер",
+        "огляд", "частина", "серія", "сезон", "повністю", "повний", "найкращі",
+        "найкращий", "топ", "з", "по",
         "movie", "clip", "clips", "scene", "scenes", "moment", "moments", "best",
         "trailer", "full", "hd", "4k", "shorts", "short", "edit", "recap",
     ]
@@ -301,7 +301,7 @@ enum CinemaContentGenerator {
                                   options: .regularExpression)
         let base = withoutID
             .replacingOccurrences(of: #"#\S+"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"(?i)\b(shorts?|movie clips?|фильм|кино|нарезка|сцена|сцены)\b"#,
+            .replacingOccurrences(of: #"(?i)\b(shorts?|movie clips?|фільм|кіно|нарізка|сцена|сцени)\b"#,
                                   with: " ",
                                   options: .regularExpression)
             .replacingOccurrences(of: #"\([^)]+\)"#, with: "", options: .regularExpression)
@@ -326,7 +326,7 @@ enum CinemaContentGenerator {
         var queries: [MovieSearchQuery] = []
 
         // 1. Explicit keyword prefix: "Название фильма:", "Фильм:", "Movie:", "🎬Название фильма:", etc.
-        let prefixPattern = #"(?i)(?:🎬\s*)?(?:название\s+фильма|фильм|сериал|кино|movie|film|title)\s*[:\-—–]\s*([^\n#⭐🎥🎬]+)"#
+        let prefixPattern = #"(?i)(?:🎬\s*)?(?:назва\s+фільму|фільм|серіал|кіно|movie|film|title)\s*[:\-—–]\s*([^\n#⭐🎥🎬]+)"#
         for match in regexRanges(pattern: prefixPattern, in: raw) {
             let matched = String(raw[match])
             if let colonIndex = matched.firstIndex(where: { [":", "-", "—", "–"].contains($0) }) {
@@ -360,7 +360,7 @@ enum CinemaContentGenerator {
             let matched = String(raw[match])
             if let openParen = matched.lastIndex(of: "("), let closeParen = matched.lastIndex(of: ")") {
                 let title = String(matched[..<openParen])
-                    .replacingOccurrences(of: #"(?i)\b(название фильма|фильм|сериал|кино|movie|film)\b"#, with: "", options: .regularExpression)
+                    .replacingOccurrences(of: #"(?i)\b(назва фільму|фільм|серіал|кіно|movie|film)\b"#, with: "", options: .regularExpression)
                     .replacingOccurrences(of: #"["«»:]"#, with: "", options: .regularExpression)
                     .trimmed
                 let year = String(matched[matched.index(after: openParen)..<closeParen]).trimmed
@@ -404,8 +404,8 @@ enum CinemaContentGenerator {
             sceneDescription: sceneDescription)
 
         // Viral hooks (intrigue without spoiling the movie title)
-        let viralVideoHook = "Такой развязки никто не ожидал... 😳"
-        let youtubeHook = "Такой развязки точно никто не ожидал... 😳 #Shorts"
+        let viralVideoHook = "Такої розв'язки ніхто не очікував... 😳"
+        let youtubeHook = "Такої розв'язки точно ніхто не очікував... 😳 #Shorts"
         let telegramHook = "🎬 \(title)\(yearPart)"
 
         // Viral platform-specific descriptions with @telonyx_club funnel
@@ -441,8 +441,8 @@ enum CinemaContentGenerator {
         let title = query.title
         let synopsis = sceneDescription?.trimmed ?? ""
 
-        let viralVideoHook = "Такой развязки никто не ожидал... 😳"
-        let youtubeHook = "Такой развязки точно никто не ожидал... 😳 #Shorts"
+        let viralVideoHook = "Такої розв'язки ніхто не очікував... 😳"
+        let youtubeHook = "Такої розв'язки точно ніхто не очікував... 😳 #Shorts"
         let telegramHook = "🎬 \(title)\(yearPart)"
 
         let tiktokDesc = tiktokViralDescription(synopsis: synopsis, textAd: textAd)
@@ -485,16 +485,16 @@ enum CinemaContentGenerator {
         textAd: Bool
     ) -> String {
         if textAd {
-            return "Такой развязки никто не ожидал... 😳\n\n🎬 Название фильма и где смотреть уже в Telegram: @telonyx_club\n\n\(botAdMessage())\n\nСмотри до конца 👇"
+            return "Такої розв'язки ніхто не очікував... 😳\n\n🎬 Назва фільму і де дивитися вже в Telegram: @telonyx_club\n\n\(botAdMessage())\n\nДивись до кінця 👇"
         }
-        let leadIn = "Такой развязки точно никто не ожидал... 😳"
+        let leadIn = "Такої розв'язки точно ніхто не очікував... 😳"
         let brief = synopsis.count > 140 ? String(synopsis.prefix(140).trimmingCharacters(in: .whitespacesAndNewlines)) + "..." : synopsis
         var text = leadIn
         if !brief.isEmpty {
             text += "\n\n\(brief)"
         }
-        text += "\n\nКак бы ты поступил на его месте? Напиши в комменты 👇"
-        text += "\n\n🍿 Название фильма и где посмотреть уже выложили в наш Telegram: @telonyx_club (активная ссылка в шапке профиля 👆)"
+        text += "\n\nЯк би ти вчинив на його місці? Напиши в коментарі 👇"
+        text += "\n\n🍿 Назву фільму і де подивитися вже виклали в наш Telegram: @telonyx_club (активне посилання в шапці профілю 👆)"
         return text
     }
 
@@ -503,14 +503,14 @@ enum CinemaContentGenerator {
         textAd: Bool
     ) -> String {
         if textAd {
-            return "Этот момент пробирает до мурашек... 🍿\n\n🎬 Название фильма в шапке профиля 👆 (Telegram: @telonyx_club)\n\n\(botAdMessage())\n\n📌 Сохраняй в закладки!"
+            return "Цей момент пробирає до мурашок... 🍿\n\n🎬 Назва фільму в шапці профілю 👆 (Telegram: @telonyx_club)\n\n\(botAdMessage())\n\n📌 Зберігай у закладки!"
         }
-        var text = "Этот момент пробирает до мурашек... 🍿"
+        var text = "Цей момент пробирає до мурашок... 🍿"
         if !synopsis.isEmpty {
             text += "\n\n\(synopsis)"
         }
-        text += "\n\n📌 Сохраняй, чтобы не потерять на вечер!\nОцени этот момент от 1 до 10 в комментариях 👇"
-        text += "\n\n🎬 Название фильма и где посмотреть — в шапке профиля 👆 (Telegram: @telonyx_club)"
+        text += "\n\n📌 Зберігай, щоб не втратити на вечір!\nОціни цей момент від 1 до 10 у коментарях 👇"
+        text += "\n\n🎬 Назва фільму і де подивитися — в шапці профілю 👆 (Telegram: @telonyx_club)"
         return text
     }
 
@@ -519,14 +519,14 @@ enum CinemaContentGenerator {
         textAd: Bool
     ) -> String {
         if textAd {
-            return "Такой развязки никто не ожидал... 😳 #Shorts\n\n🎬 Название фильма в Telegram: https://t.me/telonyx_club\n\n\(botAdMessage())\n\n#Shorts #кино #фильмы"
+            return "Такої розв'язки ніхто не очікував... 😳 #Shorts\n\n🎬 Назва фільму в Telegram: https://t.me/telonyx_club\n\n\(botAdMessage())\n\n#Shorts #кіно #фільми"
         }
-        var text = "Такой развязки точно никто не ожидал... 😳"
+        var text = "Такої розв'язки точно ніхто не очікував... 😳"
         if !synopsis.isEmpty {
             text += "\n\n\(synopsis)"
         }
-        text += "\n\n🎬 Название фильма и где посмотреть выложили в наш Telegram: https://t.me/telonyx_club (ссылка в описании канала и в закрепленном комментарии) 👇"
-        text += "\n\n🔔 Подписывайся на канал, чтобы не пропустить лучшие моменты из кино!\n\n#Shorts #кино #фильмы"
+        text += "\n\n🎬 Назву фільму і де подивитися виклали в наш Telegram: https://t.me/telonyx_club (посилання в описі каналу та в закріпленому коментарі) 👇"
+        text += "\n\n🔔 Підписуйся на канал, щоб не пропустити найкращі моменти з кіно!\n\n#Shorts #кіно #фільми"
         return text
     }
 
@@ -553,13 +553,13 @@ enum CinemaContentGenerator {
         }
 
         if !synopsis.isEmpty {
-            lines.append("📝 О фильме:")
+            lines.append("📝 Про фільм:")
             let overviewText = synopsis.count > 500 ? String(synopsis.prefix(500).trimmingCharacters(in: .whitespacesAndNewlines)) + "..." : synopsis
             lines.append(overviewText)
             lines.append("")
         }
 
-        lines.append("🍿 Приятного просмотра!")
+        lines.append("🍿 Приємного перегляду!")
         lines.append("Канал: @telonyx_club")
         return lines.joined(separator: "\n")
     }
@@ -579,11 +579,11 @@ enum CinemaContentGenerator {
     }
 
     private static let channelAdMessages: [String] = [
-        "Ищешь, что посмотреть вечером? 🍿 Эксклюзивные подборки шедевров кино, скрытые бриллианты и премьеры — каждый день в нашем закрытом клубе: https://t.me/telonyx_club 🎬",
-        "Название фильма, обзор и лучшие моменты без цензуры уже в нашем Telegram: https://t.me/telonyx_club 🍿 Переходи и подписывайся!",
-        "Хочешь больше мощных сцен и топовых фильмов на вечер? Присоединяйся к киноманам в Telegram: https://t.me/telonyx_club 🍿",
-        "Вся информация об этом фильме и тысячи других рекомендаций — в нашем Telegram-канале https://t.me/telonyx_club 🎬 Жми и смотри!",
-        "Кино без спойлеров и скучных списков. Только лучшее кино со всего мира: https://t.me/telonyx_club 🍿"
+        "Шукаєш, що подивитися ввечері? 🍿 Ексклюзивні підбірки шедеврів кіно, приховані діаманти та прем'єри — щодня в нашому закритому клубі: https://t.me/telonyx_club 🎬",
+        "Назва фільму, огляд та найкращі моменти без цензури вже в нашому Telegram: https://t.me/telonyx_club 🍿 Переходь та підписуйся!",
+        "Хочеш більше потужних сцен та топових фільмів на вечір? Приєднуйся до кіноманів у Telegram: https://t.me/telonyx_club 🍿",
+        "Вся інформація про цей фільм та тисячі інших рекомендацій — в нашому Telegram-каналі https://t.me/telonyx_club 🎬 Тисни та дивись!",
+        "Кіно без спойлерів і нудних списків. Тільки найкраще кіно з усього світу: https://t.me/telonyx_club 🍿"
     ]
 
     private static func baseCinemaHashtags(movie: TMDBMovie, includeTitle: Bool) -> [String] {
@@ -625,25 +625,25 @@ enum CinemaContentGenerator {
 
     private static var tiktokViralHashtags: [String] {
         [
-            "#кинонавечер", "#моментсфильма", "#фильмы", "#кино", "#фильм",
-            "#отрывокизфильма", "#лучшиефильмы", "#чтопосмотреть",
-            "#рек", "#рекомендации", "#fyp", "#fypシ"
+            "#кіноввечір", "#моментзфільму", "#фільми", "#кіно", "#фільм",
+            "#уривокзфільму", "#найкращіфільми", "#щоподивитися",
+            "#рек", "#рекомендації", "#fyp", "#fypシ"
         ]
     }
 
     private static var instagramViralHashtags: [String] {
         [
-            "#reels", "#reelsinstagram", "#кино", "#фильм", "#фильмнавечер",
-            "#отрывокизфильма", "#моментизфильма", "#киноман",
-            "#лучшиефильмы", "#топфильмы", "#кинопоиск", "#вкино"
+            "#reels", "#reelsinstagram", "#кіно", "#фільм", "#фільмнавечір",
+            "#уривокзфільму", "#моментзфільму", "#кіноман",
+            "#найкращіфільми", "#топфільми", "#кінопошук", "#вкіно"
         ]
     }
 
     private static var youtubeShortsViralHashtags: [String] {
         [
-            "#Shorts", "#кино", "#фильмы", "#фильмнавечер",
-            "#моментыизфильмов", "#лучшиефильмы", "#топкино",
-            "#шортс", "#shortsyoutube", "#кинопоиск"
+            "#Shorts", "#кіно", "#фільми", "#фільмнавечір",
+            "#моментизфільмів", "#найкращіфільми", "#топкіно",
+            "#шортс", "#shortsyoutube", "#кінопошук"
         ]
     }
 
@@ -662,9 +662,9 @@ enum CinemaContentGenerator {
 
     private static var genericCinemaHashtags: Set<String> {
         [
-            "#кино", "#фильм", "#фильмы", "#сериал", "#сериалы", "#short", "#shorts",
-            "#момент", "#моменткино", "#моментфильма", "#моментизфильма", "#нарезка",
-            "#кинообзор", "#рекомендации", "#чтопосмотреть"
+            "#кіно", "#фільм", "#фільми", "#серіал", "#серіали", "#short", "#shorts",
+            "#момент", "#моменткіно", "#моментфільму", "#моментзфільму", "#нарізка",
+            "#кіноогляд", "#рекомендації", "#щоподивитися"
         ]
     }
 

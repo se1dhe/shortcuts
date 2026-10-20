@@ -9,7 +9,7 @@ enum LongformMetadataGenerator {
         concept: ThematicConcept,
         arc: LongformNarrativeArc
     ) -> LongformYouTubeMetadata {
-        let safeMovieTitle = MovieMetadataService.isGarbageTitle(movieTitle) ? "фильма" : "фильма «\(movieTitle)»"
+        let safeMovieTitle = MovieMetadataService.isGarbageTitle(movieTitle) ? "фільму" : "фільму «\(movieTitle)»"
         let displayMovieTitle = MovieMetadataService.isGarbageTitle(movieTitle) ? "" : "«\(movieTitle)»"
 
         // 1. Адаптивный кинематографический заголовок в стиле @prrodan (ударная фраза от 2-го лица)
@@ -58,7 +58,7 @@ enum LongformMetadataGenerator {
         let word = concept.word.capitalized
 
         // Если заголовок концепта уже отточен и содержит сильную мысль
-        if hook.lowercased().contains("ты") || hook.lowercased().contains("когда") || hook.lowercased().contains("почему") {
+        if hook.lowercased().contains("ти") || hook.lowercased().contains("коли") || hook.lowercased().contains("чому") {
             if hook.contains("|") {
                 return hook
             } else {
@@ -68,11 +68,11 @@ enum LongformMetadataGenerator {
 
         // Адаптивные формулы в стиле prrodan
         let templates = [
-            "Ты проигрываешь, пока веришь в это | \(word)",
-            "Однажды ты поймёшь, почему всё произошло именно так | \(word)",
-            "Иногда, чтобы победить, нужно отпустить контроль | \(word)",
-            "Ты никогда не будешь свободен, пока не осознаешь это | \(word)",
-            "Самая опасная ложь — та, в которую ты веришь сам | \(word)"
+            "Ти програєш, поки віриш у це | \(word)",
+            "Одного разу ти зрозумієш, чому все сталося саме так | \(word)",
+            "Іноді, щоб перемогти, потрібно відпустити контроль | \(word)",
+            "Ти ніколи не будеш вільним, поки не усвідоміш це | \(word)",
+            "Найнебезпечніша брехня — та, в яку ти віриш сам | \(word)"
         ]
 
         let selectedTemplate = templates[stableHash(concept.word) % templates.count]
@@ -81,7 +81,7 @@ enum LongformMetadataGenerator {
 
     private static func buildChapters(acts: [LongformAct], concept: ThematicConcept) -> String {
         var lines: [String] = []
-        lines.append("00:00 — Вступление: \(concept.word.capitalized)")
+        lines.append("00:00 — Вступ: \(concept.word.capitalized)")
 
         var currentOffset: Double = 2.5
         let romanNumerals = ["I", "II", "III", "IV", "V", "VI"]
@@ -106,54 +106,54 @@ enum LongformMetadataGenerator {
         chaptersText: String
     ) -> String {
         let isKnownMovie = !MovieMetadataService.isGarbageTitle(movieTitle)
-        let movieRef = isKnownMovie ? "фильма «\(movieTitle)»" : "этой истории"
+        let movieRef = isKnownMovie ? "фільму «\(movieTitle)»" : "цієї історії"
 
         return """
-        Этот ролик — про другую сторону \(movieRef).
+        Це відео — про інший бік \(movieRef).
 
-        Не про внешние декорации.
-        Не про слова на поверхности.
-        А про то, что на самом деле управляет нашими решениями.
+        Не про зовнішні декорації.
+        Не про слова на поверхні.
+        А про те, що насправді керує нашими рішеннями.
 
         \(concept.philosophicalPremise)
 
         \(concept.tagline)
 
-        Иногда иллюзия настолько плотно срастается с реальностью, что человек принимает чужие правила за свой собственный выбор. До тех пор, пока цена этого выбора не становится слишком высокой.
+        Іноді ілюзія настільки щільно зростається з реальністю, що людина приймає чужі правила за свій власний вибір. До тих пір, поки ціна цього вибору не стає надто високою.
 
-        Таймкоды:
+        Таймкоди:
         \(chaptersText)
 
         ───────────────────────────────────────
         Disclaimer: This video is an analytical cinema essay intended for commentary, educational, and transformative artistic reflection. All footage used belongs to its respective copyright owners and is used under Fair Use principles (Section 107 of the Copyright Act).
 
-        #киноэссе #смыслфильма #психология #\(concept.word.lowercased()) #осознанность #саморазвитие #разборкино
+        #кіноеесе #сенсфільму #психологія #\(concept.word.lowercased()) #усвідомленість #саморозвиток #розбіркіно
         """
     }
 
     private static func buildPrrodanTags(movieTitle: String, concept: ThematicConcept) -> [String] {
         var tags: [String] = [
             concept.word.lowercased(),
-            "киноэссе",
-            "смысл фильма",
-            "разбор фильма",
-            "психология кино",
+            "кіноеесе",
+            "сенс фільму",
+            "розбір фільму",
+            "психологія кіно",
             "самообман",
-            "иллюзия контроля",
-            "осознанность",
+            "ілюзія контролю",
+            "усвідомленість",
             "характер",
-            "мышление",
-            "философия кино",
-            "мотивация",
+            "мислення",
+            "філософія кіно",
+            "мотивація",
             "prrodan стиль",
             "shortcast cinema",
-            "кинематограф"
+            "кінематограф"
         ]
 
         if !MovieMetadataService.isGarbageTitle(movieTitle) {
             let lower = movieTitle.lowercased()
-            tags.insert("\(lower) смысл", at: 0)
-            tags.insert("\(lower) разбор", at: 0)
+            tags.insert("\(lower) сенс", at: 0)
+            tags.insert("\(lower) розбір", at: 0)
             tags.insert(lower, at: 0)
         }
 
@@ -161,11 +161,11 @@ enum LongformMetadataGenerator {
     }
 
     private static func buildPrrodanPinnedComment(movieTitle: String, concept: ThematicConcept) -> String {
-        let movieStr = movieTitle.isEmpty ? "этого фильма" : movieTitle
+        let movieStr = movieTitle.isEmpty ? "цього фільму" : movieTitle
         return """
-        Самый опасный враг — тот, кто прячется там, где ты меньше всего будешь его искать: внутри твоей собственной головы.
+        Найнебезпечніший ворог — той, хто ховається там, де ти найменше будеш його шукати: всередині твоєї власної голови.
 
-        Какой момент из \(movieStr) заставил тебя по-настоящему усомниться в том, кто на самом деле делает выбор в твоей жизни? Напиши свои мысли в комментариях 👇
+        Який момент з \(movieStr) змусив тебе по-справжньому засумніватися в тому, хто насправді робить вибір у твоєму житті? Напиши свої думки в коментарях 👇
         """
     }
 }

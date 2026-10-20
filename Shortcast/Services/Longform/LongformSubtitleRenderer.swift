@@ -850,7 +850,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             guard index > 0, !act.segments.isEmpty, actStartTimeline < totalDuration else { continue }
 
             let roman = (index < romanNumerals.count) ? romanNumerals[index] : "\(index + 1)"
-            let actPartText = "— ЧАСТЬ \(roman) —"
+            let actPartText = "— ЧАСТИНА \(roman) —"
             let cleanedTitle = act.title.trimmingCharacters(in: CharacterSet(charactersIn: "«»\" ")).uppercased()
             let actTitleText = "«\(cleanedTitle)»"
 
@@ -1010,7 +1010,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         conceptStr.draw(at: conceptOrigin)
 
         // 2. Плавный субтитр диалога прямо под концептом (акцент WCAG-легible, Russo One 32pt·k, обводка)
-        let phraseText = currentPhrase?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "ПОТЕРЯЕШЬ ВСЁ"
+        let phraseText = currentPhrase?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "ВСЕ ВТРАТИШ"
         if !phraseText.isEmpty {
             let subAttrs = Self.captionAttributes(k: k, accentHex: concept.accentColorHex)
             let subStr = NSAttributedString(string: phraseText.uppercased(), attributes: subAttrs)

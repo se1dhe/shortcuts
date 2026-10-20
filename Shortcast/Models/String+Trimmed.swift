@@ -13,7 +13,7 @@ extension String {
             #"<\|[^|]+\|>"#,
             #"<[0-9]+(?:\.[0-9]+)?>"#,
             #"\|[0-9]+(?:\.[0-9]+)?\|"#,
-            #"\[(?:Music|Applause|Laughter|Silence|Noise|Background noise|inaudible|музыка|аплодисменты|смех|тишина|шум|неразборчиво)\]"#,
+            #"\[(?:Music|Applause|Laughter|Silence|Noise|Background noise|inaudible|музика|оплески|сміх|тиша|шум|нерозбірливо)\]"#,
             #"(?i)\bendoftext\b"#,
             // Strip HTML/VTT tags like <c>, <i>, <c.colorE5E5E5>, </c>, <v Speaker>
             #"<[^>]+>"#,

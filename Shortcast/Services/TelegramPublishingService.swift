@@ -108,7 +108,7 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
         if caption.isEmpty {
             let yearPart = clip.detectedMovieYear.isEmpty ? "" : " (\(clip.detectedMovieYear))"
             let title = !clip.detectedMovieTitle.isEmpty ? clip.detectedMovieTitle : clip.displayTitle
-            caption = "🎬 «\(title)»\(yearPart)\n\n🍿 Приятного просмотра!\nКанал: \(cleanChannel)"
+            caption = "🎬 «\(title)»\(yearPart)\n\n🍿 Приємного перегляду!\nКанал: \(cleanChannel)"
         }
 
         // Telegram captions on media cannot exceed 1024 characters
@@ -160,13 +160,13 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
         let safePremise = result.arc.concept.philosophicalPremise.telegramHTMLEscaped
 
         let yearText = (movie?.year.isEmpty == false) ? " (\(movie!.year.telegramHTMLEscaped))" : ""
-        let header = "🎬 <b>«\(safeMovieTitle)»</b>\(yearText) — Кино-эссе\n\n🔥 Лейтмотив: <b>«\(safeConceptWord)»</b>\n💡 <i>«\(safeTagline)»</i>\n\n"
+        let header = "🎬 <b>«\(safeMovieTitle)»</b>\(yearText) — Кіно-есе\n\n🔥 Лейтмотив: <b>«\(safeConceptWord)»</b>\n💡 <i>«\(safeTagline)»</i>\n\n"
 
         var linkPart = "\n\n"
         if let yt = youtubeURL, !yt.isEmpty {
-            linkPart += "▶️ Смотреть на YouTube:\n<a href=\"\(yt)\">«\(safeEssayTitle)»</a>\n\n"
+            linkPart += "▶️ Дивитися на YouTube:\n<a href=\"\(yt)\">«\(safeEssayTitle)»</a>\n\n"
         } else {
-            linkPart += "▶️ Премьера на YouTube:\n«\(safeEssayTitle)»\n\n"
+            linkPart += "▶️ Прем'єра на YouTube:\n«\(safeEssayTitle)»\n\n"
         }
         if let imdb = movie?.imdbRating, !imdb.isEmpty {
             linkPart += "⭐ Рейтинг IMDb: \(imdb.telegramHTMLEscaped)\n"

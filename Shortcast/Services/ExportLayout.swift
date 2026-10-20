@@ -8,7 +8,7 @@ import Foundation
 enum ExportLayout {
     static let rootDirName = "Exports"
     static let shortsDirName = "shorts"
-    static let fallbackFilmName = "Фильм"
+    static let fallbackFilmName = "Фільм"
 
     enum Kind: String {
         case longformVideo = "longform"

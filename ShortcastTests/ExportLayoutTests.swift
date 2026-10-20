@@ -44,8 +44,8 @@ struct ExportLayoutTests {
 
     @Test("Empty title falls back to Film")
     func testDirectoryNameEmptyFallback() {
-        #expect(ExportLayout.directoryName(for: "") == "Фильм")
-        #expect(ExportLayout.directoryName(for: "   ") == "Фильм")
+        #expect(ExportLayout.directoryName(for: "") == "Фільм")
+        #expect(ExportLayout.directoryName(for: "   ") == "Фільм")
     }
 
     @Test("Ukrainian characters are preserved")

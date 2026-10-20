@@ -91,7 +91,7 @@ enum CinemaMomentDirector {
         let langInstruction: String
         if let lang = language?.lowercased(), !lang.isEmpty {
             if lang.hasPrefix("ru") {
-                langInstruction = "Respond in Russian for character names, titles, hooks, and summaries."
+                langInstruction = "Відповідай українською для імен персонажів, назв, хуків та описів."
             } else if lang.hasPrefix("en") {
                 langInstruction = "Respond in English for character names, titles, hooks, and summaries."
             } else {
@@ -125,7 +125,7 @@ enum CinemaMomentDirector {
             - For `hook` and `punchline` strings, insert XML tags for kinetic typography:
               * <yellow> for key witty verbs, jokes, and funny phrases.
               * <red> for names, punchlines, absurdity peaks, or final comebacks.
-              Example: "Ты правда думаешь, что я поверю в эту <yellow>чушь</yellow>? Ты же просто <red>идиот</red>!"\(sceneMapInstruction)
+              Example: "Ти справді думаєш, що я повірю в цю <yellow>нісенітницю</yellow>? Ти ж просто <red>ідіот</red>!"\(sceneMapInstruction)
 
             Output ONLY a valid JSON array of objects with this exact structure (STRICTLY 1 to 3 objects):
             [
@@ -177,7 +177,7 @@ enum CinemaMomentDirector {
         - For `hook` and `punchline` strings, insert XML tags for kinetic typography:
           * <yellow> for key emotional verbs, power words, and pivotal concepts.
           * <red> for names, insults, threats, danger, or the final punchline.
-          Example: "Ты думаешь, закон защитит тебя? В этом зале <yellow>справедливость</yellow> вершу <red>я</red>."\(sceneMapInstruction)
+          Example: "Ти думаєш, закон захистить тебе? У цьому залі <yellow>справедливість</yellow> вершу <red>я</red>."\(sceneMapInstruction)
 
         Output ONLY a valid JSON array of objects with this exact structure (STRICTLY 1 to 3 objects):
         [
@@ -207,7 +207,7 @@ enum CinemaMomentDirector {
         sceneMap: String? = nil,
         isComedy: Bool = false
     ) -> String {
-        let genreTag = isComedy ? " [Режим: Комедия / Юмор]" : ""
+        let genreTag = isComedy ? " [Режим: Комедія / Гумор]" : ""
         let focusTag = isComedy
             ? "hilarious viral comedy story arcs (duration STRICTLY between 42.0 and 58.0 seconds total, Viral Score >= 80, setup -> escalation -> punchline)"
             : "elite viral cinema story arcs (duration STRICTLY between 42.0 and 58.0 seconds total, Viral Score >= 80)"
@@ -451,11 +451,12 @@ enum CinemaMomentDirector {
         // 4. Dramatic escalation / Comedic humor markers
         if isComedy {
             let comedyKeywords = [
-                "смешно", "шутка", "прикол", "дурак", "идиот", "правда", "серьезно", "серьёзно",
-                "боже", "чё", "что", "погоди", "слушай", "ладно", "с ума сошел", "с ума сошёл",
-                "прикалываешься", "гонишь", "отвали", "замолчи", "конечно", "не может быть",
-                "ха", "ха-ха", "эй", "мужик", "чувак", "ты шутишь", "гляди", "посмотри",
-                "ну да", "ага", "куда", "зачем", "блин", "чёрт", "черт", "funny", "joke", "crazy"
+                "смішно", "жарт", "прикол", "дурень", "ідіот", "правда", "серйозно",
+                "боже", "чо", "що", "зачекай", "слухай", "гаразд", "з глузду з'їхав",
+                "жартуєш", "женеш", "відвали", "мовчи", "звичайно", "не може бути",
+                "ха", "ха-ха", "ей", "чоловіче", "чувак", "ти жартуєш", "глянь", "подивись",
+                "ну так", "ага", "куди", "навіщо", "блін", "чорт",
+                "funny", "joke", "crazy"
             ]
             let comedyMatches = comedyKeywords.filter { lower.contains($0) }.count
             if comedyMatches >= 2 {
@@ -465,9 +466,9 @@ enum CinemaMomentDirector {
             }
         } else {
             let conflictKeywords = [
-                "не", "нет", "хватит", "никогда", "зачем", "почему", "стой", "убью",
-                "правда", "ложь", "виновен", "суд", "деньги", "жизнь", "смерть", "страх",
-                "убирайся", "смотри", "уверен", "знаешь", "хочешь", "клянусь"
+                "ні", "ні", "годі", "ніколи", "навіщо", "чому", "стій", "вб'ю",
+                "правда", "брехня", "винний", "суд", "гроші", "життя", "смерть", "страх",
+                "забирайся", "дивись", "впевнений", "знаєш", "хочеш", "клянусь"
             ]
             let conflictMatches = conflictKeywords.filter { lower.contains($0) }.count
             if conflictMatches >= 2 {

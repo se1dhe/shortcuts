@@ -123,10 +123,14 @@ public final class YouTubeUploadService: YouTubeUploadServicing, Sendable {
                 "title": title.prefix(100),
                 "description": description.prefix(5000),
                 "tags": Array(tags.prefix(30)),
-                "categoryId": "24" // Entertainment / Film
+                "categoryId": "24", // Entertainment / Film
+                "defaultLanguage": "uk"
             ],
             "status": [
                 "privacyStatus": isPublic ? "public" : "unlisted"
+            ],
+            "recordingDetails": [
+                "regionCode": "UA"
             ]
         ]
 

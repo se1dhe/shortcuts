@@ -699,7 +699,7 @@ final class ShortClip: Identifiable {
 
         var base = rawText
             .lowercased()
-            .replacingOccurrences(of: "[^a-z0-9а-яё]+", with: "-", options: .regularExpression)
+            .replacingOccurrences(of: "[^a-z0-9а-яёіїєґ]+", with: "-", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
         
         if base.count > 50 {

@@ -532,7 +532,7 @@ final class LongformThumbnailComposer: Sendable {
             .paragraphStyle: badgeParagraph,
             .kern: 3.0
         ]
-        let badgeText = "ФИЛОСОФИЯ ФИЛЬМА «\(movieTitle.uppercased())»"
+        let badgeText = "ФІЛОСОФІЯ ФІЛЬМУ «\(movieTitle.uppercased())»"
         let badgeStr = NSAttributedString(string: badgeText, attributes: badgeAttrs)
         if isCentered {
             badgeStr.draw(in: layout.badge)

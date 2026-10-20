@@ -87,7 +87,7 @@ struct ThematicDiscoveryContractTests {
                       "word", "tagline", "philosophicalPremise", "suggestedTitle"] {
             #expect(prompt.contains(field))
         }
-        #expect(prompt.contains("ОДНУ ГЛАВНУЮ ТЕМУ"))
-        #expect(prompt.contains("валидным JSON"))
+        #expect(prompt.contains("ОДНУ ГОЛОВНУ ТЕМУ"))
+        #expect(prompt.contains("валідним JSON"))
     }
 }

@@ -132,7 +132,7 @@ enum YouTubeAPIService {
             URLQueryItem(name: "type", value: "video"),
             URLQueryItem(name: "videoDuration", value: "short"),
             URLQueryItem(name: "maxResults", value: String(maxResults)),
-            URLQueryItem(name: "relevanceLanguage", value: "ru"),
+            URLQueryItem(name: "relevanceLanguage", value: "uk"),
             URLQueryItem(name: "key", value: apiKey),
         ]
 

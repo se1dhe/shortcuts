@@ -132,9 +132,9 @@ struct LongformActTitleTests {
             #expect(Self.runs[index].contains(evidence), "Запасное название взято не из реплики акта")
             #expect(act.titleProvenance?.modelID == nil, "Демантованный акт не имеет права ссылаться на модель")
         }
-        // Реестр честный: llm=2, репликой=2
+        // Реєстр чесний: llm=2, реплікою=2
         #expect(demoted.summary.contains("llm=2"))
-        #expect(demoted.summary.contains("репликой=2"))
+        #expect(demoted.summary.contains("реплікою=2"))
     }
 
     @Test("An over-long LLM title is demoted act by act even when the quote is real")
@@ -200,7 +200,7 @@ struct LongformActTitleTests {
             .applyTitles(to: film.arc, transcript: film.transcript, movieTitle: "X", progress: nil)
         #expect(outcome.arc.acts.map(\.effectiveTitleSource)
                 == Array(repeating: ActTitleSource.transcriptLine, count: 4))
-        #expect(outcome.summary.contains("не прогрет"))
+        #expect(outcome.summary.contains("не прогрітий"))
         // И без подключённого шлюза — то же поведение, молчаливого шаблона нет
         let offline = await LongformActTitleService()
             .applyTitles(to: film.arc, transcript: film.transcript, movieTitle: "X", progress: nil)
@@ -270,7 +270,7 @@ struct LongformActTitleTests {
             lines: [],
             cap: LongformActTitleService.actMaterialCapChars
         )
-        #expect(wordless.block.contains("нет реплик"))
+        #expect(wordless.block.contains("немає реплік"))
     }
 
     @Test("Act dialogue uses the overlap test, not containment")

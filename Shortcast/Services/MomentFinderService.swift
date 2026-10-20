@@ -264,7 +264,7 @@ final class MomentFinderService {
             for attempt in 1...maxAttempts {
                 let prompt = attempt == 1
                     ? userPrompt
-                    : userPrompt + "\n\nВНИМАНИЕ: предыдущий ответ был невалидным. Ответь ТОЛЬКО валидным JSON-массивом объектов без markdown, без пояснений и без текста до или после массива."
+                    : userPrompt + "\n\nУВАГА: попередня відповідь була невалідною. Відповідь ТІЛЬКИ валідним JSON-масивом об'єктів без markdown, без пояснень і без тексту до або після масиву."
 
                 let session = ChatSession(
                     container,
@@ -363,8 +363,8 @@ final class MomentFinderService {
         let instructions = """
         You are a concise movie database. The user gives a movie or TV series title and year, plus optional context from a video source.
         Return ONLY a valid JSON object with this exact shape:
-        {"title":"original or Russian title","year":"YYYY","genres":["genre1","genre2"],"cast":["actor1","actor2","actor3"],"director":"director name"}
-        Use Russian names for people and genres if possible. If you do not know the work, return {"title":"","year":"","genres":[],"cast":[],"director":""}.
+        {"title":"original or Ukrainian title","year":"YYYY","genres":["genre1","genre2"],"cast":["actor1","actor2","actor3"],"director":"director name"}
+        Use Ukrainian names for people and genres if possible. If you do not know the work, return {"title":"","year":"","genres":[],"cast":[],"director":""}.
         """
 
         let session = ChatSession(
@@ -412,7 +412,7 @@ final class MomentFinderService {
         params.kvBits = s.kvBits
 
         let resolved = Self.resolvedPromptLanguage(language)
-        let titlePart = movieTitle.trimmed.isEmpty ? "" : " (фильм: \(movieTitle.trimmed))"
+        let titlePart = movieTitle.trimmed.isEmpty ? "" : " (фільм: \(movieTitle.trimmed))"
         let instructions: String
         switch resolved {
         case .ru:
@@ -441,7 +441,7 @@ final class MomentFinderService {
             generateParameters: params,
             additionalContext: ["enable_thinking": false])
 
-        let userPrompt = "Транскрипция клипа\(titlePart):\n\(transcript.prefix(2000))"
+        let userPrompt = "Транскрипція кліпу\(titlePart):\n\(transcript.prefix(2000))"
 
         do {
             var raw = ""
@@ -485,9 +485,9 @@ final class MomentFinderService {
 
         let instructions = """
         You identify the ORIGINAL film or TV series from a YouTube Shorts title and description \
-        (these are clips of foreign movies with Russian dub). \
+        (these are clips of foreign movies with Ukrainian dub). \
         Return ONLY a JSON object: {"title":"movie title","year":"YYYY"}. \
-        Prefer the Russian-release title when the clip is in Russian. \
+        Prefer the Ukrainian-release title when the clip is in Ukrainian. \
         Give the year the film/series was released. \
         If you cannot identify it, return {"title":"","year":""}. No other text.
         """
@@ -546,7 +546,7 @@ final class MomentFinderService {
         You are an expert film scholar. Given spoken dialogue lines, character names, and quotes from a movie's transcript, \
         identify the exact movie or TV series and its release year. \
         Return ONLY a JSON object: {"title":"Movie Title","year":"YYYY"}. \
-        Prefer the Russian title if the dialogue is in Russian, or the original title. \
+        Prefer the Ukrainian title if the dialogue is in Ukrainian, or the original title. \
         If you cannot identify the movie with certainty, return {"title":"","year":""}. No other text.
         """
 
@@ -600,7 +600,7 @@ final class MomentFinderService {
     ) async throws -> ThematicAnalysisResult {
         guard let container else {
             Self.log("analyzeThematicCore: no model loaded")
-            throw ThematicDiscoveryError.directorUnavailable("модель не загружена")
+            throw ThematicDiscoveryError.directorUnavailable("модель не завантажена")
         }
         let sample = transcriptSample.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !sample.isEmpty else { throw ThematicDiscoveryError.transcriptEmpty }
@@ -629,12 +629,12 @@ final class MomentFinderService {
         // act still reaches the model when the transcript exceeds the budget.
         let (dialogue, lineStride) = Self.downsampleChronologically(sample, to: budgetChars)
 
-        var promptParts: [String] = ["Фильм: «\(movieTitle)»"]
+        var promptParts: [String] = ["Фільм: «\(movieTitle)»"]
         if !overview.isEmpty {
-            promptParts.append("Синопсис/сюжет фильма:\n\"\"\"\n\(overview)\n\"\"\"")
+            promptParts.append("Синопсис/сюжет фільму:\n\"\"\"\n\(overview)\n\"\"\"")
         }
-        promptParts.append("Срез ключевых диалогов фильма (хронологически по всему сюжету):\n\"\"\"\n\(dialogue)\n\"\"\"")
-        promptParts.append("Выбери ОДНУ ГЛАВНУЮ тему эссе (primaryConcept), подробно обоснуй выбор (aiReasoning) и предложи альтернативные грани (alternativeConcepts). Верни СТРОГО валидный JSON-объект:")
+        promptParts.append("Зріз ключових діалогів фільму (хронологічно по всьому сюжету):\n\"\"\"\n\(dialogue)\n\"\"\"")
+        promptParts.append("Обери ОДНУ ГОЛОВНУ тему есе (primaryConcept), докладно обґрунтуй вибір (aiReasoning) та запропонуй альтернативні грані (alternativeConcepts). Поверни СУВОРО валідний JSON-об'єкт:")
         let userPrompt = promptParts.joined(separator: "\n\n")
 
         let estimatedPromptTokens = Int(Double(userPrompt.count + instructions.count) / Self.approxCharsPerToken)
@@ -652,7 +652,7 @@ final class MomentFinderService {
         for attempt in 1...maxAttempts {
             let prompt = attempt == 1
                 ? userPrompt
-                : userPrompt + "\n\nВНИМАНИЕ: предыдущий ответ был невалидным. Ответь ТОЛЬКО валидным JSON-объектом без markdown, без пояснений и без текста до или после объекта."
+                : userPrompt + "\n\nУВАГА: попередня відповідь була невалідною. Відповідь ТІЛЬКИ валідним JSON-об'єктом без markdown, без пояснень і без тексту до або після об'єкта."
 
             let session = ChatSession(
                 container,
@@ -718,10 +718,10 @@ final class MomentFinderService {
         return raw.trimmed.isEmpty ? nil : raw
     }
 
-    /// Chars/token measured on the real Blade Runner 2049 corpus (~3.7 for this
-    /// Cyrillic/French mix); 3.5 keeps the estimate pessimistic so the rotating
+    /// Chars/token measured on the real Blade Runner 2049 corpus (~3.9 for this
+    /// Cyrillic/Ukrainian mix); 3.7 keeps the estimate pessimistic so the rotating
     /// KV cache never trips mid-prompt and silently eats the first acts.
-    nonisolated static let approxCharsPerToken = 3.5
+    nonisolated static let approxCharsPerToken = 3.7
 
     /// Tokens the thematic call burns on framing: system prompt, section headers
     /// and the chat template.

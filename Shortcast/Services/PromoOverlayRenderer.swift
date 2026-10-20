@@ -345,7 +345,7 @@ enum PromoOverlayRenderer {
             .kern: 0.3,
         ])
 
-        let slogan = "Умная AI-модерация Telegram-чатов"
+        let slogan = "Розумна AI-модерація Telegram-чатів"
         slogan.draw(at: CGPoint(x: textX, y: size.height * 0.375), withAttributes: [
             .font: NSFont.systemFont(ofSize: size.height * 0.145, weight: .medium),
             .foregroundColor: NSColor(white: 1, alpha: 0.92),

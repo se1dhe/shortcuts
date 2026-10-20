@@ -57,7 +57,7 @@ final class LongformActTitleService: LongformActTitling, Sendable {
         movieTitle: String,
         progress: (@Sendable (String) -> Void)?
     ) async -> TitlingOutcome {
-        progress?("Называю акты по их собственным диалогам…")
+        progress?("Називаю акти за їхніми власними діалогами…")
 
         let dialogue = arc.acts.map { LongformActTitleService.actDialogue(act: $0, transcript: transcript) }
         let materials = arc.acts.enumerated().map { index, act in
@@ -84,13 +84,13 @@ final class LongformActTitleService: LongformActTitling, Sendable {
                     concept: arc.concept
                 )
                 if proposals.isEmpty {
-                    notes.append("модель не вернула разбор за \(Self.maxAttempts) попыток")
+                    notes.append("модель не повернула розбір за \(Self.maxAttempts) спроби")
                 }
             } else {
-                notes.append("Director не прогрет: loading ради титулов запрещён политикой RAM")
+                notes.append("Director не прогрітий: loading заради титулів заборонений політикою RAM")
             }
         } else {
-            notes.append("шлюз к модели не подключён")
+            notes.append("шлюз до моделі не підключений")
         }
 
         var titledActs: [LongformAct] = []
@@ -120,7 +120,7 @@ final class LongformActTitleService: LongformActTitling, Sendable {
             }
 
             if proposals[act.type] != nil {
-                notes.append("акт \(index + 1): quotedLine не из диалога этого акта либо title > \(Self.maxTitleGraphemes) знаков")
+                notes.append("акт \(index + 1): quotedLine не з діалогу цього акту або title > \(Self.maxTitleGraphemes) знаків")
             }
 
             let fallback = Self.deterministicFallback(act: act, lines: actLines, template: template)
@@ -141,9 +141,9 @@ final class LongformActTitleService: LongformActTitling, Sendable {
         let rawChars = dialogue.reduce(0) { total, lines in total + lines.reduce(0) { $0 + $1.count } }
         let sentChars = materials.reduce(0) { $0 + $1.block.count }
         let thinned = materials.filter { $0.stride > 1 }.count
-        var summary = "Названия актов: модель «\(modelID ?? "нет")» llm=\(llmCount) репликой=\(lineCount) "
-            + "шаблоном=\(templateCount) из \(titledActs.count); материал \(rawChars)→\(sentChars) знаков "
-            + "(прорежено актов: \(thinned), cap \(Self.actMaterialCapChars)/акт)"
+        var summary = "Назви актів: модель «\(modelID ?? "немає")» llm=\(llmCount) реплікою=\(lineCount) "
+            + "шаблоном=\(templateCount) з \(titledActs.count); матеріал \(rawChars)→\(sentChars) знаків "
+            + "(проріджено актів: \(thinned), cap \(Self.actMaterialCapChars)/акт)"
         if !notes.isEmpty {
             summary += "; " + notes.joined(separator: "; ")
         }
@@ -185,7 +185,7 @@ final class LongformActTitleService: LongformActTitling, Sendable {
         let roman = actIndex < romanNumerals.count ? romanNumerals[actIndex] : "\(actIndex + 1)"
         let header = "АКТ \(roman) (\(act.type.rawValue)):"
         guard !lines.isEmpty else {
-            return ("\(header)\n(в этом акте нет реплик)", 1)
+            return ("\(header)\n(у цьому акті немає реплік)", 1)
         }
         let (thinned, stride) = MomentFinderService.downsampleChronologically(
             lines.joined(separator: "\n"),
@@ -198,40 +198,40 @@ final class LongformActTitleService: LongformActTitling, Sendable {
 
     static func actTitlesSystemPrompt(movieTitle: String, concept: ThematicConcept) -> String {
         """
-        Ты — драматург Shortcast Cinema. Эссе «\(concept.word)» по фильму «\(movieTitle)» уже смонтировано.
-        Ниже — МАТЕРИАЛЫ АКТОВ: реальные реплики тех сцен, которые вошли в каждый акт, в хронологическом порядке.
-        Слоган темы: \(concept.tagline)
-        Философский тезис: \(concept.philosophicalPremise)
+        Ти — драматург Shortcast Cinema. Есе «\(concept.word)» за фільмом «\(movieTitle)» вже змонтовано.
+        Нижче — МАТЕРІАЛИ АКТІВ: реальні репліки тих сцен, які увійшли до кожного акту, у хронологічному порядку.
+        Слоган теми: \(concept.tagline)
+        Філософський тез: \(concept.philosophicalPremise)
 
-        Дай каждому акту название, ВЫВЕДЕННОЕ ИЗ РЕПЛИК ИМЕННО ЭТОГО АКТА. Название акта видит зритель,
-        поэтому оно обязано быть про этот монтаж, а не про жанр:
-        - title: 2-5 слов, не длиннее \(maxTitleGraphemes) знаков, без слова «Акт», без кавычек и без ««»»;
-        - dramaticBeat: до \(maxBeatChars) знаков — что РЕАЛЬНО происходит в отобранных сценах этого акта;
-        - quotedLine: ОДНА реплика из материала этого акта, скопированная ДОСЛОВНО, символ в символ.
-          Это доказательство: если такой строки нет в материале именно этого акта, название отвергается целиком.
-        - ЗАПРЕЩЕНО выдумывать реплики, имена и события, которых нет в материалах актов.
-        - ЗАПРЕЩЕНО брать реплику из материала другого акта.
-        - Типы актов строго в заданном порядке: hook, downfall, struggle, catharsis.
+        Дай кожному акту назву, ВИВЕДЕНУ З РЕПЛІК САМЕ ЦЬОГО АКТУ. Назву акту бачить глядач,
+        тому вона зобов'язана бути про цей монтаж, а не про жанр:
+        - title: 2-5 слів, не довше \(maxTitleGraphemes) знаків, без слова «Акт», без лапок і без ««»»;
+        - dramaticBeat: до \(maxBeatChars) знаків — що РЕАЛЬНО відбувається у відібраних сценах цього акту;
+        - quotedLine: ОДНА репліка з матеріалу цього акту, скопійована ДОСЛІВНО, символ у символ.
+          Це доказ: якщо такого рядка немає в матеріалі саме цього акту, назву відхилено повністю.
+        - ЗАБОРОНЕНО вигадувати репліки, імена та події, яких немає в матеріалах актів.
+        - ЗАБОРОНЕНО брати репліку з матеріалу іншого акту.
+        - Типи актів строго у заданому порядку: hook, downfall, struggle, catharsis.
 
-        ФОРМАТ — СТРОГО валидный JSON без markdown, без пояснений и без текста до или после:
+        ФОРМАТ — СУВОРО валідний JSON без markdown, без пояснень і без тексту до або після:
         {"acts":[{"type":"hook","title":"...","dramaticBeat":"...","quotedLine":"..."},{"type":"downfall","title":"...","dramaticBeat":"...","quotedLine":"..."},{"type":"struggle","title":"...","dramaticBeat":"...","quotedLine":"..."},{"type":"catharsis","title":"...","dramaticBeat":"...","quotedLine":"..."}]}
         """
     }
 
     static func actTitlesUserPrompt(materials: [String], movieTitle: String, concept: ThematicConcept) -> String {
-        var parts: [String] = ["Фильм: «\(movieTitle)». Тема эссе: «\(concept.word)».", "МАТЕРИАЛЫ АКТОВ:"]
+        var parts: [String] = ["Фільм: «\(movieTitle)». Тема есе: «\(concept.word)».", "МАТЕРІАЛИ АКТІВ:"]
         parts.append(contentsOf: materials)
         parts.append("""
-        Назови все четыре акта по их собственным репликам. Верни СТРОГО валидный JSON-объект \
-        с полем "acts" из четырёх элементов в каноническом порядке типов.
+        Назви всі чотири акти за їхніми власними репліками. Поверни СУВОРО валідний JSON-об'єкт \
+        з полем "acts" з чотирьох елементів у канонічному порядку типів.
         """)
         return parts.joined(separator: "\n\n")
     }
 
     /// Пинание при невалидном ответе — ровно форма `analyzeThematicCore`
     static func invalidOutputNudge(_ prompt: String) -> String {
-        prompt + "\n\nВНИМАНИЕ: предыдущий ответ был невалидным. Ответь ТОЛЬКО валидным JSON-объектом "
-            + "без markdown, без пояснений и без текста до или после объекта."
+        prompt + "\n\nУВАГА: попередня відповідь була невалідною. Відповідь ТІЛЬКИ валідним JSON-об'єктом "
+            + "без markdown, без пояснень і без тексту до або після об'єкта."
     }
 
     // MARK: - Вызов модели
@@ -304,10 +304,10 @@ final class LongformActTitleService: LongformActTitling, Sendable {
 
     private static func actType(forKey key: String) -> LongformActType? {
         switch key {
-        case "hook", "хук", "хук и тезис": return .hook
-        case "downfall", "падение", "падение и испытание": return .downfall
-        case "struggle", "борьба", "борьба и упорство": return .struggle
-        case "catharsis", "катарсис", "катарсис и прорыв": return .catharsis
+        case "hook", "хук", "хук і тезис", "гак", "гак і теза": return .hook
+        case "downfall", "падение", "падение и испытание", "падіння", "падіння і випробування": return .downfall
+        case "struggle", "борьба", "борьба и упорство", "боротьба", "боротьба й наполегливість": return .struggle
+        case "catharsis", "катарсис", "катарсис и прорыв", "катарсис і прорив": return .catharsis
         default: return nil
         }
     }

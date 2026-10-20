@@ -132,22 +132,22 @@ struct SentenceBoundaryTests {
     @Test("ThoughtCompletionScorer strictly penalizes panic shouting and open conjunctions, rewarding complete philosophical resolution")
     func testThoughtCompletionScoring() {
         // Open conjunction
-        let openConj = ThoughtCompletionScorer.evaluateConcludingPhrase("Его лучшая разводка заключалась в том, что...")
+        let openConj = ThoughtCompletionScorer.evaluateConcludingPhrase("Його найкраща розводка полягала в тому, що...")
         #expect(!openConj.isCompleteThought)
         #expect(openConj.scoreModifier <= -100_000.0)
 
         // Panic shout
-        let panicShout = ThoughtCompletionScorer.evaluateConcludingPhrase("Дела плохие! Барабаны бьют!")
+        let panicShout = ThoughtCompletionScorer.evaluateConcludingPhrase("Справи кепські! Барабани б'ють!")
         #expect(!panicShout.isCompleteThought)
         #expect(panicShout.scoreModifier <= -100_000.0)
 
         // Question
-        let question = ThoughtCompletionScorer.evaluateConcludingPhrase("И что они бьют?")
+        let question = ThoughtCompletionScorer.evaluateConcludingPhrase("І що вони б'ють?")
         #expect(!question.isCompleteThought)
         #expect(question.scoreModifier <= -100_000.0)
 
         // Closed philosophical resolution
-        let resolution = ThoughtCompletionScorer.evaluateConcludingPhrase("Он заставил тебя поверить, что он — это ты.")
+        let resolution = ThoughtCompletionScorer.evaluateConcludingPhrase("Він змусив тебе повірити, що він — це ти.")
         #expect(resolution.isCompleteThought)
         #expect(resolution.scoreModifier >= 400.0)
     }
@@ -415,16 +415,16 @@ struct SentenceBoundaryTests {
         let earlier = syntheticRun(start: 300, lines: 4)
             + syntheticRun(start: 1200, lines: 4)
             + syntheticRun(start: 2200, lines: 4)
-        // Оборванная мысль: придаточное висит, точка мысли не закрыта
+        // Оборвана думка: підрядне висить, точка думки не закрита
         let openEnded = [
-            TranscriptSegment(start: 3300.0, end: 3309.6, text: "Его лучшая разводка заключалась в том,", words: []),
-            TranscriptSegment(start: 3310.0, end: 3319.6, text: "что он заставил тебя поверить,", words: []),
-            TranscriptSegment(start: 3320.0, end: 3330.0, text: "и ты поверил во всё, что...", words: [])
+            TranscriptSegment(start: 3300.0, end: 3309.6, text: "Його найкраща розводка полягала в тому,", words: []),
+            TranscriptSegment(start: 3310.0, end: 3319.6, text: "що він змусив тебе повірити,", words: []),
+            TranscriptSegment(start: 3320.0, end: 3330.0, text: "і ти повірив у все, що...", words: [])
         ]
-        // Закрытая философская формулировка тем же актом
+        // Закрита філософська формулювання тим самим актом
         let closed = [
-            TranscriptSegment(start: 3800.0, end: 3809.6, text: "Он заставил тебя поверить,", words: []),
-            TranscriptSegment(start: 3810.0, end: 3820.0, text: "что он — это ты.", words: [])
+            TranscriptSegment(start: 3800.0, end: 3809.6, text: "Він змусив тебе повірити,", words: []),
+            TranscriptSegment(start: 3810.0, end: 3820.0, text: "що він — це ти.", words: [])
         ]
 
         // A: есть завершенная мысль — она и берётся, оборванную не вытягивает
@@ -455,24 +455,24 @@ struct SentenceBoundaryTests {
     @Test("Theme stemming matches inflected forms of the concept word in any film")
     func testThemeStemmingMatchesInflectedForms() async throws {
         let director = LongformNarrativeDirector()
-        let concept = syntheticConcept(word: "Субъективность")
+        let concept = syntheticConcept(word: "Суб'єктивність")
         let keywords = director.extractThematicKeywords(for: concept)
 
-        // Ядро выводится из самого слова, поэтому падежные формы совпадают с темой
-        #expect(keywords.contains("субъектив"))
-        #expect(keywords.contains { $0.count >= 6 && "оценка субъективна по самой сути".contains($0) })
+        // Ядро виводиться з самого слова, тому відмінкові форми збігаються з темою
+        #expect(keywords.contains("суб'єктив"))
+        #expect(keywords.contains { $0.count >= 6 && "оцінка суб'єктивна по самій суті".contains($0) })
 
-        // Тот же фильм, но тема живёт только в косвенных формах: позже стоящий
-        // тематический запуск обязан быть выбран вместо раннего внетематического
+        // Той самий фільм, але тема живе лише в непрямих формах: пізніше стоящий
+        // тематичний запуск обов'язково бути обраним замість раннього поза темою
         let offTheme = [
-            TranscriptSegment(start: 7700.0, end: 7709.6, text: "Общий план виден только со стороны.", words: []),
-            TranscriptSegment(start: 7710.0, end: 7719.6, text: "Ракурс меняет всю картину целиком.", words: []),
-            TranscriptSegment(start: 7720.0, end: 7729.6, text: "Итог зависит от точки отсчёта.", words: [])
+            TranscriptSegment(start: 7700.0, end: 7709.6, text: "Загальний план видно лише зі сторони.", words: []),
+            TranscriptSegment(start: 7710.0, end: 7719.6, text: "Ракурс змінює всю картину цілком.", words: []),
+            TranscriptSegment(start: 7720.0, end: 7729.6, text: "Підсумок залежить від точки відліку.", words: [])
         ]
         let onTheme = [
-            TranscriptSegment(start: 7900.0, end: 7909.6, text: "Итог субъективен лишь отчасти.", words: []),
-            TranscriptSegment(start: 7910.0, end: 7919.6, text: "Оценка субъективна по самой сути.", words: []),
-            TranscriptSegment(start: 7920.0, end: 7929.6, text: "Итог зависит от точки отсчёта.", words: [])
+            TranscriptSegment(start: 7900.0, end: 7909.6, text: "Підсумок суб'єктивний лише частково.", words: []),
+            TranscriptSegment(start: 7910.0, end: 7919.6, text: "Оцінка суб'єктивна по самій суті.", words: []),
+            TranscriptSegment(start: 7920.0, end: 7929.6, text: "Підсумок залежить від точки відліку.", words: [])
         ]
         let segments = syntheticRun(start: 600, lines: 3)
             + syntheticRun(start: 2200, lines: 3)
@@ -504,9 +504,9 @@ struct SentenceBoundaryTests {
                 }
             }
             // Generic beats, identical for every theme except the interpolated word
-            #expect(descriptors[1].title == "Испытание сомнением")
-            #expect(descriptors[2].title == "Точка слома")
-            #expect(descriptors[3].title == "Прозрение")
+            #expect(descriptors[1].title == "Випробування сумнівом")
+            #expect(descriptors[2].title == "Точка зламу")
+            #expect(descriptors[3].title == "Прозріння")
         }
         // Это нижний ярус — `.template`. Он больше НЕ является тем, что зритель видит по
         // умолчанию: названия актов выводятся из их собственного диалога, и что именно

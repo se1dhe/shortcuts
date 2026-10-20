@@ -5,15 +5,15 @@ import AVFoundation
 /// volume normalization to -14 LUFS (modern mobile social standard), and sidechain ducking of background music.
 public enum CinemaAudioMasteringService {
 
-    // MARK: - Standards & Constants (Mobile Social Standard)
+    // MARK: - Standards & Constants (Cinema Standard)
 
-    /// Target integrated loudness (-14.0 LUFS) conforming to modern mobile social networks (Reels, TikTok, Shorts).
-    public static let targetLUFS: Double = -14.0
+    /// Target integrated loudness (-16.0 LUFS) conforming to cinema and broadcast standard (YouTube, TV).
+    public static let targetLUFS: Double = -16.0
 
-    /// Maximum true peak level (-1.5 dBTP) to avoid inter-sample clipping on mobile DACs and lossy audio codecs (AAC/Opus).
-    public static let targetTruePeak: Double = -1.5
+    /// Maximum true peak level (-2.0 dBTP) for cinema-grade mastering with safe headroom.
+    public static let targetTruePeak: Double = -2.0
 
-    /// Loudness range target (7.0 LRA) optimized for dialog clarity and punch on small smartphone speakers.
+    /// Loudness range target (7.0 LRA) optimized for dialog clarity and dynamic range.
     public static let targetLRA: Double = 7.0
 
     // MARK: - Errors

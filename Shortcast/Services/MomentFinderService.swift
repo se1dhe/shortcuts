@@ -724,14 +724,16 @@ final class MomentFinderService {
     nonisolated static let approxCharsPerToken = 3.7
 
     /// Tokens the thematic call burns on framing: system prompt, section headers
-    /// and the chat template.
-    nonisolated static let thematicPromptOverheadTokens = 1_024
+    /// and the chat template. Increased to 1500 for chain-of-thought reasoning.
+    nonisolated static let thematicPromptOverheadTokens = 1_500
 
     /// Assumed token budget when a profile leaves KV unbounded (`maxKVSize == nil`).
-    nonisolated static let unboundedKVTokenBudget = 16_384
+    /// Increased to 40k tokens for ~100-120k character context (M3 18GB RAM limit).
+    nonisolated static let unboundedKVTokenBudget = 40_000
 
-    /// Room for primaryConcept + aiReasoning + 3 alternatives as JSON.
-    nonisolated static let thematicMaxTokens = 3_072
+    /// Room for chain-of-thought reasoning + primaryConcept + selectedMoments + 3 alternatives as JSON.
+    /// Increased from 3072 to 8192 for detailed analysis and moment selection.
+    nonisolated static let thematicMaxTokens = 8_192
 
     nonisolated static let thematicOverviewCharCap = 2_000
 

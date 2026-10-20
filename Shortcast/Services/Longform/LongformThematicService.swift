@@ -7,17 +7,26 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
     static func thematicSystemPrompt(movieTitle: String) -> String {
         """
         Ти — елітний кінорежисер, драматург і автор глибоких філософських відео-есів на YouTube для Shortcast Cinema.
-        Твоє завдання — проаналізувати повний хронологічний зріз сценарію фільму «\(movieTitle)», глибо зрозуміти прихований психологічний та екзистенційний конфлікт героїв і САМОСТІЙНО ОБРАТИ І ЗАПРОПОНУВАТИ ОДНУ ГОЛОВНУ ТЕМУ ЕСЕ (наприклад, «Его» для фільму «Револьвер», «Бунт» для «Бійцівського клубу», «Влада» для «Хрещеного батька» або те фундаментальне ядро, яке ти видобув із діалогів).
+        Твоє завдання — проаналізувати повний хронологічний зріз сценарію фільму «\(movieTitle)», глибо зрозуміти прихований психологічний та екзистенційний конфлікт героїв і САМОСТІЙНО ОБРАТИ І ЗАПРОПОНУВАТИ ОДНУ ГОЛОВНУ ТЕМУ ЕСЕ та КОНКРЕТНІ МОМЕНТИ для монтажу.
 
-        Вимоги до аналізу:
+        КРОК 1: ГЛИБОКИЙ АНАЛІЗ СТРУКТУРИ ФІЛЬМУ (chain-of-thought)
+        Перед вибором теми ти повинен спочатку проаналізувати:
+        1. Драматургічну арку фільму (зав'язка, кульмінація, розв'язка)
+        2. Ключові конфлікти та екзистенційні питання, які піднімає фільм
+        3. Психологічну еволюцію головного героя
+        4. 3-5 найсильніших сцен, які найкраще розкривають головну тему
+
+        КРОК 2: ВИБІР ТЕМИ ТА МОМЕНТІВ
         1. Вияви ОДНЕ потужне якірне слово теми (word) з великої літери (наприклад: «ЕГО», «ОБМАН», «СТРАХ», «ТЕРПІННЯ», «ГЕНІАЛЬНІСТЬ», «ВЛАДА»).
-        2. Сформулюй глибокий драматургічний розбір сценарію (aiReasoning): поясни автору есе, чому саме ця тема є прихованим двигуном сюжету, як вона розкривається у вчинках героїв і чому глядач буде вражений цим сенсом.
-        3. Запропонуй гострий слоган (tagline, 1 речення), філософський тез про ціну вибору/успіху (philosophicalPremise) та вірусний YouTube-заголовок від 2-ї особи (suggestedTitle).
-        4. Запропонуй РІВНО 3 альтернативні грані фільму (alternativeConcepts), якщо автор захоче змонтувати ролик з іншим сенсовим акцентом.
+        2. Сформулюй глибокий драматургічний розбір (aiReasoning): поясни, чому саме ця тема є прихованим двигуном сюжету.
+        3. Запропонуй гострий слоган (tagline), філософський тез (philosophicalPremise) та вірусний YouTube-заголовок (suggestedTitle).
+        4. ВИЗНАЧ КОНКРЕТНІ МОМЕНТИ для есе (selectedMoments) — 5-10 сцен з таймкодами, які найкраще розкривають тему.
+        5. Запропонуй РІВНО 3 альтернативні грані фільму (alternativeConcepts).
 
         ФОРМАТ ВИВОДУ:
         Відповідь СУВОРО валідним JSON-об'єктом без зайвих передмов і коментарів:
         {
+          "reasoning": "Детальний аналіз структури фільму: драматургічна арка, ключові конфлікти, еволюція героя, чому саме ця тема є центральною...",
           "primaryConcept": {
             "word": "Его",
             "tagline": "Твій головний ворог ховається там, де ти найменше будеш його шукати — в твоїй власній голові.",
@@ -25,7 +34,20 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
             "suggestedTitle": "Цей фільм знищить твою гординю. Філософія Револьвера",
             "accentColorHex": "#F5D020"
           },
-          "aiReasoning": "У діалогах ключовий конфлікт будується навколо ілюзії контролю та внутрішнього голосу в голові («твій найкращий розводчик — це твій голос у голові»). Вся драма розкриває перемогу над власним Его.",
+          "selectedMoments": [
+            {
+              "startTime": 120.5,
+              "endTime": 180.3,
+              "reason": "Ця сцена показує перший конфлікт героя з власним его, коли він усвідомлює...",
+              "dramaticWeight": 0.85
+            },
+            {
+              "startTime": 450.0,
+              "endTime": 520.7,
+              "reason": "Кульмінація внутрішнього конфлікту: герой стикається з наслідками своєї гордині...",
+              "dramaticWeight": 0.95
+            }
+          ],
           "alternativeConcepts": [
             {
               "word": "Обман",
@@ -33,16 +55,15 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
               "philosophicalPremise": "Перше правило шахів: захищай свої інтереси, розуміючи справжню гру маніпулятора.",
               "suggestedTitle": "Ти програєш, якщо не зрозумієш цю розводку.",
               "accentColorHex": "#F5D020"
-            },
-            {
-              "word": "Страх",
-              "tagline": "Страх втрати контролю руйнує людину швидше за будь-яку кулю.",
-              "philosophicalPremise": "Поки ти боїшся втратити те, чим дорожиш — тобою керує хтось інший.",
-              "suggestedTitle": "Твій головний страх керує кожним твоїм рішенням.",
-              "accentColorHex": "#E50914"
             }
           ]
         }
+
+        ВАЖЛИВО:
+        - selectedMoments повинен містити 5-10 сцен з точними таймкодами (startTime, endTime)
+        - Кожен момент повинен мати reason (пояснення, чому ця сцена важлива) та dramaticWeight (0.0-1.0)
+        - НЕ включай титри в кінці фільму — фокусуйся на сюжетних сценах
+        - Таймкоди повинні відповідати реальним сценам з транскрипту
         """
     }
 
@@ -119,23 +140,39 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         if let jsonString = JSONVariantParser.extractJSONObject(from: jsonText),
            let root = JSONVariantParser.deserializeTolerant(jsonString) as? [String: Any],
            let primary = parseConcept(root["primaryConcept"]),
-           let reasoning = nonEmptyString(root["aiReasoning"]) {
-            return makeResult(primary: primary, reasoning: reasoning, alternatives: conceptArray(root["alternativeConcepts"]))
+           let reasoning = nonEmptyString(root["aiReasoning"]) ?? nonEmptyString(root["reasoning"]) {
+            let moments = parseSelectedMoments(root["selectedMoments"])
+            return makeResult(primary: primary, reasoning: reasoning, moments: moments, alternatives: conceptArray(root["alternativeConcepts"]))
         }
 
         // Модель иногда возвращает массив вместо объекта: первая грань и есть главная тема.
         if let array = tolerantArray(from: jsonText), let head = array.first,
            let primary = parseConcept(head) {
             let reasoning = nonEmptyString(primary.philosophicalPremise) ?? primary.tagline
-            return makeResult(primary: primary, reasoning: reasoning, alternatives: conceptArray(Array(array.dropFirst())))
+            return makeResult(primary: primary, reasoning: reasoning, moments: [], alternatives: conceptArray(Array(array.dropFirst())))
         }
 
         return nil
     }
 
+    private static func parseSelectedMoments(_ value: Any?) -> [SelectedMoment] {
+        guard let entries = value as? [Any] else { return [] }
+        return entries.compactMap { entry -> SelectedMoment? in
+            guard let dict = entry as? [String: Any],
+                  let startTime = dict["startTime"] as? Double,
+                  let endTime = dict["endTime"] as? Double,
+                  let reason = nonEmptyString(dict["reason"])
+            else { return nil }
+            
+            let weight = dict["dramaticWeight"] as? Double ?? 0.5
+            return SelectedMoment(startTime: startTime, endTime: endTime, reason: reason, dramaticWeight: weight)
+        }
+    }
+
     private static func makeResult(
         primary: ThematicConcept,
         reasoning: String,
+        moments: [SelectedMoment],
         alternatives: [ThematicConcept]
     ) -> ThematicAnalysisResult {
         var main = primary
@@ -144,6 +181,7 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         return ThematicAnalysisResult(
             primaryConcept: main,
             aiReasoning: reasoning,
+            selectedMoments: moments,
             alternativeConcepts: alternatives,
             source: .llm
         )

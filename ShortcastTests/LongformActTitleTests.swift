@@ -215,6 +215,7 @@ struct LongformActTitleTests {
         let synthetic = try await director.buildArc(
             from: empty,
             concept: Self.concept(),
+            selectedMoments: [],
             movieTitle: "Синтетический полный метр",
             targetDuration: 520.0
         )

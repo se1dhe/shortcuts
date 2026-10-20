@@ -671,9 +671,11 @@ final class WorkspaceModel {
         Task {
             do {
                 let narrativeDirector = LongformNarrativeDirector()
+                let selectedMoments = self.thematicAnalysis?.selectedMoments ?? []
                 let arc = try await narrativeDirector.buildArc(
                     from: transcript,
                     concept: concept,
+                    selectedMoments: selectedMoments,
                     movieTitle: finalMovieTitle
                 )
                 self.stagedArc = arc
@@ -801,11 +803,13 @@ final class WorkspaceModel {
         pipelineTask = Task {
             do {
                 let coordinator = LongformPipelineCoordinator()
+                let selectedMoments = self.thematicAnalysis?.selectedMoments ?? []
                 let result = try await coordinator.buildLongformVideo(
                     sourceURL: currentJob.url,
                     movieTitle: finalMovieTitle,
                     transcript: transcript,
                     concept: concept,
+                    selectedMoments: selectedMoments,
                     audioSettings: audioSettings,
                     existingArc: existingArc,
                     workingDirectory: workDir,
@@ -879,11 +883,13 @@ final class WorkspaceModel {
         pipelineTask = Task {
             do {
                 let coordinator = LongformPipelineCoordinator()
+                let selectedMoments = self.thematicAnalysis?.selectedMoments ?? []
                 let result = try await coordinator.buildLongformVideo(
                     sourceURL: currentJob.url,
                     movieTitle: finalMovieTitle,
                     transcript: transcript,
                     concept: concept,
+                    selectedMoments: selectedMoments,
                     audioSettings: audioSettings,
                     workingDirectory: workDir,
                     channelLogoEnabled: settings.channelLogoWatermarkEnabled

@@ -96,6 +96,7 @@ struct SentenceBoundaryTests {
         let arc = try await director.buildArc(
             from: transcript,
             concept: concept,
+            selectedMoments: [],
             movieTitle: "Револьвер",
             targetDuration: 360.0
         )
@@ -179,6 +180,7 @@ struct SentenceBoundaryTests {
         let arc = try await director.buildArc(
             from: transcript,
             concept: concept,
+            selectedMoments: [],
             movieTitle: "Револьвер",
             targetDuration: 360.0
         )
@@ -237,6 +239,7 @@ struct SentenceBoundaryTests {
         let arc = try await director.buildArc(
             from: transcript,
             concept: concept,
+            selectedMoments: [],
             movieTitle: "Револьвер",
             targetDuration: 360.0
         )
@@ -309,6 +312,7 @@ struct SentenceBoundaryTests {
         let arc = try await director.buildArc(
             from: transcript,
             concept: syntheticConcept(),
+            selectedMoments: [],
             movieTitle: "Синтетический полный метр",
             targetDuration: 520.0
         )
@@ -338,6 +342,7 @@ struct SentenceBoundaryTests {
         let arc = try await director.buildArc(
             from: transcript,
             concept: syntheticConcept(),
+            selectedMoments: [],
             movieTitle: "Синтетический полный метр",
             targetDuration: 520.0
         )
@@ -359,6 +364,7 @@ struct SentenceBoundaryTests {
         let arc = try await director.buildArc(
             from: transcript,
             concept: syntheticConcept(),
+            selectedMoments: [],
             movieTitle: "Синтетический полный метр",
             targetDuration: 520.0
         )
@@ -397,8 +403,9 @@ struct SentenceBoundaryTests {
                 language: "ru"
             )
             let arc = try await director.buildArc(
-                from: transcript,
+            from: transcript,
                 concept: syntheticConcept(),
+                selectedMoments: [],
                 movieTitle: "Синтетический полный метр",
                 targetDuration: 520.0
             )
@@ -431,6 +438,7 @@ struct SentenceBoundaryTests {
         let arcWithClosed = try await director.buildArc(
             from: Transcript(segments: earlier + openEnded + closed, language: "ru"),
             concept: syntheticConcept(word: "Иллюзия"),
+            selectedMoments: [],
             movieTitle: "Синтетический полный метр",
             targetDuration: 520.0
         )
@@ -443,6 +451,7 @@ struct SentenceBoundaryTests {
         let arcOpenOnly = try await director.buildArc(
             from: Transcript(segments: earlier + openEnded, language: "ru"),
             concept: syntheticConcept(word: "Иллюзия"),
+            selectedMoments: [],
             movieTitle: "Синтетический полный метр",
             targetDuration: 520.0
         )
@@ -483,6 +492,7 @@ struct SentenceBoundaryTests {
         let arc = try await director.buildArc(
             from: Transcript(segments: segments, language: "ru"),
             concept: concept,
+            selectedMoments: [],
             movieTitle: "Синтетический полный метр",
             targetDuration: 520.0
         )

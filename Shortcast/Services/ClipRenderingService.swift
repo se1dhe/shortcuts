@@ -215,6 +215,25 @@ struct ClipRenderingService {
         if !clip.candidate.variants.isEmpty && !hasCondensation {
             clip.variants = clip.candidate.variants
             clip.detectedLanguage = captionLanguage
+            
+            // Apply cinema-grade loudness normalization (-16 LUFS) before marking ready
+            if let clipURL = clip.clipJob?.url {
+                do {
+                    let loudnessService = LongformLoudnessService()
+                    let normalizedURL = try await loudnessService.normalize(
+                        videoURL: clipURL,
+                        outputURL: clipURL,
+                        workingDirectory: nil
+                    )
+                    if normalizedURL != clipURL {
+                        clip.clipJob = VideoJob(url: normalizedURL, durationSeconds: clip.clipJob?.durationSeconds ?? 0)
+                    }
+                    ShortClip.log("Applied loudness normalization to Short clip: \(clipURL.lastPathComponent)")
+                } catch {
+                    ShortClip.log("WARNING: Loudness normalization failed for Short clip: \(error.localizedDescription). Continuing without normalization.")
+                }
+            }
+            
             clip.stage = .ready
         } else {
             clip.stage = .captioning
@@ -224,6 +243,25 @@ struct ClipRenderingService {
                 settings: settings,
                 transcriptLanguage: captionLanguage)
             clip.applyGeneratedCopy(result, detectedLanguage: result.detectedLanguage)
+            
+            // Apply cinema-grade loudness normalization (-16 LUFS) before marking ready
+            if let clipURL = clip.clipJob?.url {
+                do {
+                    let loudnessService = LongformLoudnessService()
+                    let normalizedURL = try await loudnessService.normalize(
+                        videoURL: clipURL,
+                        outputURL: clipURL,
+                        workingDirectory: nil
+                    )
+                    if normalizedURL != clipURL {
+                        clip.clipJob = VideoJob(url: normalizedURL, durationSeconds: clip.clipJob?.durationSeconds ?? 0)
+                    }
+                    ShortClip.log("Applied loudness normalization to Short clip: \(clipURL.lastPathComponent)")
+                } catch {
+                    ShortClip.log("WARNING: Loudness normalization failed for Short clip: \(error.localizedDescription). Continuing without normalization.")
+                }
+            }
+            
             clip.stage = .ready
         }
 

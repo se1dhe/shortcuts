@@ -29,8 +29,150 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
     func buildArc(
         from transcript: Transcript,
         concept: ThematicConcept,
+        selectedMoments: [SelectedMoment],
         movieTitle: String,
         targetDuration: Double = 520.0
+    ) async throws -> LongformNarrativeArc {
+        let clampedAsk = min(max(targetDuration, 300.0), 600.0)
+        let segments = transcript.segments
+
+        guard !segments.isEmpty else {
+            // Если транскрипт пуст, возвращаем синтетическую тестовую структуру
+            return makeSyntheticArc(
+                movieTitle: movieTitle,
+                concept: concept,
+                targetDuration: clampedAsk
+            )
+        }
+
+        // Если LLM предоставила selectedMoments, используем их вместо эвристики
+        if !selectedMoments.isEmpty {
+            return try buildArcFromSelectedMoments(
+                selectedMoments: selectedMoments,
+                transcript: transcript,
+                concept: concept,
+                movieTitle: movieTitle,
+                targetDuration: clampedAsk
+            )
+        }
+
+        // Fallback на эвристику, если selectedMoments пуст
+        return try await buildArcHeuristic(
+            from: transcript,
+            concept: concept,
+            movieTitle: movieTitle,
+            targetDuration: clampedAsk
+        )
+    }
+
+    /// Строит 4-актную арку из моментов, выбранных LLM
+    private func buildArcFromSelectedMoments(
+        selectedMoments: [SelectedMoment],
+        transcript: Transcript,
+        concept: ThematicConcept,
+        movieTitle: String,
+        targetDuration: Double
+    ) throws -> LongformNarrativeArc {
+        let totalMovieDuration = transcript.segments.last?.end ?? targetDuration
+        
+        // Пост-фильтрация: исключаем моменты, попадающие в последние 5% фильма (титры)
+        let creditsCutoff = totalMovieDuration * 0.95
+        let filteredMoments = selectedMoments.filter { $0.endTime < creditsCutoff }
+        
+        // Если фильтрация удалила все моменты, используем оригинальные (fallback)
+        let momentsToUse = filteredMoments.isEmpty ? selectedMoments : filteredMoments
+        
+        // Сортируем моменты по startTime
+        let sortedMoments = momentsToUse.sorted { $0.startTime < $1.startTime }
+        
+        // Распределяем моменты по 4 актам на основе их позиции в фильме
+        let act1Cutoff = totalMovieDuration * 0.25
+        let act2Cutoff = totalMovieDuration * 0.50
+        let act3Cutoff = totalMovieDuration * 0.75
+        
+        var act1Moments: [SelectedMoment] = []
+        var act2Moments: [SelectedMoment] = []
+        var act3Moments: [SelectedMoment] = []
+        var act4Moments: [SelectedMoment] = []
+        
+        for moment in sortedMoments {
+            let midPoint = (moment.startTime + moment.endTime) / 2
+            if midPoint < act1Cutoff {
+                act1Moments.append(moment)
+            } else if midPoint < act2Cutoff {
+                act2Moments.append(moment)
+            } else if midPoint < act3Cutoff {
+                act3Moments.append(moment)
+            } else {
+                act4Moments.append(moment)
+            }
+        }
+        
+        // Строим акты
+        var acts: [LongformAct] = []
+        
+        func buildAct(from moments: [SelectedMoment], type: LongformActType, actNumber: Int) -> LongformAct? {
+            guard !moments.isEmpty else { return nil }
+            
+            let actSegments = moments.map { TimeSegment(start: $0.startTime, end: $0.endTime) }
+            let totalDuration = actSegments.reduce(0.0) { $0 + ($1.end - $1.start) }
+            
+            // Генерируем dramatic beat на основе reason первого момента
+            let dramaticBeat = moments.first?.reason ?? "Сцена раскрывает тему «\(concept.word)»"
+            
+            return LongformAct(
+                type: type,
+                title: "", // Будет заполнено actTitling
+                dramaticBeat: dramaticBeat,
+                segments: actSegments
+            )
+        }
+        
+        if let act = buildAct(from: act1Moments, type: .hook, actNumber: 1) {
+            acts.append(act)
+        }
+        if let act = buildAct(from: act2Moments, type: .downfall, actNumber: 2) {
+            acts.append(act)
+        }
+        if let act = buildAct(from: act3Moments, type: .struggle, actNumber: 3) {
+            acts.append(act)
+        }
+        if let act = buildAct(from: act4Moments, type: .catharsis, actNumber: 4) {
+            acts.append(act)
+        }
+        
+        // Если не все акты заполнены, добавляем синтетические
+        while acts.count < 4 {
+            let actNumber = acts.count + 1
+            let type: LongformActType = actNumber == 1 ? .hook : (actNumber == 2 ? .downfall : (actNumber == 3 ? .struggle : .catharsis))
+            acts.append(LongformAct(
+                type: type,
+                title: "",
+                dramaticBeat: "Акт \(actNumber): тема «\(concept.word)»",
+                segments: []
+            ))
+        }
+        
+        let totalDuration = acts.reduce(0.0) { $0 + $1.duration }
+        
+        let filteredCount = selectedMoments.count - momentsToUse.count
+        let filterNote = filteredCount > 0 ? " (filtered \(filteredCount) moments in credits zone)" : ""
+        
+        return LongformNarrativeArc(
+            movieTitle: movieTitle,
+            concept: concept,
+            acts: acts,
+            summary: "LLM-selected moments: \(momentsToUse.count) moments distributed across 4 acts\(filterNote)",
+            mood: "dramatic"
+        )
+    }
+
+    /// Эвристический построитель арки (fallback, когда LLM не предоставила moments)
+    private func buildArcHeuristic(
+        from transcript: Transcript,
+        concept: ThematicConcept,
+        movieTitle: String,
+        targetDuration: Double
     ) async throws -> LongformNarrativeArc {
         let clampedAsk = min(max(targetDuration, 300.0), 600.0)
         let segments = transcript.segments

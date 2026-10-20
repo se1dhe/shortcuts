@@ -86,6 +86,9 @@ struct ThematicAnalysisResult: Codable, Sendable, Equatable {
     /// Драматургический и психологический разбор сценария: почему модель выбрала именно эту тему
     var aiReasoning: String
 
+    /// Конкретные моменты (сцены) для эссе, выбранные моделью
+    var selectedMoments: [SelectedMoment]
+
     /// Альтернативные философские грани и темы, выявленные в диалогах
     var alternativeConcepts: [ThematicConcept]
 
@@ -105,6 +108,7 @@ struct ThematicAnalysisResult: Codable, Sendable, Equatable {
     init(
         primaryConcept: ThematicConcept,
         aiReasoning: String,
+        selectedMoments: [SelectedMoment] = [],
         alternativeConcepts: [ThematicConcept] = [],
         source: ThematicSource = .unknown
     ) {
@@ -118,19 +122,45 @@ struct ThematicAnalysisResult: Codable, Sendable, Equatable {
         }
         self.primaryConcept = primary
         self.aiReasoning = aiReasoning
+        self.selectedMoments = selectedMoments
         self.alternativeConcepts = alternativeConcepts
         self.source = source
     }
 
     private enum CodingKeys: String, CodingKey {
-        case primaryConcept, aiReasoning, alternativeConcepts, source
+        case primaryConcept, aiReasoning, selectedMoments, alternativeConcepts, source
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         primaryConcept = try c.decode(ThematicConcept.self, forKey: .primaryConcept)
         aiReasoning = try c.decode(String.self, forKey: .aiReasoning)
+        selectedMoments = try c.decodeIfPresent([SelectedMoment].self, forKey: .selectedMoments) ?? []
         alternativeConcepts = try c.decodeIfPresent([ThematicConcept].self, forKey: .alternativeConcepts) ?? []
         source = try c.decodeIfPresent(ThematicSource.self, forKey: .source) ?? .unknown
+    }
+}
+
+/// Конкретный момент (сцена) для эссе, выбранный LLM на основе анализа транскрипта
+struct SelectedMoment: Codable, Sendable, Equatable, Identifiable {
+    var id: String { "\(startTime)-\(endTime)" }
+    
+    /// Начало сцены в секундах от начала фильма
+    let startTime: Double
+    
+    /// Конец сцены в секундах от начала фильма
+    let endTime: Double
+    
+    /// Объяснение, почему эта сцена важна для раскрытия темы
+    let reason: String
+    
+    /// Драматургический вес сцены (0.0-1.0)
+    let dramaticWeight: Double
+    
+    init(startTime: Double, endTime: Double, reason: String, dramaticWeight: Double) {
+        self.startTime = startTime
+        self.endTime = endTime
+        self.reason = reason
+        self.dramaticWeight = dramaticWeight
     }
 }

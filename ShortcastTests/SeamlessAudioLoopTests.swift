@@ -266,7 +266,7 @@ struct LongformLoudnessNormalizationTests {
         let expectedPrefix = "loudnorm=I=\(String(format: "%.0f", CinemaAudioMasteringService.targetLUFS))"
             + ":TP=\(String(format: "%.1f", CinemaAudioMasteringService.targetTruePeak))"
             + ":LRA=\(String(format: "%.0f", CinemaAudioMasteringService.targetLRA))"
-        #expect(expectedPrefix == "loudnorm=I=-14:TP=-1.5:LRA=7")
+        #expect(expectedPrefix == "loudnorm=I=-16:TP=-2.0:LRA=7")
         #expect(runner.calls.count == 2)
 
         for call in runner.calls {

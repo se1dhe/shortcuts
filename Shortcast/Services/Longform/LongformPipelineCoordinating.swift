@@ -65,32 +65,11 @@ protocol LongformPipelineCoordinating: Sendable {
         movieTitle: String,
         transcript: Transcript,
         concept: ThematicConcept,
+        selectedMoments: [SelectedMoment],
         audioSettings: LongformAudioSettings,
         existingArc: LongformNarrativeArc?,
         workingDirectory: URL?,
         channelLogoEnabled: Bool,
-        progressHandler: (@Sendable (Double, String) -> Void)?
-    ) async throws -> LongformBuildResult
-
-    func buildLongformVideo(
-        sourceURL: URL,
-        movieTitle: String,
-        transcript: Transcript,
-        concept: ThematicConcept,
-        audioSettings: LongformAudioSettings,
-        workingDirectory: URL?,
-        progressHandler: (@Sendable (Double, String) -> Void)?
-    ) async throws -> LongformBuildResult
-
-    func buildLongformVideo(
-        sourceURL: URL,
-        movieTitle: String,
-        transcript: Transcript,
-        concept: ThematicConcept,
-        backgroundMusicURL: URL?,
-        musicVolume: Float,
-        duckingEnabled: Bool,
-        workingDirectory: URL?,
         progressHandler: (@Sendable (Double, String) -> Void)?
     ) async throws -> LongformBuildResult
 }
@@ -117,7 +96,9 @@ extension LongformPipelineCoordinating {
             movieTitle: movieTitle,
             transcript: transcript,
             concept: concept,
+            selectedMoments: [],
             audioSettings: settings,
+            existingArc: nil,
             workingDirectory: workingDirectory,
             channelLogoEnabled: true,
             progressHandler: progressHandler
@@ -146,7 +127,9 @@ extension LongformPipelineCoordinating {
             movieTitle: movieTitle,
             transcript: transcript,
             concept: concept,
+            selectedMoments: [],
             audioSettings: settings,
+            existingArc: nil,
             workingDirectory: workingDirectory,
             channelLogoEnabled: channelLogoEnabled,
             progressHandler: progressHandler
@@ -167,6 +150,7 @@ extension LongformPipelineCoordinating {
             movieTitle: movieTitle,
             transcript: transcript,
             concept: concept,
+            selectedMoments: [],
             audioSettings: audioSettings,
             existingArc: nil,
             workingDirectory: workingDirectory,
@@ -190,6 +174,7 @@ extension LongformPipelineCoordinating {
             movieTitle: movieTitle,
             transcript: transcript,
             concept: concept,
+            selectedMoments: [],
             audioSettings: audioSettings,
             existingArc: nil,
             workingDirectory: workingDirectory,
@@ -211,7 +196,9 @@ extension LongformPipelineCoordinating {
             movieTitle: movieTitle,
             transcript: transcript,
             concept: concept,
+            selectedMoments: [],
             audioSettings: audioSettings,
+            existingArc: nil,
             workingDirectory: nil,
             channelLogoEnabled: true,
             progressHandler: progressHandler
@@ -224,39 +211,23 @@ extension LongformPipelineCoordinating {
         transcript: Transcript,
         concept: ThematicConcept,
         backgroundMusicURL: URL?,
-        musicVolume: Float,
         progressHandler: (@Sendable (Double, String) -> Void)?
     ) async throws -> LongformBuildResult {
-        try await buildLongformVideo(
-            sourceURL: sourceURL,
-            movieTitle: movieTitle,
-            transcript: transcript,
-            concept: concept,
-            backgroundMusicURL: backgroundMusicURL,
-            musicVolume: musicVolume,
-            duckingEnabled: true,
-            workingDirectory: nil,
-            progressHandler: progressHandler
-        )
-    }
-
-    func buildLongformVideo(
-        sourceURL: URL,
-        movieTitle: String,
-        transcript: Transcript,
-        concept: ThematicConcept,
-        backgroundMusicURL: URL?,
-        progressHandler: (@Sendable (Double, String) -> Void)?
-    ) async throws -> LongformBuildResult {
-        try await buildLongformVideo(
-            sourceURL: sourceURL,
-            movieTitle: movieTitle,
-            transcript: transcript,
-            concept: concept,
+        let settings = LongformAudioSettings(
             backgroundMusicURL: backgroundMusicURL,
             musicVolume: 0.28,
-            duckingEnabled: true,
+            duckingEnabled: true
+        )
+        return try await buildLongformVideo(
+            sourceURL: sourceURL,
+            movieTitle: movieTitle,
+            transcript: transcript,
+            concept: concept,
+            selectedMoments: [],
+            audioSettings: settings,
+            existingArc: nil,
             workingDirectory: nil,
+            channelLogoEnabled: true,
             progressHandler: progressHandler
         )
     }

@@ -634,7 +634,12 @@ final class MomentFinderService {
             promptParts.append("Синопсис/сюжет фільму:\n\"\"\"\n\(overview)\n\"\"\"")
         }
         promptParts.append("Зріз ключових діалогів фільму (хронологічно по всьому сюжету):\n\"\"\"\n\(dialogue)\n\"\"\"")
-        promptParts.append("Обери ОДНУ ГОЛОВНУ тему есе (primaryConcept), докладно обґрунтуй вибір (aiReasoning) та запропонуй альтернативні грані (alternativeConcepts). Поверни СУВОРО валідний JSON-об'єкт:")
+        promptParts.append("""
+            Обери ОДНУ ГОЛОВНУ тему есе (primaryConcept), докладно обґрунтуй вибір (aiReasoning), \
+            ВИЗНАЧ 5-10 КОНКРЕТНИХ МОМЕНТІВ для монтажу (selectedMoments) з точними таймкодами, \
+            та запропонуй альтернативні грані (alternativeConcepts). \
+            Поверни СУВОРО валідний JSON-об'єкт у форматі, вказаному в системній інструкції.
+            """)
         let userPrompt = promptParts.joined(separator: "\n\n")
 
         let estimatedPromptTokens = Int(Double(userPrompt.count + instructions.count) / Self.approxCharsPerToken)
@@ -782,10 +787,7 @@ final class MomentFinderService {
     private func parseMovieInference(_ raw: String, fallbackTitle: String, fallbackYear: String?) -> TMDBMovie? {
         guard let jsonString = JSONVariantParser.extractJSONObject(from: raw),
               let root = JSONVariantParser.deserializeTolerant(jsonString) as? [String: Any]
-        else {
-            Self.log("inferMovie: could not parse JSON")
-            return nil
-        }
+        else { return nil }
 
         let title = (root["title"] as? String)?.trimmed ?? fallbackTitle
         let year = (root["year"] as? String)?.trimmed ?? fallbackYear ?? ""
@@ -795,6 +797,63 @@ final class MomentFinderService {
 
         guard !title.isEmpty else { return nil }
         return TMDBMovie(title: title, year: year, genres: genres, overview: "", cast: cast, director: director)
+    }
+
+    /// Исправляет украинское слово/тему через LLM, возвращая правильное литературное слово.
+    /// Используется для коррекции неологизмов и русизмов, которые модель может генерировать.
+    func correctUkrainianWord(_ word: String, context: String? = nil) async -> String? {
+        guard let container else {
+            Self.log("correctUkrainianWord: no model loaded")
+            return nil
+        }
+
+        let instructions = """
+        Ти — експерт з української літературної мови. Твоє завдання — виправити слово або фразу на правильну українську літературну форму.
+        
+        ПРАВИЛА:
+        - Використовуй ВИКЛЮЧНО правильну українську літературну мову
+        - ЗАБОРОНЕНО використовувати русизми, суржик або неологізми
+        - Якщо слово вже правильне — поверни його без змін
+        - Повертай ТІЛЬКИ виправлене слово, без пояснень і додаткового тексту
+        """
+
+        var prompt = "Виправ це слово/фразу на правильну українську літературну форму:\n\n"
+        prompt += "СЛОВО: \"\(word)\""
+        
+        if let context = context {
+            prompt += "\n\nКОНТЕКСТ: \(context)"
+        }
+        
+        prompt += "\n\nПоверни ТІЛЬКИ виправлене слово без лапок і пояснень:"
+
+        let session = ChatSession(
+            container,
+            instructions: instructions,
+            generateParameters: GenerateParameters(
+                maxTokens: 50,
+                temperature: 0.2,
+                topP: profile.sampling.topP,
+                topK: profile.sampling.topK,
+                minP: profile.sampling.minP,
+                repetitionPenalty: profile.sampling.repetitionPenalty),
+            additionalContext: ["enable_thinking": false])
+
+        var raw = ""
+        do {
+            for try await chunk in session.streamResponse(to: prompt) {
+                raw += chunk
+            }
+        } catch {
+            Self.log("correctUkrainianWord failed: \(error.localizedDescription)")
+            return nil
+        }
+
+        let corrected = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'«»"))
+            .trimmed
+        
+        Self.log("correctUkrainianWord: '\(word)' → '\(corrected)'")
+        return corrected.isEmpty ? nil : corrected
     }
 
     private func stringArray(_ value: Any?) -> [String] {

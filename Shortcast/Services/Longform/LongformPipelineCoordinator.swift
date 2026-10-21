@@ -271,16 +271,21 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             end: Double
         ) {
             let safeStart = max(start, lastOpacityRampEnd + 0.001)
-            guard end - safeStart >= 0.02 else { return }
+            // Рампа не имеет права заканчиваться позже смонтированного видео:
+            // короткий финальный кадр растягивает fade-in за конец таймлайна,
+            // финальный кейфрейм чёрного падает внутрь ещё идущей рампы, и
+            // AVFoundation бросает неуловимое ObjC-исключение.
+            let safeEnd = min(end, speechFinishTime)
+            guard safeEnd - safeStart >= 0.02 else { return }
             layerInstruction.setOpacityRamp(
                 fromStartOpacity: startOpacity,
                 toEndOpacity: endOpacity,
                 timeRange: CMTimeRange(
                     start: CMTime(seconds: safeStart, preferredTimescale: 600),
-                    duration: CMTime(seconds: end - safeStart, preferredTimescale: 600)
+                    duration: CMTime(seconds: safeEnd - safeStart, preferredTimescale: 600)
                 )
             )
-            lastOpacityRampEnd = end
+            lastOpacityRampEnd = safeEnd
         }
 
         // Плавный выход первого кадра фильма из затемнения (Cold Open Fade-In)
@@ -329,7 +334,12 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             start: finalFadeStart,
             end: speechFinishTime
         )
-        layerInstruction.setOpacity(0.0, at: CMTime(seconds: speechFinishTime, preferredTimescale: 600))
+        // Кейфрейм держит чёрным весь аутро-хвост. Ставим его только строго вне
+        // активных рамп: совпадение с концом последней рампы безопасно, а вот
+        // попадание внутрь — ObjC-исключение, убивающее процесс.
+        if speechFinishTime >= lastOpacityRampEnd {
+            layerInstruction.setOpacity(0.0, at: CMTime(seconds: speechFinishTime, preferredTimescale: 600))
+        }
 
         instruction.layerInstructions = [layerInstruction]
         videoComposition.instructions = [instruction]

@@ -26,6 +26,44 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
     /// Хвост считается использованным, если запуск акта IV начинается не раньше этой доли фильма
     static let usedTailStartRatio: Double = 0.85
 
+    /// Чистит сырые LLM-таймкоды моментов: выбрасывает инвертированные диапазоны и
+    /// крои короче `minRunDuration`, клампит выход за пределы фильма и склеивает
+    /// перекрывающиеся/касающиеся моменты в один спан. AVFoundation валидирует
+    /// диапазоны композиции ObjC-исключениями, которые Swift-`catch` не перехватывает,
+    /// поэтому сырой ввод модели нельзя пускать в арку без чистки.
+    static func sanitizeSelectedMoments(
+        _ moments: [SelectedMoment],
+        totalMovieDuration: Double
+    ) -> [SelectedMoment] {
+        guard totalMovieDuration > 0 else { return [] }
+
+        var clean: [SelectedMoment] = []
+        for raw in moments.sorted(by: { $0.startTime < $1.startTime }) {
+            let start = max(0, raw.startTime)
+            let end = min(raw.endTime, totalMovieDuration)
+            guard end - start >= minRunDuration else { continue }
+
+            if let last = clean.last, start <= last.endTime {
+                clean[clean.count - 1] = SelectedMoment(
+                    startTime: last.startTime,
+                    endTime: max(last.endTime, end),
+                    reason: last.reason,
+                    dramaticWeight: max(last.dramaticWeight, raw.dramaticWeight)
+                )
+            } else {
+                clean.append(
+                    SelectedMoment(
+                        startTime: start,
+                        endTime: end,
+                        reason: raw.reason,
+                        dramaticWeight: raw.dramaticWeight
+                    )
+                )
+            }
+        }
+        return clean
+    }
+
     func buildArc(
         from transcript: Transcript,
         concept: ThematicConcept,
@@ -45,10 +83,16 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             )
         }
 
-        // Если LLM предоставила selectedMoments, используем их вместо эвристики
-        if !selectedMoments.isEmpty {
+        // LLM-таймкоды — непроверенный внешний вход: без чистки инвертированные или
+        // вырожденные диапазоны доводят AVFoundation до неуловимого ObjC-исключения.
+        // Если после чистки материала не осталось — честный откат на эвристику.
+        let sanitizedMoments = Self.sanitizeSelectedMoments(
+            selectedMoments,
+            totalMovieDuration: segments.last?.end ?? 0
+        )
+        if !sanitizedMoments.isEmpty {
             return try buildArcFromSelectedMoments(
-                selectedMoments: selectedMoments,
+                selectedMoments: sanitizedMoments,
                 transcript: transcript,
                 concept: concept,
                 movieTitle: movieTitle,

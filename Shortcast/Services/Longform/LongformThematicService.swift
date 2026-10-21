@@ -1,7 +1,10 @@
 import Foundation
+import os
 
 /// Реализация ThematicConceptDiscovering для выявления тем Shortcast Cinema (SOLID)
 final class LongformThematicService: ThematicConceptDiscovering, Sendable {
+
+    private static let logger = Logger(subsystem: "app.shortcast", category: "LongformThematicService")
 
     /// Подсказка для LLM в роли сценариста-философа и вирусного YouTube-режиссера
     static func thematicSystemPrompt(movieTitle: String) -> String {
@@ -71,7 +74,7 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         МОВА (КРИТИЧНО ВАЖЛИВО):
         - Використовуй ВИКЛЮЧНО ПРАВИЛЬНУ УКРАЇНСЬКУ ЛІТЕРАТУРНУ МОВУ
         - ЗАБОРОНЕНО використовувати русизми та суржик
-        - Правильні українські слова: ВРЯТУВАТИ (не "спасити"), ЗБАВИТИ (не "спасти"), НИЖНІЙ (не "спідний"), ВІК (не "вік" у значенні "эпоха" — використовуй "ЕПОХА" або "ДОБА")
+        - Використовуй ВИКЛЮЧНО правильні українські літературні слова: ВРЯТУВАТИ, ЗБАВИТИ, НИЖНІЙ, ЕПОХА, ДОБА
         - Приклади правильних тем: "ВРЯТУВАТИ", "ЗБАВИТИ", "ЕГО", "ОБМАН", "СТРАХ", "ТЕРПІННЯ", "ГЕНІАЛЬНІСТЬ", "ВЛАДА", "СВОБОДА", "ІСТИНА"
         - Кожен теглайн, філософський тез та назва мають бути граматично правильними українською
         - Якщо сумніваєшся у слові — використовуй простіше, але правильне українське слово
@@ -155,31 +158,82 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
            let primary = parseConcept(root["primaryConcept"]),
            let reasoning = nonEmptyString(root["aiReasoning"]) ?? nonEmptyString(root["reasoning"]) {
             let moments = parseSelectedMoments(root["selectedMoments"])
-            return makeResult(primary: primary, reasoning: reasoning, moments: moments, alternatives: conceptArray(root["alternativeConcepts"]))
+            // Фильтрация некириллических символов (арабские, латинские и т.п.) из текстовых полей
+            let filteredPrimary = filterConcept(primary)
+            // После фильтрации обязательные поля могут стать пустыми — отбракуем такой результат
+            guard isValidConcept(filteredPrimary) else { return nil }
+            let filteredReasoning = filterNonCyrillic(reasoning)
+            let filteredMoments = moments.map { moment in
+                SelectedMoment(startTime: moment.startTime, endTime: moment.endTime,
+                               reason: filterNonCyrillic(moment.reason), dramaticWeight: moment.dramaticWeight)
+            }
+            let filteredAlts = conceptArray(root["alternativeConcepts"]).map { filterConcept($0) }.filter { isValidConcept($0) }
+            return makeResult(primary: filteredPrimary, reasoning: filteredReasoning, moments: filteredMoments, alternatives: filteredAlts)
         }
 
         // Модель иногда возвращает массив вместо объекта: первая грань и есть главная тема.
         if let array = tolerantArray(from: jsonText), let head = array.first,
            let primary = parseConcept(head) {
-            let reasoning = nonEmptyString(primary.philosophicalPremise) ?? primary.tagline
-            return makeResult(primary: primary, reasoning: reasoning, moments: [], alternatives: conceptArray(Array(array.dropFirst())))
+            let filteredPrimary = filterConcept(primary)
+            guard isValidConcept(filteredPrimary) else { return nil }
+            let reasoning = nonEmptyString(filteredPrimary.philosophicalPremise) ?? filteredPrimary.tagline
+            return makeResult(primary: filteredPrimary, reasoning: filterNonCyrillic(reasoning ?? ""), moments: [], alternatives: conceptArray(Array(array.dropFirst())).map { filterConcept($0) }.filter { isValidConcept($0) })
         }
 
         return nil
+    }
+
+    /// Проверяет, что обязательные поля концепта (word, tagline, suggestedTitle) не пусты
+    /// после фильтрации некириллических символов.
+    private static func isValidConcept(_ concept: ThematicConcept) -> Bool {
+        !concept.word.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !concept.tagline.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !concept.suggestedTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    // MARK: - Фильтрация некириллических символов (Задача 2)
+
+    /// Удаляет некириллические символы (арабские, латинские и др.), сохраняя кириллицу,
+    /// цифры, пробелы и знаки препинания.
+    static func filterNonCyrillic(_ text: String) -> String {
+        guard let regex = try? NSRegularExpression(
+            pattern: "[^\\p{Cyrillic}\\p{Number}\\s\\p{Punctuation}]",
+            options: []
+        ) else { return text }
+        let range = NSRange(text.startIndex..., in: text)
+        return regex.stringByReplacingMatches(in: text, range: range, withTemplate: "")
+    }
+
+    /// Применяет фильтрацию некириллических символов к текстовым полям концепта.
+    private static func filterConcept(_ concept: ThematicConcept) -> ThematicConcept {
+        var filtered = concept
+        filtered.word = filterNonCyrillic(concept.word)
+        filtered.tagline = filterNonCyrillic(concept.tagline)
+        filtered.philosophicalPremise = filterNonCyrillic(concept.philosophicalPremise)
+        filtered.suggestedTitle = filterNonCyrillic(concept.suggestedTitle)
+        return filtered
     }
 
     private static func parseSelectedMoments(_ value: Any?) -> [SelectedMoment] {
         guard let entries = value as? [Any] else { return [] }
         return entries.compactMap { entry -> SelectedMoment? in
             guard let dict = entry as? [String: Any],
-                  let startTime = dict["startTime"] as? Double,
-                  let endTime = dict["endTime"] as? Double,
+                  let startTime = parseDouble(dict["startTime"]),
+                  let endTime = parseDouble(dict["endTime"]),
                   let reason = nonEmptyString(dict["reason"])
             else { return nil }
             
-            let weight = dict["dramaticWeight"] as? Double ?? 0.5
+            let weight = parseDouble(dict["dramaticWeight"]) ?? 0.5
             return SelectedMoment(startTime: startTime, endTime: endTime, reason: reason, dramaticWeight: weight)
         }
+    }
+
+    /// Парсит числовое значение в Double. Поддерживает Double, Int и String (Задача 8).
+    private static func parseDouble(_ value: Any?) -> Double? {
+        if let d = value as? Double { return d }
+        if let i = value as? Int { return Double(i) }
+        if let s = value as? String, let d = Double(s) { return d }
+        return nil
     }
 
     private static func makeResult(

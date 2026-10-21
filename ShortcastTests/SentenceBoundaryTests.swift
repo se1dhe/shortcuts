@@ -162,8 +162,11 @@ struct SentenceBoundaryTests {
                 TranscriptSegment(start: 2400.0, end: 2450.0, text: "Мы должны бороться и выстоять против всех правил.", words: []),
                 // Shouting scene before finale (3100s)
                 TranscriptSegment(start: 3100.0, end: 3130.0, text: "Бойся меня! Дела плохие! Заткнись и отвечай быстро!", words: []),
-                // True philosophical catharsis monologue at the very end (3500s)
-                TranscriptSegment(start: 3500.0, end: 3540.0, text: "Его лучшая разводка заключалась в том, что он заставил тебя поверить, что он — это ты.", words: [])
+                // True philosophical catharsis monologue before credits (3300s)
+                // Фильм длится 3540s, отсечка титров на 3363s — катарсис до неё
+                TranscriptSegment(start: 3300.0, end: 3340.0, text: "Его лучшая разводка заключалась в том, что он заставил тебя поверить, что он — это ты.", words: []),
+                // Хвост фильма (титры) — после отсечки 0.95
+                TranscriptSegment(start: 3500.0, end: 3540.0, text: "Кінець фільму, титри.", words: [])
             ],
             language: "ru"
         )
@@ -192,10 +195,10 @@ struct SentenceBoundaryTests {
             return
         }
 
-        // Must pick the philosophical resolution monologue (~3500s), NOT the shouting scene (~3100s)
-        #expect(finalSeg.start >= 3400.0)
-        // Must end cleanly at the conclusion of speech (~3540s), without capturing subsequent scenes
-        #expect(finalSeg.end >= 3540.0 && finalSeg.end < 3543.0)
+        // Must pick the philosophical resolution monologue (~3300s), NOT the shouting scene (~3100s)
+        #expect(finalSeg.start >= 3250.0)
+        // Must end cleanly at the conclusion of speech (~3340s), without capturing subsequent scenes
+        #expect(finalSeg.end >= 3340.0 && finalSeg.end < 3343.0)
     }
 
     @Test("Revolver case: Act 1 rejects interrogation shouting and starts with calm defeat monologue, Act 4 selects concise catharsis over Bojsya menya")
@@ -220,9 +223,12 @@ struct SentenceBoundaryTests {
                 TranscriptSegment(start: 5485.0, end: 5490.0, text: "Это он играл с нами! И с вами тоже!", words: []),
                 TranscriptSegment(start: 5491.0, end: 5498.2, text: "Бойся меня! Бойся меня! Заткнись!", words: []),
 
-                // 5. True concise catharsis monologue (6656s - 6663s, 6.6s long)
-                TranscriptSegment(start: 6656.6, end: 6660.9, text: "Его лучшая разводка заключалась в том, что он заставил тебя поверить,", words: []),
-                TranscriptSegment(start: 6661.6, end: 6663.2, text: "что он — это ты.", words: [])
+                // 5. True concise catharsis monologue (6200s - 6210s, до отсечки титров 6330s)
+                TranscriptSegment(start: 6200.0, end: 6204.3, text: "Его лучшая разводка заключалась в том, что он заставил тебя поверить,", words: []),
+                TranscriptSegment(start: 6205.0, end: 6207.0, text: "что он — это ты.", words: []),
+
+                // 6. Хвост фильма (титры) — после отсечки 0.95 * 6663 = 6330s
+                TranscriptSegment(start: 6600.0, end: 6663.2, text: "Кінець фільму, титри.", words: [])
             ],
             language: "ru"
         )
@@ -252,14 +258,14 @@ struct SentenceBoundaryTests {
         }
         #expect(act1Seg.start >= 1130.0) // Must start on calm monologue (1136.5s with headPadding ~1133.5s), NOT at 1118s!
 
-        // Act 4 check: must NOT be "Бойся меня!" (~5490s), MUST be "разводка... что он — это ты" (~6656s)
+        // Act 4 check: must NOT be "Бойся меня!" (~5490s), MUST be "разводка... что он — это ты" (~6200s)
         let act4 = arc.acts[3]
         guard let act4Seg = act4.segments.last else {
             Issue.record("Act 4 has no segments")
             return
         }
-        #expect(act4Seg.start >= 6600.0)
-        #expect(act4Seg.end >= 6663.2 && act4Seg.end < 6665.0)
+        #expect(act4Seg.start >= 6150.0)
+        #expect(act4Seg.end >= 6207.0 && act4Seg.end < 6210.0)
     }
 
     // MARK: - Синтетические фильмы для политики хронометража (герметично: без модели, ffmpeg и реального файла)
@@ -303,9 +309,10 @@ struct SentenceBoundaryTests {
     @Test("Fill loop brings every act of a feature-length film to at least 90% of its budget")
     func testAllFourActsFillToBudgetOnFeatureLengthFilm() async throws {
         // Полнометражный синтетический фильм ~7950с: 2 запуска под хук, 5 под падение,
-        // 4 под борьбу и 3 под катарсис, разнесённые по всей длине картины
+        // 4 под борьбу и 3 под катарсис, разнесённые по всей длине картины.
+        // Катарсис-запуски до отсечки титров (0.95 * 7950 = 7552s), хвост — в титрах
         let transcript = syntheticFilm(
-            runStarts: [600, 800, 1700, 1800, 1900, 2000, 2100, 4400, 4500, 4600, 4700, 7700, 7800, 7900],
+            runStarts: [600, 800, 1700, 1800, 1900, 2000, 2100, 4400, 4500, 4600, 4700, 6800, 6900, 7000, 7900],
             lines: 5
         )
         let director = LongformNarrativeDirector()
@@ -336,7 +343,8 @@ struct SentenceBoundaryTests {
 
     @Test("Act 4 can draw from the final third of the film instead of skipping the tail")
     func testAct4DrawsMaterialFromFinalThird() async throws {
-        let transcript = syntheticFilm(runStarts: [600, 2200, 4400, 7700], lines: 3)
+        // Катарсис-запуск до отсечки титров (0.95 * ~7550 = 7172s), хвост — в титрах
+        let transcript = syntheticFilm(runStarts: [600, 2200, 4400, 6500, 7500], lines: 3)
         let filmDuration = try #require(transcript.segments.last?.end)
         let director = LongformNarrativeDirector()
         let arc = try await director.buildArc(
@@ -359,7 +367,8 @@ struct SentenceBoundaryTests {
     @Test("Thin material reports the arithmetic ceiling and keeps every gate intact")
     func testThinMaterialReportsCeilingWithoutLooseningGates() async throws {
         // Тонкий материал: по одному связному запуску на акт, все вместе гораздо меньше 520с
-        let transcript = syntheticFilm(runStarts: [600, 2200, 4400, 7700], lines: 3)
+        // Катарсис-запуск до отсечки титров (0.95 * ~6550 = 6222s), хвост — в титрах
+        let transcript = syntheticFilm(runStarts: [600, 2200, 4400, 5200, 6500], lines: 3)
         let director = LongformNarrativeDirector()
         let arc = try await director.buildArc(
             from: transcript,
@@ -423,41 +432,44 @@ struct SentenceBoundaryTests {
             + syntheticRun(start: 1200, lines: 4)
             + syntheticRun(start: 2200, lines: 4)
         // Оборвана думка: підрядне висить, точка думки не закрита
+        // Розміщено до відсічки титрів (0.95 * 3200 = 3040s)
         let openEnded = [
-            TranscriptSegment(start: 3300.0, end: 3309.6, text: "Його найкраща розводка полягала в тому,", words: []),
-            TranscriptSegment(start: 3310.0, end: 3319.6, text: "що він змусив тебе повірити,", words: []),
-            TranscriptSegment(start: 3320.0, end: 3330.0, text: "і ти повірив у все, що...", words: [])
+            TranscriptSegment(start: 2800.0, end: 2809.6, text: "Його найкраща розводка полягала в тому,", words: []),
+            TranscriptSegment(start: 2810.0, end: 2819.6, text: "що він змусив тебе повірити,", words: []),
+            TranscriptSegment(start: 2820.0, end: 2830.0, text: "і ти повірив у все, що...", words: [])
         ]
         // Закрита філософська формулювання тим самим актом
         let closed = [
-            TranscriptSegment(start: 3800.0, end: 3809.6, text: "Він змусив тебе повірити,", words: []),
-            TranscriptSegment(start: 3810.0, end: 3820.0, text: "що він — це ти.", words: [])
+            TranscriptSegment(start: 2900.0, end: 2909.6, text: "Він змусив тебе повірити,", words: []),
+            TranscriptSegment(start: 2910.0, end: 2920.0, text: "що він — це ти.", words: [])
         ]
+        // Хвост фільму (титри) — після відсічки 0.95
+        let tail = [TranscriptSegment(start: 3100.0, end: 3200.0, text: "Кінець фільму. Титри.", words: [])]
 
         // A: есть завершенная мысль — она и берётся, оборванную не вытягивает
         let arcWithClosed = try await director.buildArc(
-            from: Transcript(segments: earlier + openEnded + closed, language: "ru"),
+            from: Transcript(segments: earlier + openEnded + closed + tail, language: "ru"),
             concept: syntheticConcept(word: "Иллюзия"),
             selectedMoments: [],
             movieTitle: "Синтетический полный метр",
             targetDuration: 520.0
         )
         let closedSeg = try #require(arcWithClosed.acts[3].segments.first)
-        #expect(closedSeg.start >= 3795.0 && closedSeg.start < 3800.0)
-        #expect(closedSeg.end >= 3820.0 && closedSeg.end < 3822.0)
+        #expect(closedSeg.start >= 2895.0 && closedSeg.start < 2900.0)
+        #expect(closedSeg.end >= 2920.0 && closedSeg.end < 2922.0)
 
         // B: завершенной мысли нет вовсе — допустимый оборванный крой всё равно берётся,
         // а не вытесняется молчаливой заглушкой поверх речи
         let arcOpenOnly = try await director.buildArc(
-            from: Transcript(segments: earlier + openEnded, language: "ru"),
+            from: Transcript(segments: earlier + openEnded + tail, language: "ru"),
             concept: syntheticConcept(word: "Иллюзия"),
             selectedMoments: [],
             movieTitle: "Синтетический полный метр",
             targetDuration: 520.0
         )
         let openSeg = try #require(arcOpenOnly.acts[3].segments.first)
-        #expect(openSeg.start >= 3295.0 && openSeg.start < 3300.0)
-        #expect(openSeg.end >= 3330.0)
+        #expect(openSeg.start >= 2795.0 && openSeg.start < 2800.0)
+        #expect(openSeg.end >= 2830.0)
         #expect(openSeg.duration >= LongformNarrativeDirector.minRunDuration)
     }
 
@@ -473,21 +485,25 @@ struct SentenceBoundaryTests {
 
         // Той самий фільм, але тема живе лише в непрямих формах: пізніше стоящий
         // тематичний запуск обов'язково бути обраним замість раннього поза темою
+        // Розміщено до відсічки титрів (0.95 * 7600 = 7220s)
         let offTheme = [
-            TranscriptSegment(start: 7700.0, end: 7709.6, text: "Загальний план видно лише зі сторони.", words: []),
-            TranscriptSegment(start: 7710.0, end: 7719.6, text: "Ракурс змінює всю картину цілком.", words: []),
-            TranscriptSegment(start: 7720.0, end: 7729.6, text: "Підсумок залежить від точки відліку.", words: [])
+            TranscriptSegment(start: 6800.0, end: 6809.6, text: "Загальний план видно лише зі сторони.", words: []),
+            TranscriptSegment(start: 6810.0, end: 6819.6, text: "Ракурс змінює всю картину цілком.", words: []),
+            TranscriptSegment(start: 6820.0, end: 6829.6, text: "Підсумок залежить від точки відліку.", words: [])
         ]
         let onTheme = [
-            TranscriptSegment(start: 7900.0, end: 7909.6, text: "Підсумок суб'єктивний лише частково.", words: []),
-            TranscriptSegment(start: 7910.0, end: 7919.6, text: "Оцінка суб'єктивна по самій суті.", words: []),
-            TranscriptSegment(start: 7920.0, end: 7929.6, text: "Підсумок залежить від точки відліку.", words: [])
+            TranscriptSegment(start: 7000.0, end: 7009.6, text: "Підсумок суб'єктивний лише частково.", words: []),
+            TranscriptSegment(start: 7010.0, end: 7019.6, text: "Оцінка суб'єктивна по самій суті.", words: []),
+            TranscriptSegment(start: 7020.0, end: 7029.6, text: "Підсумок залежить від точки відліку.", words: [])
         ]
+        // Хвост фільму (титри) — після відсічки 0.95
+        let tail = [TranscriptSegment(start: 7400.0, end: 7600.0, text: "Кінець фільму. Титри.", words: [])]
         let segments = syntheticRun(start: 600, lines: 3)
             + syntheticRun(start: 2200, lines: 3)
             + syntheticRun(start: 4400, lines: 3)
             + offTheme
             + onTheme
+            + tail
 
         let arc = try await director.buildArc(
             from: Transcript(segments: segments, language: "ru"),
@@ -497,7 +513,7 @@ struct SentenceBoundaryTests {
             targetDuration: 520.0
         )
         let catharsis = try #require(arc.acts[3].segments.first)
-        #expect(catharsis.start >= 7895.0 && catharsis.start < 7900.0)
+        #expect(catharsis.start >= 6995.0 && catharsis.start < 7000.0)
     }
 
     @Test("Act descriptors are derived from the theme only: no per-film tables remain")

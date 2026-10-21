@@ -681,7 +681,19 @@ final class MomentFinderService {
                 guard !raw.trimmed.isEmpty else { continue }
                 latestText = raw
                 if let parsed = LongformThematicService.parseThematicAnalysis(from: raw) {
-                    return parsed
+                    // Спеллчекер украинского: коррекция concept.word через LLM (Задача 1)
+                    var corrected = parsed
+                    let correctedPrimary = await self.correctConceptWord(corrected.primaryConcept)
+                    corrected.primaryConcept = correctedPrimary
+                    corrected.alternativeConcepts = await withTaskGroup(of: (Int, ThematicConcept).self) { group in
+                        var results: [(Int, ThematicConcept)] = []
+                        for (index, concept) in corrected.alternativeConcepts.enumerated() {
+                            group.addTask { (index, await self.correctConceptWord(concept)) }
+                        }
+                        for await result in group { results.append(result) }
+                        return results.sorted { $0.0 < $1.0 }.map { $0.1 }
+                    }
+                    return corrected
                 }
             } catch {
                 lastError = error
@@ -861,6 +873,18 @@ final class MomentFinderService {
         
         Self.log("correctUkrainianWord: '\(word)' → '\(corrected)'")
         return corrected.isEmpty ? nil : corrected
+    }
+
+    /// Корректирует word концепта через спеллчекер, логируя исправления (Задача 1).
+    private func correctConceptWord(_ concept: ThematicConcept) async -> ThematicConcept {
+        guard let corrected = await correctUkrainianWord(concept.word) else { return concept }
+        if corrected != concept.word {
+            Self.log("spellcheck correction: '\(concept.word)' → '\(corrected)'")
+            var updated = concept
+            updated.word = corrected
+            return updated
+        }
+        return concept
     }
 
     private func stringArray(_ value: Any?) -> [String] {

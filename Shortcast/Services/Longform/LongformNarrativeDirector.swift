@@ -40,8 +40,19 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         var clean: [SelectedMoment] = []
         for raw in moments.sorted(by: { $0.startTime < $1.startTime }) {
             let start = max(0, raw.startTime)
-            let end = min(raw.endTime, totalMovieDuration)
-            guard end - start >= minRunDuration else { continue }
+            var end = min(raw.endTime, totalMovieDuration)
+            let rawDuration = end - start
+
+            // Инвертированные или вырожденные диапазоны — безусловный отсев
+            guard rawDuration > 0 else { continue }
+
+            // Короткие моменты не выбрасываются, а расширяются до minRunDuration:
+            // сдвигаем endTime вперёд, но не дальше totalMovieDuration
+            if rawDuration < minRunDuration {
+                let expandedEnd = min(start + minRunDuration, totalMovieDuration)
+                guard expandedEnd - start >= minRunDuration else { continue }
+                end = expandedEnd
+            }
 
             if let last = clean.last, start <= last.endTime {
                 clean[clean.count - 1] = SelectedMoment(
@@ -151,6 +162,13 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                 act4Moments.append(moment)
             }
         }
+
+        // Балансировка актов: если акт пустой, перераспределяем моменты из соседних актов,
+        // чтобы все 4 акта имели хотя бы один сегмент материала
+        redistributeMomentsForEmptyActs(
+            act1: &act1Moments, act2: &act2Moments,
+            act3: &act3Moments, act4: &act4Moments
+        )
         
         // Строим акты
         var acts: [LongformAct] = []
@@ -211,6 +229,97 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         )
     }
 
+    /// Балансировка актов: если акт пустой, заимствует ближайший момент из соседнего непустого акта.
+    /// Сначала пытается взять ближайший по границе акта момент из следующего акта,
+    /// если и тот пуст — из предыдущего. Гарантирует, что все 4 акта получат материал.
+    private func redistributeMomentsForEmptyActs(
+        act1: inout [SelectedMoment], act2: inout [SelectedMoment],
+        act3: inout [SelectedMoment], act4: inout [SelectedMoment]
+    ) {
+        // Итеративно заполняем пустые акты, пока есть что перераспределять
+        for _ in 0..<4 {
+            var acts: [(count: Int, index: Int)] = [
+                (act1.count, 0), (act2.count, 1), (act3.count, 2), (act4.count, 3)
+            ]
+            guard let emptyAct = acts.first(where: { $0.count == 0 }) else { break }
+
+            // Определяем приоритет доноров: сначала соседний акт, затем дальний
+            let donors: [Int]
+            switch emptyAct.index {
+            case 0: donors = [1, 2, 3]
+            case 1: donors = [0, 2, 3]
+            case 2: donors = [3, 1, 0]
+            default: donors = [2, 1, 0]
+            }
+
+            var donated = false
+            for donorIndex in donors {
+                guard donorActsCount(donorIndex, act1: act1, act2: act2, act3: act3, act4: act4) > 1 else { continue }
+
+                // Забираем крайний момент донора (ближайший к пустому акту)
+                let isDonorAfter = donorIndex > emptyAct.index
+                let moment = extractMoment(
+                    from: donorIndex, takeFirst: isDonorAfter,
+                    act1: &act1, act2: &act2, act3: &act3, act4: &act4
+                )
+                insertMoment(
+                    moment, into: emptyAct.index,
+                    act1: &act1, act2: &act2, act3: &act3, act4: &act4
+                )
+                donated = true
+                break
+            }
+            if !donated { break }
+        }
+    }
+
+    private func donorActsCount(
+        _ index: Int,
+        act1: [SelectedMoment], act2: [SelectedMoment],
+        act3: [SelectedMoment], act4: [SelectedMoment]
+    ) -> Int {
+        switch index {
+        case 0: return act1.count
+        case 1: return act2.count
+        case 2: return act3.count
+        default: return act4.count
+        }
+    }
+
+    private func extractMoment(
+        from actIndex: Int, takeFirst: Bool,
+        act1: inout [SelectedMoment], act2: inout [SelectedMoment],
+        act3: inout [SelectedMoment], act4: inout [SelectedMoment]
+    ) -> SelectedMoment {
+        switch actIndex {
+        case 0:
+            let m = takeFirst ? act1.removeFirst() : act1.removeLast()
+            return m
+        case 1:
+            let m = takeFirst ? act2.removeFirst() : act2.removeLast()
+            return m
+        case 2:
+            let m = takeFirst ? act3.removeFirst() : act3.removeLast()
+            return m
+        default:
+            let m = takeFirst ? act4.removeFirst() : act4.removeLast()
+            return m
+        }
+    }
+
+    private func insertMoment(
+        _ moment: SelectedMoment, into actIndex: Int,
+        act1: inout [SelectedMoment], act2: inout [SelectedMoment],
+        act3: inout [SelectedMoment], act4: inout [SelectedMoment]
+    ) {
+        switch actIndex {
+        case 0: act1.append(moment)
+        case 1: act2.append(moment)
+        case 2: act3.append(moment)
+        default: act4.append(moment)
+        }
+    }
+
     /// Эвристический построитель арки (fallback, когда LLM не предоставила moments)
     func buildArcHeuristic(
         from transcript: Transcript,
@@ -231,7 +340,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         }
 
         let totalMovieDuration = segments.last?.end ?? clampedAsk
-        let isFullMovie = totalMovieDuration > 900.0 // >15 мин
+        let isFullMovie = totalMovieDuration > 1200.0 // >20 мин
 
         // Запрос имеет смысл только относительно длины фильма: 520с с 62-минутного фильма
         // физически недостижим, поэтому эффективная цель выводится из хронометража источника.
@@ -522,11 +631,11 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         actType: LongformActType,
         allowChaining: Bool = true
     ) -> [TimeSegment] {
-        // Отсечка титров: только для длинных фильмов (>2.5 ч / 9000 с),
+        // Отсечка титров: для фильмов длительностью >20 мин (1200с),
         // где последние 5% приходятся на бегущие титры. Короткие фильмы
         // и тестовые данные не имеют титров — отсечка не применяется.
         let totalDuration = allSegments.last?.end ?? 0
-        let hasCredits = totalDuration > 9000.0
+        let hasCredits = totalDuration > 1200.0
         let creditsCutoff = hasCredits ? totalDuration * 0.95 : totalDuration + 1.0
         let searchStart = max(window.lowerBound, minStartTime)
         let candidates = allSegments.filter {
@@ -887,9 +996,9 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         allSegments: [TranscriptSegment]
     ) -> [TimeSegment] {
         let lower = max(start, window.lowerBound)
-        // Отсечка титров: только для длинных фильмов (>2.5 ч)
+        // Отсечка титров: для фильмов длительностью >20 мин (1200с)
         let totalDuration = allSegments.last?.end ?? window.upperBound
-        let hasCredits = totalDuration > 9000.0
+        let hasCredits = totalDuration > 1200.0
         let creditsCutoff = hasCredits ? totalDuration * 0.95 : totalDuration + 1.0
         let filmCeiling = min(
             totalDuration + Self.tailPaddingDuration,

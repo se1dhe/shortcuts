@@ -270,6 +270,7 @@ struct ContentView: View {
                         concept,
                         confirmedMovieTitle: confirmedTitle,
                         audioSettings: audioSettings,
+                        modelManager: modelManager,
                         settings: settings
                     )
                 },
@@ -297,6 +298,7 @@ struct ContentView: View {
                     onConfirm: { updatedSegments in
                         workspace.confirmLongformSubtitlesAndBuild(
                             updatedSegments: updatedSegments,
+                            modelManager: modelManager,
                             settings: settings
                         )
                     },

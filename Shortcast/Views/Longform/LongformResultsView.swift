@@ -290,6 +290,7 @@ struct LongformResultsView: View {
                         workspace.regenerateLongformFromScratch(
                             concept: result.arc.concept,
                             movieTitle: movieTitle,
+                            modelManager: modelManager,
                             settings: settings
                         )
                     } label: {
@@ -349,6 +350,7 @@ struct LongformResultsView: View {
                         workspace.rebuildLongformWithUpdatedSubtitles(
                             updatedSegments: updatedSegments,
                             existingResult: result,
+                            modelManager: modelManager,
                             settings: settings
                         )
                     },
@@ -372,6 +374,7 @@ struct LongformResultsView: View {
                         workspace.rebuildLongformWithModifiedArc(
                             modifiedArc: modifiedArc,
                             existingResult: result,
+                            modelManager: modelManager,
                             settings: settings
                         )
                     },

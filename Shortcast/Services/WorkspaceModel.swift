@@ -437,8 +437,27 @@ final class WorkspaceModel {
 
     // MARK: - Theme persistence
 
+    /// Создаёт координатор монтажа с проброшенным шлюзом к прогретому Director'у.
+    /// `LongformActTitleService` получает `MomentFinderService` через `DirectorChatGateway`:
+    /// модель переиспользуется уже прогретая, без повторной холодной загрузки (политика RAM).
+    private func makeLongformCoordinator(modelManager: ModelManager) -> LongformPipelineCoordinator {
+        let gateway = DirectorChatGateway(
+            readiness: { [weak modelManager] in await modelManager?.momentFinder.isReady ?? false },
+            identifier: { [weak modelManager] in await modelManager?.momentFinder.profile.modelID },
+            completion: { [weak modelManager] instructions, prompt, maxTokens in
+                await modelManager?.momentFinder.completeForActTitles(
+                    instructions: instructions,
+                    prompt: prompt,
+                    maxTokens: maxTokens
+                )
+            }
+        )
+        let actTitleService = LongformActTitleService(model: gateway)
+        return LongformPipelineCoordinator(actTitling: actTitleService)
+    }
+
     /// Единственная точка, которая пишет состояние темы в архив: анализ, выбранная
-    /// тема и результат рендера копируются в проект все вместе, одним сохранением.
+    /// тема, транскрипт и результат рендера копируются в проект все вместе, одним сохранением.
     /// Раздельные записи и рождали рассинхрон «тема в проекте не та, что анализ».
     func persistThemeState(reason: String) async {
         guard var project = currentProject else {
@@ -448,6 +467,9 @@ final class WorkspaceModel {
         project.thematicAnalysis = thematicAnalysis
         project.selectedConcept = selectedConcept
         project.longformResult = longformResult
+        // Сохраняем транскрипт вместе с темой: при reopen проекта Whisper не
+        // перезапускается, и без этой записи longformResult терял основание.
+        project.transcript = storedTranscript
         project.discoveredConcepts = thematicAnalysis?.allConcepts ?? project.discoveredConcepts
         currentProject = project
         let savedSource = thematicAnalysis?.source.rawValue ?? "nil"
@@ -467,7 +489,11 @@ final class WorkspaceModel {
         self.clips = []
         self.variants = []
         self.pipelineError = nil
-        self.longformResult = nil
+        // Не затираем longformResult, если проект уже имеет сохранённый результат:
+        // при reopen проекта пользователь должен увидеть готовое эссе, а не пустой экран.
+        if currentProject?.longformResult == nil {
+            self.longformResult = nil
+        }
 
         // МГНОВЕННЫЙ СТАРТ: если проект уже имеет транскрипт Whisper и анализ,
         // реально выданный моделью, открываем экран выбора концепта мгновенно
@@ -694,16 +720,27 @@ final class WorkspaceModel {
     /// Подтверждение отредактированных субтитров и запуск пайплайна генерации
     func confirmLongformSubtitlesAndBuild(
         updatedSegments: [TranscriptSegment],
+        modelManager: ModelManager,
         settings: AppSettings
     ) {
         if let stored = storedTranscript {
-            self.storedTranscript = Transcript(segments: updatedSegments, language: stored.language, provenance: stored.provenance)
+            let updatedTranscript = Transcript(segments: updatedSegments, language: stored.language, provenance: stored.provenance)
+            self.storedTranscript = updatedTranscript
+            // Сохраняем правки субтитров на диск: при перезапуске проекта пользователь
+            // видит отредактированные субтитры, а не исходный Whisper-выход.
+            self.currentProject?.transcript = updatedTranscript
+            if let project = self.currentProject {
+                Task {
+                    try? await filmProjectService.saveProject(project)
+                }
+            }
         }
         guard let concept = stagedConcept, let audioSettings = stagedAudioSettings else { return }
         confirmLongformConceptInternal(
             concept,
             confirmedMovieTitle: stagedConfirmedMovieTitle,
             audioSettings: audioSettings,
+            modelManager: modelManager,
             settings: settings
         )
     }
@@ -712,9 +749,10 @@ final class WorkspaceModel {
         _ concept: ThematicConcept,
         confirmedMovieTitle: String? = nil,
         audioSettings: LongformAudioSettings = LongformAudioSettings(),
+        modelManager: ModelManager,
         settings: AppSettings
     ) {
-        confirmLongformConceptInternal(concept, confirmedMovieTitle: confirmedMovieTitle, audioSettings: audioSettings, settings: settings)
+        confirmLongformConceptInternal(concept, confirmedMovieTitle: confirmedMovieTitle, audioSettings: audioSettings, modelManager: modelManager, settings: settings)
     }
 
     func confirmLongformConcept(
@@ -723,6 +761,7 @@ final class WorkspaceModel {
         backgroundMusicURL: URL? = nil,
         musicVolume: Float = 0.28,
         duckingEnabled: Bool = true,
+        modelManager: ModelManager,
         settings: AppSettings
     ) {
         let audioSettings = LongformAudioSettings(
@@ -730,21 +769,32 @@ final class WorkspaceModel {
             musicVolume: musicVolume,
             duckingEnabled: duckingEnabled
         )
-        confirmLongformConceptInternal(concept, confirmedMovieTitle: confirmedMovieTitle, audioSettings: audioSettings, settings: settings)
+        confirmLongformConceptInternal(concept, confirmedMovieTitle: confirmedMovieTitle, audioSettings: audioSettings, modelManager: modelManager, settings: settings)
     }
 
     /// Перерендер готового кино-эссе с исправленными субтитрами (сохраняя тот же монтаж сцен и звук)
     func rebuildLongformWithUpdatedSubtitles(
         updatedSegments: [TranscriptSegment],
         existingResult: LongformBuildResult,
+        modelManager: ModelManager,
         settings: AppSettings
     ) {
         if let stored = storedTranscript {
-            self.storedTranscript = Transcript(segments: updatedSegments, language: stored.language, provenance: stored.provenance)
+            let updatedTranscript = Transcript(segments: updatedSegments, language: stored.language, provenance: stored.provenance)
+            self.storedTranscript = updatedTranscript
+            // Сохраняем правки субтитров на диск: при перезапуске проекта пользователь
+            // видит отредактированные субтитры, а не исходный Whisper-выход.
+            self.currentProject?.transcript = updatedTranscript
+            if let project = self.currentProject {
+                Task {
+                    try? await filmProjectService.saveProject(project)
+                }
+            }
         }
         startLongformRebuild(
             concept: existingResult.arc.concept,
             existingArc: existingResult.arc,
+            modelManager: modelManager,
             settings: settings,
             initialStep: "Перерендер видео с обновленными субтитрами...",
             errorPrefix: "Ошибка перерендера кино-эссе"
@@ -755,6 +805,7 @@ final class WorkspaceModel {
     func regenerateLongformFromScratch(
         concept: ThematicConcept,
         movieTitle: String,
+        modelManager: ModelManager,
         settings: AppSettings
     ) {
         pipelineTask?.cancel()
@@ -763,6 +814,7 @@ final class WorkspaceModel {
             concept,
             confirmedMovieTitle: movieTitle,
             audioSettings: stagedAudioSettings ?? LongformAudioSettings(),
+            modelManager: modelManager,
             settings: settings
         )
     }
@@ -771,6 +823,7 @@ final class WorkspaceModel {
     func rebuildLongformWithModifiedArc(
         modifiedArc: LongformNarrativeArc,
         existingResult: LongformBuildResult,
+        modelManager: ModelManager,
         settings: AppSettings
     ) {
         self.stagedArc = modifiedArc
@@ -778,6 +831,7 @@ final class WorkspaceModel {
         startLongformRebuild(
             concept: existingResult.arc.concept,
             existingArc: modifiedArc,
+            modelManager: modelManager,
             settings: settings,
             initialStep: "Перерендер монтажа с обрезанными актами...",
             errorPrefix: "Ошибка перерендера монтажа"
@@ -787,6 +841,7 @@ final class WorkspaceModel {
     private func startLongformRebuild(
         concept: ThematicConcept,
         existingArc: LongformNarrativeArc,
+        modelManager: ModelManager,
         settings: AppSettings,
         initialStep: String,
         errorPrefix: String
@@ -802,7 +857,8 @@ final class WorkspaceModel {
 
         pipelineTask = Task {
             do {
-                let coordinator = LongformPipelineCoordinator()
+                // Пробрасываем модель в LongformActTitleService через DirectorChatGateway
+                let coordinator = self.makeLongformCoordinator(modelManager: modelManager)
                 let selectedMoments = self.thematicAnalysis?.selectedMoments ?? []
                 let result = try await coordinator.buildLongformVideo(
                     sourceURL: currentJob.url,
@@ -836,6 +892,7 @@ final class WorkspaceModel {
         _ concept: ThematicConcept,
         confirmedMovieTitle: String? = nil,
         audioSettings: LongformAudioSettings,
+        modelManager: ModelManager,
         settings: AppSettings
     ) {
         guard let currentJob = job, let transcript = storedTranscript else { return }
@@ -882,7 +939,8 @@ final class WorkspaceModel {
 
         pipelineTask = Task {
             do {
-                let coordinator = LongformPipelineCoordinator()
+                // Пробрасываем модель в LongformActTitleService через DirectorChatGateway
+                let coordinator = self.makeLongformCoordinator(modelManager: modelManager)
                 let selectedMoments = self.thematicAnalysis?.selectedMoments ?? []
                 let result = try await coordinator.buildLongformVideo(
                     sourceURL: currentJob.url,

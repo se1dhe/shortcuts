@@ -28,15 +28,19 @@ struct LongformMomentSanitationTests {
         #expect(clean.map(\.startTime) == [300, 500])
     }
 
-    @Test func dropsRunsShorterThanMinRunDuration() {
+    @Test func expandsShortRunsToMinRunDuration() {
         let raw = [
-            moment(100, 103),
-            moment(200, 207.99),
-            moment(300, 308),
+            moment(100, 103),       // 3s → расширяется до 8s (100..108)
+            moment(200, 207.99),    // 7.99s → расширяется до 8s (200..208)
+            moment(300, 308),       // 8s — уже проходит без расширения
         ]
         let clean = LongformNarrativeDirector.sanitizeSelectedMoments(raw, totalMovieDuration: 1000)
-        #expect(clean.map(\.startTime) == [300])
+        #expect(clean.count == 3)
+        #expect(clean.map(\.startTime) == [100, 200, 300])
+        // Первый момент расширен с 3s до 8s
         #expect(abs(clean[0].endTime - clean[0].startTime - 8.0) < 0.0001)
+        // Второй момент расширен с 7.99s до 8s
+        #expect(abs(clean[1].endTime - clean[1].startTime - 8.0) < 0.0001)
     }
 
     @Test func clampsOvershootBeyondMovieDuration() {
@@ -93,8 +97,8 @@ struct LongformMomentSanitationTests {
 
     @Test func returnsEmptyForGarbageOnlyInput() {
         let raw = [
-            moment(120, 90),
-            moment(200, 201),
+            moment(120, 90),         // инвертированный — отсев
+            moment(997, 999),        // 2s, но у края фильма: расширение до 8s невозможно (997+8 > 1000)
         ]
         let clean = LongformNarrativeDirector.sanitizeSelectedMoments(raw, totalMovieDuration: 1000)
         #expect(clean.isEmpty)

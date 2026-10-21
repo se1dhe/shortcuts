@@ -678,6 +678,10 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
 
         for phrase in chunked {
             let cleanText = phrase.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Фильтруем галлюцинации Whisper large-v3 до рендера:
+            // «Sous-titres par LaVacheSquid», «Tekstet av Nicolai Winther»,
+            // одиночные «♪» / «you» и прочие артефакты декодера не выжигаются на экран.
+            guard !Self.isHallucinationLine(cleanText) else { continue }
             guard !cleanText.isEmpty, phrase.end > phrase.start else { continue }
             // Не показываем субтитры во время вступительной заставки (0.0-4.5с), чтобы не перекрывать тезис
             guard phrase.end > 4.5 else { continue }
@@ -1039,6 +1043,38 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
 
         NSGraphicsContext.restoreGraphicsState()
         return context.makeImage()
+    }
+
+    // MARK: - Фильтр галлюцинаций Whisper large-v3
+
+    ///canonical-галлюцинации Whisper large-v3, которые модель генерирует на тишине
+    ///и которые нельзя выжигать на экран как субтитры. Проверка до рендера:
+    ///если фраза совпадает с известным артефактом декодера, она пропускается.
+    static func isHallucinationLine(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+
+        // Канонические галлюцинации подписчиков (французский, норвежский, шведский)
+        let knownHallucinations = [
+            "sous-titres par lavachesquid",
+            "tekstet av nicolai winther",
+            "undertexter av nicolai winther",
+        ]
+        if knownHallucinations.contains(trimmed.lowercased()) {
+            return true
+        }
+
+        // Строки, состоящие только из музыкальных символов (♪) и пробелов
+        let musicOnly = trimmed.unicodeScalars.allSatisfy { scalar in
+            let v: UInt32 = scalar.value
+            return v == 0x266A || v == 0x266B || CharacterSet.whitespaces.contains(scalar)
+        }
+        if musicOnly { return true }
+
+        // Одиночное "you" / "You" — артефакт декодера Whisper на тишине
+        if trimmed.lowercased() == "you" { return true }
+
+        return false
     }
 
     // MARK: - Helpers

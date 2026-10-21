@@ -36,14 +36,14 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
           },
           "selectedMoments": [
             {
-              "startTime": 120.5,
-              "endTime": 180.3,
+              "startTime": 754.5,
+              "endTime": 810.3,
               "reason": "Ця сцена показує перший конфлікт героя з власним его, коли він усвідомлює...",
               "dramaticWeight": 0.85
             },
             {
-              "startTime": 450.0,
-              "endTime": 520.7,
+              "startTime": 4500.0,
+              "endTime": 4570.7,
               "reason": "Кульмінація внутрішнього конфлікту: герой стикається з наслідками своєї гордині...",
               "dramaticWeight": 0.95
             }
@@ -64,6 +64,9 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         - Кожен момент повинен мати reason (пояснення, чому ця сцена важлива) та dramaticWeight (0.0-1.0)
         - НЕ включай титри в кінці фільму — фокусуйся на сюжетних сценах
         - Таймкоди повинні відповідати реальним сценам з транскрипту
+        - Таймкоди в транскрипті — це СЕКУНДИ ВІД ПОЧАТКУ ФІЛЬМУ (наприклад, [754.5] = 12 хвилин 34.5 секунди)
+        - startTime та endTime у відповіді — теж у секундах від початку фільму (числа, не MM:SS)
+        - Розподіли моменти РІВНОМІРНО по всьому фільму: не кластеризуй у перших хвилинах
 
         МОВА (КРИТИЧНО ВАЖЛИВО):
         - Використовуй ВИКЛЮЧНО ПРАВИЛЬНУ УКРАЇНСЬКУ ЛІТЕРАТУРНУ МОВУ
@@ -109,10 +112,12 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         return lines.joined(separator: "\n")
     }
 
+    // Формат `[секунды.десятые]` вместо `[MM:SS]`: модель не должна mentally
+    // конвертировать минуты в секунды — это приводило к тому, что LLM выдавала
+    // таймкоды кластерами в первых ~130 секундах вместо распределения по всему
+    // фильму. Абсолютные секунды устраняют неоднозначность.
     private static func formatCompressedLine(start: Double, text: String) -> String {
-        let minutes = Int(start) / 60
-        let seconds = Int(start) % 60
-        return String(format: "[%02d:%02d] %@", minutes, seconds, text)
+        return String(format: "[%.1f] %@", start, text)
     }
 
     private static func formatSegmentForPrompt(_ seg: TranscriptSegment) -> String {

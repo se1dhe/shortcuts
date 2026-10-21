@@ -212,7 +212,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
     }
 
     /// Эвристический построитель арки (fallback, когда LLM не предоставила moments)
-    private func buildArcHeuristic(
+    func buildArcHeuristic(
         from transcript: Transcript,
         concept: ThematicConcept,
         movieTitle: String,
@@ -522,9 +522,15 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         actType: LongformActType,
         allowChaining: Bool = true
     ) -> [TimeSegment] {
+        // Отсечка титров: только для длинных фильмов (>2.5 ч / 9000 с),
+        // где последние 5% приходятся на бегущие титры. Короткие фильмы
+        // и тестовые данные не имеют титров — отсечка не применяется.
+        let totalDuration = allSegments.last?.end ?? 0
+        let hasCredits = totalDuration > 9000.0
+        let creditsCutoff = hasCredits ? totalDuration * 0.95 : totalDuration + 1.0
         let searchStart = max(window.lowerBound, minStartTime)
         let candidates = allSegments.filter {
-            $0.start >= searchStart && $0.start <= window.upperBound
+            $0.start >= searchStart && $0.start <= window.upperBound && $0.start < creditsCutoff
         }
         guard !candidates.isEmpty else {
             if !allowChaining {
@@ -872,7 +878,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
     }
 
     /// Запасной интервал акта, когда в окне нет ни одной пригодной реплики:
-    /// не выходим за окно, за пределы фильма и в зарезервированный финал
+    /// не выходим за окно, за пределы фильма, в зарезервированный финал и в титры
     private func silentFallback(
         start: Double,
         targetDuration: Double,
@@ -881,7 +887,14 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         allSegments: [TranscriptSegment]
     ) -> [TimeSegment] {
         let lower = max(start, window.lowerBound)
-        let filmCeiling = (allSegments.last?.end ?? window.upperBound) + Self.tailPaddingDuration
+        // Отсечка титров: только для длинных фильмов (>2.5 ч)
+        let totalDuration = allSegments.last?.end ?? window.upperBound
+        let hasCredits = totalDuration > 9000.0
+        let creditsCutoff = hasCredits ? totalDuration * 0.95 : totalDuration + 1.0
+        let filmCeiling = min(
+            totalDuration + Self.tailPaddingDuration,
+            creditsCutoff
+        )
         var upper = min(lower + max(targetDuration, Self.minRunDuration), min(window.upperBound, filmCeiling))
         for zone in reserved where lower < zone.end && upper > zone.start {
             upper = min(upper, zone.start)

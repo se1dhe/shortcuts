@@ -13,11 +13,24 @@ struct TranscriptSegment: Codable, Sendable, Equatable {
     let text: String
     let words: [WordTimestamp]
 
-    init(start: Double, end: Double, text: String, words: [WordTimestamp] = []) {
+    // Среднее значение log-вероятности токенов этого сегмента (от Whisper).
+    // Нужно для ворот подозрения на галлюцинацию: низкое значение означает,
+    // что модель была неуверенна в этом тексте.
+    let avgLogprob: Double?
+
+    // Вероятность «нет речи» для этого сегмента (от Whisper).
+    // Высокое значение означает, что в аудио, скорее всего, нет речи —
+    // типичный признак галлюцинации на тишине или музыке.
+    let noSpeechProb: Double?
+
+    init(start: Double, end: Double, text: String, words: [WordTimestamp] = [],
+         avgLogprob: Double? = nil, noSpeechProb: Double? = nil) {
         self.start = start
         self.end = end
         self.text = text.cleanedTranscriptText
         self.words = words
+        self.avgLogprob = avgLogprob
+        self.noSpeechProb = noSpeechProb
     }
 }
 
@@ -546,13 +559,25 @@ final class TranscriptionService {
             progress?(windowSecs)
             return true
         }
-        let segments: [TranscriptSegment] = results.flatMap(\.segments).compactMap { seg in
+        // Промежуточная типизация: Swift 6 не может вывести тип элемента
+        // в compactMap после цепочки flatMap — фиксируем тип массива явно.
+        let allWhisperSegments: [TranscriptionSegment] = results.flatMap { $0.segments }
+        let segments: [TranscriptSegment] = allWhisperSegments.compactMap { (seg: TranscriptionSegment) -> TranscriptSegment? in
             let text = seg.text.cleanedTranscriptText
             guard !text.isEmpty else { return nil }
             let wordTimings = (seg.words ?? []).map {
                 WordTimestamp(word: $0.word, start: Double($0.start), end: Double($0.end))
             }
-            return TranscriptSegment(start: Double(seg.start), end: Double(seg.end), text: text, words: wordTimings)
+            // Сохраняем метрики уверенности Whisper, чтобы ворота галлюцинаций
+            // работали после перезагрузки проекта из JSON.
+            return TranscriptSegment(
+                start: Double(seg.start),
+                end: Double(seg.end),
+                text: text,
+                words: wordTimings,
+                avgLogprob: Double(seg.avgLogprob),
+                noSpeechProb: Double(seg.noSpeechProb)
+            )
         }
         guard !segments.isEmpty else { throw TranscriptionError.empty }
         Self.log("transcribed \(segments.count) segments, language=\(results.first?.language ?? "?")")

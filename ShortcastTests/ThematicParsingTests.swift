@@ -352,8 +352,8 @@ struct ThematicParsingTests {
         ], language: "ru")
 
         let expected = """
-        [00:00] Ты думаешь, что контролируешь ситуацию. Но твой главный враг — в твоей голове. Шахматы и разводка.
-        [01:05] В любой игре есть соперник и есть жертва.
+        [0.0] Ты думаешь, что контролируешь ситуацию. Но твой главный враг — в твоей голове. Шахматы и разводка.
+        [65.0] В любой игре есть соперник и есть жертва.
         """
         #expect(LongformThematicService.stratifiedThematicSample(from: transcript) == expected)
     }
@@ -374,8 +374,8 @@ struct ThematicParsingTests {
             TranscriptSegment(start: 4.9, end: 6.0, text: "уже следующая сцена")
         ], language: "ru")
         let expected = """
-        [00:00] Первая реплика
-        [00:04] уже следующая сцена
+        [0.0] Первая реплика
+        [4.9] уже следующая сцена
         """
         #expect(LongformThematicService.stratifiedThematicSample(from: split) == expected)
     }
@@ -390,7 +390,7 @@ struct ThematicParsingTests {
         ], language: "ru")
 
         #expect(LongformThematicService.stratifiedThematicSample(from: transcript)
-            == "[00:00] Он замолчал, потому что говорить было не о чем. Тишина — тоже ответ.")
+            == "[0.0] Он замолчал, потому что говорить было не о чем. Тишина — тоже ответ.")
     }
 
     @Test("an empty transcript yields an empty sample")
@@ -415,10 +415,10 @@ struct ThematicParsingTests {
         let sample = LongformThematicService.stratifiedThematicSample(from: transcript)
         #expect(sample.isEmpty == false)
         #expect(sample.split(separator: "\n").map(String.init) == [
-            "[00:00] Всё, что ты знаешь о нём, — это история, которую он тебе рассказал. Истории пишут выжившие.",
-            "[11:40] Ты не жертва. Ты просто ещё не понял правил.",
-            "[23:20] Правил нет. Есть только выбор. И цена этого выбора.",
-            "[55:00] Прости меня. Не за то, что сделал, — а за то, кем я стал."
+            "[0.0] Всё, что ты знаешь о нём, — это история, которую он тебе рассказал. Истории пишут выжившие.",
+            "[700.0] Ты не жертва. Ты просто ещё не понял правил.",
+            "[1400.0] Правил нет. Есть только выбор. И цена этого выбора.",
+            "[3300.0] Прости меня. Не за то, что сделал, — а за то, кем я стал."
         ])
     }
 
@@ -437,6 +437,6 @@ struct ThematicParsingTests {
         let capped = LongformThematicService.stratifiedThematicSample(from: transcript, targetSegmentsCount: 3)
         #expect(full == capped)
         #expect(full.split(separator: "\n").count == 12)
-        #expect(full.contains("[11:00] Реплика 11 "))
+        #expect(full.contains("[660.0] Реплика 11 "))
     }
 }

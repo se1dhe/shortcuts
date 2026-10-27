@@ -287,4 +287,133 @@ struct ActBalancingAndCreditsTests {
         #expect(arc.acts.count == 4)
         #expect(arc.acts.map(\.type) == [.hook, .downfall, .struggle, .catharsis])
     }
+
+    // MARK: - Хронометраж выбранного эссе
+
+    /// Плотная материя: реплики идут почти без пауз, поэтому любую сцену
+    /// можно расширить соседним диалогом.
+    private func dialogueTranscript(until end: Double) -> Transcript {
+        let segments = stride(from: 0.0, to: end, by: 10.0).map { start in
+            TranscriptSegment(start: start, end: min(start + 9.0, end), text: "Репліка \(Int(start))")
+        }
+        return Transcript(segments: segments, language: "uk")
+    }
+
+    private var analyticConcept: ThematicConcept {
+        ThematicConcept(
+            word: "СПОДІВАННЯ", tagline: "т", philosophicalPremise: "п",
+            suggestedTitle: "з", accentColorHex: "#FFFFFF"
+        )
+    }
+
+    /// Модель может вернуть 9 коротких сцен на 2,5 минуты при выбранных 12.
+    /// Арка обязана сама добрать материал до заказанного хронометража.
+    @Test func analyticArcFillsTheSelectedRuntimeWhenDirectorReturnsSparseScenes() async throws {
+        let transcript = dialogueTranscript(until: 2400)
+        let moments = [
+            planned(200, 230, .hook, weight: 0.9, featured: true),
+            planned(400, 430, .form),
+            planned(900, 930, .psychology),
+            planned(1400, 1430, .philosophy),
+            planned(1900, 1930, .catharsis, weight: 0.95, featured: true)
+        ]
+        let plan = EssayPlan(targetDuration: 480)
+
+        let arc = try await LongformNarrativeDirector().buildArc(
+            from: transcript,
+            concept: analyticConcept,
+            selectedMoments: moments,
+            movieTitle: "Test",
+            targetDuration: 480,
+            essayPlan: plan
+        )
+
+        let total = arc.acts.flatMap(\.segments).reduce(0.0) { $0 + $1.duration }
+        #expect(total >= 480 * 0.85, "Эссе собрано на \(total) с — это не выбранный хронометраж")
+        #expect(total <= 480 * 1.12)
+        #expect(arc.acts.allSatisfy { !$0.segments.isEmpty })
+    }
+
+    /// Если модель уже вернула достаточно материала, добор не трогает сцены.
+    @Test func analyticArcLeavesAPoolThatAlreadyMeetsTheRuntimeUnchanged() async throws {
+        let transcript = dialogueTranscript(until: 2400)
+        let moments = [
+            planned(100, 200, .hook, weight: 0.9, featured: true),
+            planned(500, 600, .form),
+            planned(900, 1000, .psychology),
+            planned(1400, 1500, .philosophy),
+            planned(1900, 2000, .catharsis, weight: 0.95, featured: true)
+        ]
+        let plan = EssayPlan(targetDuration: 480)
+
+        let arc = try await LongformNarrativeDirector().buildArc(
+            from: transcript,
+            concept: analyticConcept,
+            selectedMoments: moments,
+            movieTitle: "Test",
+            targetDuration: 480,
+            essayPlan: plan
+        )
+
+        let expected = Set(moments.map { "\($0.startTime)-\($0.endTime)" })
+        let actual = Set(arc.acts.flatMap(\.segments).map { "\($0.start)-\($0.end)" })
+        #expect(actual == expected)
+    }
+
+    /// Если рядом со сценой нет непрерывного диалога (паузы длиннее порога
+    /// сцены), акт добирается ближайшими отдельными диалоговыми кусками.
+    @Test func analyticArcAddsNearbyDialogueRunsWhenScenesAreIsolated() async throws {
+        let segments = stride(from: 0.0, to: 2400.0, by: 20.0).map { start in
+            TranscriptSegment(start: start, end: start + 10.0, text: "Репліка \(Int(start))")
+        }
+        let transcript = Transcript(segments: segments, language: "uk")
+        let moments = [
+            planned(0, 10, .hook, weight: 0.9, featured: true),
+            planned(400, 410, .form),
+            planned(900, 910, .psychology),
+            planned(1400, 1410, .philosophy),
+            planned(1900, 1910, .catharsis, weight: 0.95, featured: true)
+        ]
+        let plan = EssayPlan(targetDuration: 480)
+
+        let arc = try await LongformNarrativeDirector().buildArc(
+            from: transcript,
+            concept: analyticConcept,
+            selectedMoments: moments,
+            movieTitle: "Test",
+            targetDuration: 480,
+            essayPlan: plan
+        )
+
+        let total = arc.acts.flatMap(\.segments).reduce(0.0) { $0 + $1.duration }
+        #expect(total >= 480 * 0.85, "Эссе собрано на \(total) с при цели 480 с")
+        // Добавленный материал не пересекается сам с собой.
+        let ranges = arc.acts.flatMap(\.segments).sorted { $0.start < $1.start }
+        for (previous, next) in zip(ranges, ranges.dropFirst()) {
+            #expect(next.start >= previous.end - 0.01,
+                    "Сцены \(previous) и \(next) пересекаются")
+        }
+    }
+
+    /// Промпт обязан требовать сцены, из которых вообще можно собрать
+    /// выбранные 8–15 минут, а не девять реплик.
+    @Test func thematicPromptAsksForScenesThatCanFillTheRuntime() {
+        let prompt = LongformThematicService.thematicSystemPrompt(movieTitle: "Фільм")
+
+        #expect(prompt.contains("16-24"), "Промпт не задаёт количество сцен")
+        #expect(prompt.contains("20-60"), "Промпт не задаёт длину сцены")
+        #expect(prompt.contains("720") && prompt.contains("900"),
+                "Промпт не задаёт суммарный запас материала под хронометраж")
+    }
+
+    @Test @MainActor func storyAnalysisStageNamesTheDirector() {
+        let tracker = PipelineProgressTracker()
+        tracker.reset(totalVideoDuration: 9841)
+
+        tracker.startStoryAnalysis()
+
+        #expect(tracker.currentStage == .analyzingStory)
+        #expect(tracker.statusMessage.contains("Director"))
+        #expect(tracker.overallProgress >= 0.49)
+    }
 }

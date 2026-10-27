@@ -323,8 +323,13 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             buckets[type] = [candidate]
         }
 
+        fillToBudget(
+            &buckets,
+            segments: transcript.segments,
+            target: targetDuration,
+            creditsCutoff: creditsCutoff
+        )
         trimToBudget(&buckets, target: targetDuration * 1.10)
-
         var acts: [LongformAct] = []
         for type in LongformActType.canonicalAnalyticOrder {
             let scenes = buckets[type] ?? []
@@ -402,6 +407,231 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             guard let removable else { break }
             buckets[removable.type]?.remove(at: removable.index)
         }
+    }
+
+    /// Целевой потолок одной сцены после добора: длиннее — уже не сцена, а кусок фильма.
+    private static let maxExpandedSceneDuration: Double = 120.0
+
+    /// Доливает акты до их доли заказанного хронометража, когда модель вернула
+    /// меньше материала, чем нужно («9 реплик на 2,5 минуты» при выбранных 12).
+    /// Новые сцены код не придумывает: расширяет уже выбранные соседним
+    /// непрерывным диалогом, чтобы монтаж досказал ту же мысль до конца.
+    private func fillToBudget(
+        _ buckets: inout [LongformActType: [SelectedMoment]],
+        segments: [TranscriptSegment],
+        target: Double,
+        creditsCutoff: Double
+    ) {
+        let sortedSegments = segments.sorted { $0.start < $1.start }
+        guard !sortedSegments.isEmpty else { return }
+        let currentTotal = buckets.values.reduce(0.0) { $0 + bucketDuration($1) }
+        guard currentTotal < target * 0.95 else { return }
+
+        for type in LongformActType.canonicalAnalyticOrder {
+            var scenes = buckets[type] ?? []
+            var deficit = target * type.analyticDurationRatio - bucketDuration(scenes)
+            guard deficit > 1.0 else { continue }
+
+            let order = scenes.indices.sorted {
+                let lhs = scenes[$0]
+                let rhs = scenes[$1]
+                if (lhs.featured ?? false) != (rhs.featured ?? false) {
+                    return (lhs.featured ?? false)
+                }
+                return lhs.dramaticWeight > rhs.dramaticWeight
+            }
+
+            for (position, index) in order.enumerated() where deficit > 1.0 {
+                let scene = scenes[index]
+                let share = deficit / Double(order.count - position)
+                let blocked = blockedRanges(
+                    in: buckets,
+                    except: TimeSegment(start: scene.startTime, end: scene.endTime)
+                )
+                let expanded = expandScene(
+                    scene,
+                    by: share,
+                    segments: sortedSegments,
+                    blocked: blocked,
+                    gapLimit: sceneGapLimit(for: type),
+                    limit: creditsCutoff
+                )
+                let gained = (expanded.endTime - expanded.startTime)
+                    - (scene.endTime - scene.startTime)
+                guard gained > 0.01 else { continue }
+                scenes[index] = expanded
+                // Сразу фиксируем в buckets: расширение следующей сцены акта
+                // обязано видеть уже растянутого соседа, иначе они наложатся.
+                buckets[type] = scenes
+                deficit -= gained
+            }
+            buckets[type] = scenes
+        }
+
+        // Второй эшелон: если расширять больше некуда (пауза длиннее сцены),
+        // добираем ближайшие неиспользованные диалоговые куски. Это честная
+        // деградация в эвристику: тема и акты по-прежнему от модели.
+        var runs: [TimeSegment] = []
+        for segment in sortedSegments {
+            if let last = runs.last, segment.start - last.end <= 6.0 {
+                runs[runs.count - 1] = TimeSegment(
+                    start: last.start,
+                    end: max(last.end, segment.end)
+                )
+            } else {
+                runs.append(TimeSegment(start: segment.start, end: segment.end))
+            }
+        }
+        var used = buckets.values.flatMap { $0 }
+            .map { TimeSegment(start: $0.startTime, end: $0.endTime) }
+
+        func distance(_ run: TimeSegment, to anchors: [TimeSegment]) -> Double {
+            anchors.map { anchor in
+                if run.end <= anchor.start { return anchor.start - run.end }
+                if run.start >= anchor.end { return run.start - anchor.end }
+                return 0
+            }.min() ?? .infinity
+        }
+
+        for type in LongformActType.canonicalAnalyticOrder {
+            var scenes = buckets[type] ?? []
+            var deficit = target * type.analyticDurationRatio - bucketDuration(scenes)
+            while deficit > 1.0 {
+                let anchors = scenes.map {
+                    TimeSegment(start: $0.startTime, end: $0.endTime)
+                }
+                let candidate = runs
+                    .filter {
+                        $0.duration >= Self.minRunDuration
+                            && $0.end <= creditsCutoff
+                            && !overlapsAny(range: $0, in: used, safetyBuffer: 0.5)
+                    }
+                    .min { distance($0, to: anchors) < distance($1, to: anchors) }
+                guard let candidate,
+                      distance(candidate, to: anchors) <= 600.0 else { break }
+                scenes.append(SelectedMoment(
+                    startTime: candidate.start,
+                    endTime: candidate.end,
+                    reason: "Сцена поруч із вибраним моментом",
+                    dramaticWeight: 0.35,
+                    actRole: type,
+                    supports: nil,
+                    featured: false
+                ))
+                used.append(candidate)
+                deficit -= candidate.duration
+            }
+            buckets[type] = scenes
+        }
+
+        for type in LongformActType.canonicalAnalyticOrder {
+            buckets[type]?.sort { $0.startTime < $1.startTime }
+        }
+    }
+
+    private func blockedRanges(
+        in buckets: [LongformActType: [SelectedMoment]],
+        except target: TimeSegment
+    ) -> [TimeSegment] {
+        buckets.values.flatMap { $0 }.compactMap { moment in
+            let range = TimeSegment(start: moment.startTime, end: moment.endTime)
+            if abs(range.start - target.start) < 0.01,
+               abs(range.end - target.end) < 0.01 {
+                return nil
+            }
+            return range
+        }
+    }
+
+    /// Наращивает сцену целыми репликами по обе стороны, пока не заберёт
+    /// `extra` секунд, не упрётся в соседнюю сцену, тишину или титры.
+    private func expandScene(
+        _ scene: SelectedMoment,
+        by extra: Double,
+        segments: [TranscriptSegment],
+        blocked: [TimeSegment],
+        gapLimit: Double,
+        limit: Double
+    ) -> SelectedMoment {
+        var start = scene.startTime
+        var end = scene.endTime
+        var added = 0.0
+        let maxDuration = max(Self.maxExpandedSceneDuration, end - start)
+        let blockedRanges = blocked.sorted { $0.start < $1.start }
+
+        var lo = 0
+        var hi = segments.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if segments[mid].start < scene.startTime { lo = mid + 1 } else { hi = mid }
+        }
+        var backward = lo - 1
+        var forward = lo
+        // Сцена обычно занимает несколько реплик: курсоры обязаны стоять на
+        // первой реплике за её границей, иначе расширение упирается в себя же.
+        while backward >= 0, segments[backward].start >= start - 0.01 {
+            backward -= 1
+        }
+        while forward < segments.count, segments[forward].end <= end + 0.01 {
+            forward += 1
+        }
+
+        func isFree(_ range: TimeSegment) -> Bool {
+            guard range.start >= 0, range.end <= limit else { return false }
+            return !blockedRanges.contains {
+                $0.end > range.start + 0.5 && $0.start < range.end - 0.5
+            }
+        }
+
+        func growBackward() -> Bool {
+            guard backward >= 0 else { return false }
+            let segment = segments[backward]
+            guard segment.start < start - 0.01,
+                  start - segment.end <= gapLimit else { return false }
+            let candidate = TimeSegment(start: max(0, segment.start), end: end)
+            guard candidate.duration <= maxDuration, isFree(candidate) else { return false }
+            added += start - candidate.start
+            start = candidate.start
+            backward -= 1
+            return true
+        }
+
+        func growForward() -> Bool {
+            guard forward < segments.count else { return false }
+            let segment = segments[forward]
+            guard segment.end > end + 0.01,
+                  segment.start - end <= gapLimit else { return false }
+            let candidate = TimeSegment(start: start, end: min(limit, segment.end))
+            guard candidate.duration <= maxDuration, isFree(candidate) else { return false }
+            added += candidate.end - end
+            end = candidate.end
+            forward += 1
+            return true
+        }
+
+        var backwardOpen = true
+        var forwardOpen = true
+        var useBackward = true
+        while added < extra - 0.05, end - start < maxDuration,
+              backwardOpen || forwardOpen {
+            if useBackward {
+                if !growBackward() { backwardOpen = false }
+                useBackward = false
+            } else {
+                if !growForward() { forwardOpen = false }
+                useBackward = true
+            }
+        }
+
+        return SelectedMoment(
+            startTime: start,
+            endTime: end,
+            reason: scene.reason,
+            dramaticWeight: scene.dramaticWeight,
+            actRole: scene.actRole,
+            supports: scene.supports,
+            featured: scene.featured
+        )
     }
 
     /// Балансировка актов: если акт пустой, заимствует ближайший момент из соседнего непустого акта.

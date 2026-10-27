@@ -641,7 +641,8 @@ final class MomentFinderService {
         promptParts.append("""
             Обери ОДНУ ГОЛОВНУ тему есе (primaryConcept), докладно обґрунтуй вибір (aiReasoning).
             Склади план есе (essayPlan): thesis, 3 hookVariants, 2 ctaVariants, actFocus для form/psychology/philosophy/catharsis.
-            ВИЗНАЧ 8-14 КОНКРЕТНИХ МОМЕНТІВ для монтажу (selectedMoments) з точними таймкодами.
+            ВИЗНАЧ 16-24 КОНКРЕТНИХ МОМЕНТІВ для монтажу (selectedMoments) з точними таймкодами.
+            Кожен момент — цілісна сцена 20-60 с; сумарна тривалість усіх сцен — 720-900 с.
             Кожному моменту признач actRole (hook|form|psychology|philosophy|catharsis), supports і featured.
             Розподіляй сцени за РОЛЛЮ В ІСТОРІЇ, а не рівномірно по хронометражу: хук може бути з будь-якої частини фільму.
             ТАЙМКОДИ — секунди від початку фільму: якщо дія біля діалогу [754.5], то startTime ≈ 754.5.

@@ -129,8 +129,8 @@ final class PipelineProgressTracker {
         stageProgress = 0.0
         overallProgress = PipelineStage.analyzingStory.cumulativeBase
         stageStartTime = Date()
-        statusMessage = "Режиссерский анализ и поиск арок"
-        detailedMetrics = "Qwen / Gemma анализирует сценарий..."
+        statusMessage = "Director анализирует диалоги"
+        detailedMetrics = "Тема, акты и сцены — Qwen / Gemma..."
     }
 
     func updateStoryAnalysis(fraction: Double, arcFound: String? = nil) {

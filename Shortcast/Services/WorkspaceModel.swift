@@ -646,6 +646,7 @@ final class WorkspaceModel {
                 }
                 Self.log("Reusing model-produced thematic analysis for '\(effectiveMovieTitle)': \(existing.primaryConcept.word)")
             } else {
+                progressTracker.startStoryAnalysis()
                 let thematicService = LongformThematicService()
                 // Тема, не полученная от модели, не подставляется: ошибка уходит
                 // в catch ниже, и эссе не откроется с выдуманным лейтмотивом.

@@ -24,7 +24,7 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         2. Сформулюй глибокий драматургічний розбір (aiReasoning): поясни, чому саме ця тема є прихованим двигуном сюжету.
         3. Запропонуй гострий слоган (tagline), філософський тез (philosophicalPremise) та вірусний YouTube-заголовок (suggestedTitle).
         4. Склади план есе (essayPlan): thesis, 3 hookVariants, 2 ctaVariants, actFocus.
-        5. ВИЗНАЧ 8-14 КОНКРЕТНИХ МОМЕНТІВ для есе (selectedMoments) з таймкодами та ролями.
+        5. ВИЗНАЧ 16-24 КОНКРЕТНИХ МОМЕНТІВ для есе (selectedMoments) з таймкодами та ролями.
         6. Запропонуй РІВНО 3 альтернативні грані фільму (alternativeConcepts).
 
         СТРУКТУРА ЕСЕ (5 аналітичних актів, саме в цьому порядку):
@@ -37,6 +37,11 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         Кожній сцені признач actRole зі списку: hook|form|psychology|philosophy|catharsis.
         supports — одним реченням, який тезис акта доводить сцена; featured=true лише для найсильніших 1-2 сцен акта.
         Розподіляй сцени за РОЛЛЮ В ІСТОРІЇ, а не рівномірно по хронометражу: хук може бути з будь-якої частини фільму.
+        Кожен момент — ЦІЛІСНА СЦЕНА тривалістю 20-60 с, а не окрема репліка: початок і кінець
+        мають збігатися з межами думки, щоб глядач почув закінчену розмову.
+        Сумарна тривалість усіх сцен — 720-900 с (12-15 хвилин). Це запас матеріалу:
+        монтаж потім візьме з нього обраний хронометраж 8-15 хвилин.
+        У кожному акті — 3-6 сцен.
         НЕ вигадуй конкретних візуальних деталей (кольори, ракурси, реквізит), яких немає в діалогах:
         акт form описуй через структуру, монтаж і ритм, які виводяться з матеріалу.
 
@@ -81,7 +86,7 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
             },
             {
               "startTime": 4500.0,
-              "endTime": 4570.7,
+              "endTime": 4558.0,
               "reason": "Кульмінація внутрішнього конфлікту: герой стикається з наслідками своєї гордині...",
               "dramaticWeight": 0.95,
               "actRole": "catharsis",
@@ -101,7 +106,8 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         }
 
         ВАЖЛИВО:
-        - selectedMoments повинен містити 8-14 сцен з точними таймкодами (startTime, endTime)
+        - selectedMoments повинен містити 16-24 сцени з точними таймкодами (startTime, endTime)
+        - Кожна сцена триває 20-60 с; сума (endTime - startTime) усіх сцен — 720-900 с
         - Кожен момент повинен мати reason, dramaticWeight (0.0-1.0), actRole, supports і featured
         - НЕ включай титри в кінці фільму — фокусуйся на сюжетних сценах
         - Таймкоди повинні відповідати реальним сценам з транскрипту

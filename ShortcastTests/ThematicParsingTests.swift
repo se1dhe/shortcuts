@@ -306,6 +306,92 @@ struct ThematicParsingTests {
         #expect(moments.allSatisfy { $0.endTime > $0.startTime })
     }
 
+    @Test("reply cut before the trailing reasoning still yields the theme and scenes")
+    func testTruncatedWithoutReasoningKeepsTheme() throws {
+        // Реальный обрыв Gemma 12B по новому порядку ключей: reasoning последний,
+        // поэтому в ответе его нет вовсе. Обоснование берём из philosophicalPremise
+        // самой модели — иначе прогон снова уходил бы в ноль.
+        let truncated = """
+        {
+          "primaryConcept": {
+            "word": "СВОБОДА",
+            "tagline": "Справжня свобода починається там, де ти перестаєш бути інструментом чужих бажань.",
+            "philosophicalPremise": "Свобода — це не відсутність меж, а право їх обирати.",
+            "suggestedTitle": "Ти вважаєш себе вільним. Цей фільм доводить зворотне.",
+            "accentColorHex": "#E8C46A"
+          },
+          "essayPlan": {
+            "thesis": "Свобода починається з права відмовитися.",
+            "hookVariants": ["Ти впевнений, що твої бажання — твої?"]
+          },
+          "selectedMoments": [
+            {
+              "startTime": 1839.3,
+              "endTime": 1850.8,
+              "reason": "Герой уперше відмовляється від наказу.",
+              "dramaticWeight": 0.85,
+              "actRole": "psychology",
+              "supports": "Відмова повертає йому суб'єктність.",
+              "featured": true
+            },
+            {
+              "startTime": 2436.6,
+              "endTime": 2504.3,
+              "reason": "Розв'язка: герой обирає власне життя.",
+              "dramaticWeight": 0.95,
+              "actRole": "catharsis",
+              "supports": "Вибір перемагає призначення.",
+              "featured": true
+            },
+            {
+              "startTime": 2532.0
+        """
+
+        let analysis = try #require(LongformThematicService.parseThematicAnalysis(from: truncated))
+        try expectFieldsFromModel(analysis)
+        #expect(analysis.primaryConcept.word == "СВОБОДА")
+        #expect(analysis.aiReasoning == "Свобода — це не відсутність меж, а право їх обирати.")
+        #expect(analysis.selectedMoments.count == 2)
+        #expect(analysis.selectedMoments.last?.actRole == .catharsis)
+    }
+
+    @Test("the real Gemma 12B reply that broke the run now parses")
+    func testRealTruncatedDirectorReplyParses() throws {
+        // Дословный ответ Director на Blade Runner 2049 (28 КБ, обрыв на 8192
+        // токенах). Он и был провалом: тема СВОБОДА есть, сцены есть, reasoning
+        // дописать не успел.
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/director-truncated-gemma12b.txt")
+        let raw = try String(contentsOf: url, encoding: .utf8)
+
+        let analysis = try #require(LongformThematicService.parseThematicAnalysis(from: raw))
+        #expect(analysis.source == .llm)
+        #expect(analysis.primaryConcept.word == "СВОБОДА")
+        #expect(!analysis.selectedMoments.isEmpty)
+        #expect(!analysis.aiReasoning.isEmpty)
+        #expect(analysis.aiReasoning == analysis.primaryConcept.philosophicalPremise)
+    }
+
+    @Test("a complete object without reasoning stays nil even when it has scenes")
+    func testCompleteObjectWithoutReasoningStaysNil() {
+        // Обрезка не должна «спасать» полный, но семантически неполный ответ.
+        let complete = """
+        {
+          "primaryConcept": {
+            "word": "Ілюзія",
+            "tagline": "Ти тримаєш кермо, якого ніколи не торкався.",
+            "philosophicalPremise": "Свобода, яку ти не обирав.",
+            "suggestedTitle": "Ти не за кермом."
+          },
+          "selectedMoments": [
+            {"startTime": 10.0, "endTime": 40.0, "reason": "Сцена.", "dramaticWeight": 0.8, "actRole": "hook"}
+          ]
+        }
+        """
+        #expect(LongformThematicService.parseThematicAnalysis(from: complete) == nil)
+    }
+
     @Test("prompt puts the theme first and caps prose so the reply fits 8192 tokens")
     func testPromptKeepsTheReplyInsideTheTokenCap() throws {
         let prompt = LongformThematicService.thematicSystemPrompt(movieTitle: "Фільм")
@@ -314,6 +400,9 @@ struct ThematicParsingTests {
         #expect(theme.lowerBound < reasoning.lowerBound, "тема обязана идти до reasoning")
         #expect(prompt.contains("600 символів"))
         #expect(prompt.contains("до 20 слів"))
+        // Модель схильна перелічувати сцени підряд і не доходити до фіналу.
+        #expect(prompt.contains("максимум 24"))
+        #expect(prompt.contains("включно з фіналом"))
     }
 
     @Test("truncation before primaryConcept is an honest nil, not an invented theme")

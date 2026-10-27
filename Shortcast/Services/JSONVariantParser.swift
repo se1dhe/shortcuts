@@ -149,6 +149,11 @@ enum JSONVariantParser {
     /// затем — отрезать по последней структурной запятой, пока не получится
     /// читаемый объект. Запятые внутри строк не считаются границей.
     static func extractTruncatedJSONObject(from raw: String) -> String? {
+        // Целый объект — не наша забота: строгий разбор уже отказал по смыслу
+        // (например, модель не написала reasoning), и «обрезка» валидного JSON
+        // до частичного протащила бы мусор.
+        guard extractJSONObject(from: raw) == nil else { return nil }
+
         let cleaned = cleanRawOutput(raw)
         guard let start = cleaned.firstIndex(of: "{") else { return nil }
         let text = String(cleaned[start...])
@@ -216,6 +221,11 @@ enum JSONVariantParser {
             default: break
             }
         }
+
+        // A balanced object is the strict extractor's job. Reaching here with
+        // nothing to close means the reply was complete but invalid (e.g. no
+        // reasoning), and pretending it was truncated would smuggle it through.
+        guard inString || !stack.isEmpty else { return nil }
 
         var s = text
         if escaped { s.removeLast() }

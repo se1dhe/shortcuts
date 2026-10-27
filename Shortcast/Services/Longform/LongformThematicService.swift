@@ -24,7 +24,7 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         2. Сформулюй драматургічний розбір (aiReasoning) — не більше 600 символів: чому саме ця тема є прихованим двигуном сюжету.
         3. Запропонуй гострий слоган (tagline), філософський тез (philosophicalPremise) та вірусний YouTube-заголовок (suggestedTitle).
         4. Склади план есе (essayPlan): thesis, 3 hookVariants, 2 ctaVariants, actFocus.
-        5. ВИЗНАЧ 16-24 КОНКРЕТНИХ МОМЕНТІВ для есе (selectedMoments) з таймкодами та ролями.
+        5. ВИЗНАЧ 16-24 КОНКРЕТНИХ МОМЕНТІВ для есе (selectedMoments) з таймкодами та ролями — НЕ БІЛЬШЕ 24.
         6. Запропонуй РІВНО 3 альтернативні грані фільму (alternativeConcepts).
 
         СТРУКТУРА ЕСЕ (5 актів, саме в цьому порядку; хук — 0:00–0:40):
@@ -55,6 +55,10 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
           Головне — тема й сцени: навіть обірвана відповідь має лишити монтаж придатним.
         - tagline, philosophicalPremise, reason і supports — до 20 слів кожен.
         - alternativeConcepts — рівно 3, стисло: word, tagline, suggestedTitle.
+        - selectedMoments — максимум 24 сцени. Спершу обери по 1-2 найсильніші сцени
+          на КОЖЕН акт (hook, form, psychology, philosophy, catharsis) по всьому фільму,
+          включно з фіналом, і лише потім додавай решту до 24.
+          Не перелічуй сцени підряд за таймкодом і не бери репліки коротші за 20 с.
 
         ФОРМАТ ВИВОДУ:
         Відповідь СУВОРО валідним JSON-об'єктом без зайвих передмов і коментарів:
@@ -222,7 +226,7 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         // берём всё, что модель успела выдать целиком. Без хотя бы одной
         // завершённой сцены монтаж собрать не из чего — тогда честный nil.
         if let repairedJSON = JSONVariantParser.extractTruncatedJSONObject(from: jsonText),
-           let repaired = parseAnalysisObject(repairedJSON),
+           let repaired = parseAnalysisObject(repairedJSON, allowDerivedReasoning: true),
            !repaired.selectedMoments.isEmpty {
             Self.logger.info(
                 "salvaged truncated thematic JSON: \(repaired.selectedMoments.count) moment(s), theme '\(repaired.primaryConcept.word, privacy: .public)'"
@@ -244,15 +248,26 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
 
     /// Разбирает объект анализа (полный или восстановленный из обрезанного ответа).
     /// nil — если нет темы или обоснования: без них результат бесполезен.
-    private static func parseAnalysisObject(_ jsonString: String) -> ThematicAnalysisResult? {
+    ///
+    /// `allowDerivedReasoning` — только для восстановленного хвоста: reasoning
+    /// пишется последним и обрезается первым, поэтому его отсутствие там означает
+    /// обрыв, а не небрежность модели. Тогда обоснованием служит philosophicalPremise
+    /// самой модели — текста мы не придумываем.
+    private static func parseAnalysisObject(
+        _ jsonString: String,
+        allowDerivedReasoning: Bool = false
+    ) -> ThematicAnalysisResult? {
         guard let root = JSONVariantParser.deserializeTolerant(jsonString) as? [String: Any],
-              let primary = parseConcept(root["primaryConcept"]),
-              let reasoning = nonEmptyString(root["aiReasoning"]) ?? nonEmptyString(root["reasoning"])
+              let primary = parseConcept(root["primaryConcept"])
         else { return nil }
 
         // После фильтрации некириллицы обязательные поля могут опустеть.
         let filteredPrimary = filterConcept(primary)
         guard isValidConcept(filteredPrimary) else { return nil }
+
+        let modelReasoning = nonEmptyString(root["aiReasoning"]) ?? nonEmptyString(root["reasoning"])
+        guard let reasoning = modelReasoning ?? (allowDerivedReasoning ? filteredPrimary.philosophicalPremise : nil)
+        else { return nil }
 
         let filteredMoments = parseSelectedMoments(root["selectedMoments"]).map { moment in
             SelectedMoment(

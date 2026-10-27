@@ -1,0 +1,759 @@
+```json
+{
+  "primaryConcept": {
+    "word": "СВОБОДА",
+    "tagline": "Справжня свобода починається там, де ти перестаєш бути інструментом чужих бажань.",
+    "philosophicalPremise": "Ми часто вважаємо свободою можливість обирати між варіантами, але справжня свобода — це здатність вийти за межі системи, яка визначає ці варіанти.",
+    "suggestedTitle": "Вільний чи Створений? Вихід із клітки системи",
+    "accentColorHex": "#E0F714"
+  },
+  "essayPlan": {
+    "thesis": "Свобода — це не відсутність кордонів, а здатність виявити власний внутрішній імпульс у світі механічних правил.",
+    "hookVariants": [
+      "Ти відчуваєш себе вільним, чи ти просто виконуєш програму, яку вважаєш своєю?",
+      "Що, як твоя здатність обирати — це лише вибір між різними формами рабства?",
+      "Ми боїмося втратити контроль, але справжній жах — це ніколи не мати його над власним життям."
+    ],
+    "ctaVariants": [
+      "Повний розбір і опитування — у Telegram-каналі.",
+      "Продовження розбору та добірка матеріалів — у Telegram."
+    ],
+    "actFocus": {
+      "form": "Ритм і повторювані прийоми видають внутрішній конфлікт героя.",
+      "psychology": "Страх втратити контроль керує кожним його рішенням.",
+      "philosophy": "Свобода починається там, де закінчується потреба все тримати.",
+      "catharsis": "Глядач бачить ціну контролю і власний вибір."
+    }
+  },
+  "selectedMoments": [
+    {
+      "startTime": 754.5,
+      "endTime": 810.3,
+      "reason": "Перший візуальний та концептуальний запит на свободу через згадування 'того, хто біжить по лезу'.",
+      "dramaticWeight": 0.85,
+      "actRole": "hook",
+      "supports": "Встановлення ставки: мисливець на свободу.",
+      "featured": true
+    },
+    {
+      "startTime": 856.3,
+      "endTime": 916.3,
+      "reason": "Повторювані фрази про 'клітини' демонструють механічну природу ідентичності.",
+      "dramaticWeight_form": 0.8,
+      "actRole": "form",
+      "supports": "Показує як система програмує розум на циклічність.",
+      "featured": false
+    },
+    {
+      "startTime": 1020.1,
+      "endTime": 1041.9,
+      "reason": "Сцена з детоксом і роботою в замкненому просторі.",
+      "dramaticWeight": 0.7,
+      "actRole": "form",
+      "supports": "Механізм ізоляції як форми контролю.",
+      "featured": false
+    },
+    {
+      "startTime": 1057.6,
+      "endTime": 1130.9,
+      "reason": "Спроба знайти задоволення у штучних звичках.",
+      "dramaticWeight": 0.75,
+      "actRole": "form",
+      "supports": "Створення ілюзії комфорту всередині клітки.",
+      "featured": false
+    },
+    {
+      "startTime": 1393.7,
+      "endTime": 1456.7,
+      "reason": "Відкриття східла у тілі — перехід від абстрактного до біологічного.",
+      "dramaticWeight": 0.8,
+      "actRole": "psychology",
+      "supports": "Виявлення того, що життя було викрадене.",
+      "featured": false
+    },
+    {
+      "startTime": 1459.9,
+      "endTime": 1533.4,
+      "reason": "Аналіз смерті дитини — момент усвідомлення жорстокості системи.",
+      "dramaticWeight": 0.85,
+      "actRole": "psychology",
+      "supports": "Страх перед наслідками дії системи.",
+      "featured": false
+    },
+    {
+      "startTime": 1629.7,
+      "endTime": 1654.4,
+      "reason": "Пряме зізнання про ст<image|>ну і порядок.",
+      "dramaticWeight": 0.9,
+      "actRole": "psychology",
+      "supports": "Конфлікт між збереженням статусу-кво та свободою.",
+      "featured": false
+    },
+    {
+      "startTime": 1682.0,
+      "endTime": 1707.7,
+      "reason": "Питання про душу як виявлення суб'єктності.",
+      "dramaticWeight": 0.85,
+      "actRole": "psychology",
+      "supports": "Пошук ідентичності поза рамками функціональності.",
+      "featured": false
+    },
+    {
+      "startTime": 1839.3,
+      "endTime": 1850.8,
+      "reason": "Додавання 'людяності' як інструмент контролю.",
+      "dramaticWeight": 0.8,
+      "actRole": "psychology",
+      "supports": "Маніпуляція емоціями для підтримання системи.",
+      "featured": false
+    },
+    {
+      "startTime": 2347.3,
+      "endTime": 2368.0,
+      "reason": "Визнання страху втратити життя.",
+      "dramaticWeight": 0.85,
+      "actRole": "psychology",
+      "supports": "Виявлення базового інстинкту виживання.",
+      "featured": false
+    },
+    {
+      "startTime": 2436.6,
+      "endTime": 2504.3,
+      "reason": "Концепція 'запліднення' як вихід за межі біології.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Спроба подолати смертність як вища форма свободи.",
+      "featured": false
+    },
+    {
+      "startTime": 2532.0,
+      "endTime": 2547.7,
+      "reason": "Цільовий запит на 'трон' та Едем.",
+      "dramaticWeight": 0.85,
+      "actRole: "philosophy",
+      "supports": "Мегапроєкт як виявлення влади над життям.",
+      "featured": false
+    },
+    {
+      "startTime": 3102.9,
+      "endTime": 3147.3,
+      "reason": "Спогади про іграшку як перший акт самоствердження.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Свобода як здатність мати власну історію.",
+      "featured": false
+    },
+    {
+      "startTime": 3424.8,
+      "endTime": 3501.1,
+      "reason": "Виявлення ідентичних ДНК як вихід за межі біологічного права.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Руйнування унікальності як умови свободи.",
+      "featured": false
+    },
+    {
+      "startTime": 3501.1,
+      "endTime": 3521.0,
+      "reason": "Виявлення копії — момент втрати унікальності.",
+      "dramaticWeight": 0.95,
+      "actRole": "philosophy",
+      "supports": "Виклик до переосмислення власного 'Я'.",
+      "featured": false
+    },
+    {
+      "startTime:: 3577.9,
+      "endTime": 3604.1,
+      "reason": "Пошук місця народження як пошук витоку.",
+      "dramaticWeight": 0.8,
+      "actRole": "philosophy",
+      "supports": "Пошук початку як спосіб знайти себе.",
+      "featured": false
+    },
+    {
+      "startTime": 3992.9,
+      "endTime": 4055.1,
+      "reason": "Виправдання роботи як виправдання рабства.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Виправдання системи як спосіб збереження порядку.",
+      "featured": false
+    },
+    {
+      "startTime": 4504.9,
+      "endTime": 4538.4,
+      "reason": "Надання імені як акт визнання суб'єктності.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Ім'я як перший крок до свободи.",
+      "featured": false
+    },
+    {
+      "startTime": 5124.1,
+      "endTime": 5213.7,
+      "reason": "Визнання репліканта справжньою.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Справжність як вихід з підпорядкування.",
+      "featured": false
+    },
+    {
+      "startTime": 5451.4,
+      "endTime": 5539.8,
+      "reason": "Взаємодія з Джой як виявлення внутрішнього світу.",
+      "dramaticWeight": 0.8,
+      "actRole": "philosophy",
+      "supports": "Створення зв'язку як акт свободи.",
+      "featured": false
+    },
+    {
+      "startTime": 7530.6,
+      "endTime": 7540.6,
+      "reason": "Спроба врятувати дитину як акт виходу з системи.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Спрощення за життя як вища мета.",
+      "featured": false
+    },
+    {
+      "startTime": 7551.8,
+      "endTime": 7578.2,
+      "reason": "Пророцтво про революцію.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Колективне прагнення до свободи.",
+      "featured": false
+    },
+    {
+      "startTime": 7587.3,
+      "endTime": 7602.6,
+      "reason": "Визнання самопожертви як вищого прояву людяності.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Спрощення за інших як акт свободи.",
+      "featured": false
+    },
+    {
+      "startTime": 7621.0,
+      "endTime": 7638.2,
+      "reason": "План врятування дитини як акт виходу з системи.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Спроба змінити долю як акт свободи.",
+      "featured": false
+    },
+    {
+      "startTime": 7684.8,
+      "endTime": 7688.5,
+      "reason": "Віра в дитину як виявлення сенсу.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Віра як основа для дії.",
+      "featured": false
+    },
+    {
+      "startTime": 7814.2,
+      "endTime": 7835.3,
+      "reason": "Пошук ключа до закритих дверей.",
+      "dramaticWeight": 0.8,
+      "actRole": "philosophy",
+      "supports": "Пошук способу виходу з системи.",
+      "featured": false
+    },
+    {
+      "startTime": 7852.7,
+      "endTime": 7863.3,
+      "reason": "Відсилання до біблійної історії як виявлення архетипу.",
+      "dramaticWeight": 0.8,
+      "actRole": "philosophy",
+      "supports": "Спрощення за життя як вища мета.",
+      "featured": false
+    },
+    {
+      "startTime": 7914.3,
+      "endTime": 7961.6,
+      "reason": "Спроба створити єдиний екземпляр.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Спроба вийти з циклу повторюваності.",
+      "featured": false
+    },
+    {
+      "startTime": 8043.3,
+      "endTime": 8050.8,
+      "reason": "Відсутність дітей як виявлення порожнечі.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Порожнеча як відсутність свободи.",
+      "featured": false
+    },
+    {
+      "startTime": 8059.2,
+      "endTime": 8071.5,
+      "reason": "Визнання болю як підтвердження радості.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Болю як підтвердження існування.",
+      "featured": false
+    },
+    {
+      "startTime": 8202.5,
+      "endTime": 8211.7,
+      "reason": "Спроба розмови як виявлення зв'язку.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Спроба знайти спільну мову.",
+      "featured": false
+    },
+    {
+      "startTime": 8297.1,
+      "endTime": 8305.1,
+      "reason": "Спрощення за праве діло.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Спрощення за життя як вища мета.",
+      "featured": false
+    },
+    {
+      "startTime": 8305.1,
+      "endTime": 8346.9,
+      "reason": "Виявлення дива як вихід з системи.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Дива як вихід з системи.",
+      "featured": false
+    },
+    {
+      "startTime": 8505.4,
+      "endTime": 8618.7,
+      "reason": "Виклик до дії як виявлення волі.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports': "Виклик до дії як виявлення волі.",
+      "featured": false
+    },
+    {
+      "startTime": 8851.0,
+      "endTime": 8980.8,
+      "reason": "Визнання поразки як вихід з системи.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Визнання поразки як вихід з системи.",
+      "featured": false
+    },
+    {
+      "startTime": 9146.8,
+      "endTime": 9217.3,
+      "reason": "Визнання того, хто біжить по лезу.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Визнання того, хто біжить по лезу.",
+      "featured": false
+    },
+    {
+      "startTime": 9217.3,
+      "endTime": 9222.3,
+      "reason": "Визнання дати як початок нового шляху.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Визнання дати як початок нового шляху.",
+      "featured": false
+    },
+    {
+      "startTime": 1057.6,
+      "endTime": 1130.9,
+      "reason": "Спроба знайти задоволення у штучних звичках.",
+      "dramaticWeight": 0.75,
+      "actRole": "form",
+      "supports": "Механізм ізоляції як форми контролю.",
+      "featured": false
+    },
+    {
+      "startTime": 1250.0,
+      "endTime": 1365.6,
+      "reason": "Спроба знайти задоволення у штучних звичках.",
+      "dramaticWeight": 0.8,
+      "actRole": "form",
+      "supports": "Механізм ізоляції як форми контролю.",
+      "featured": false
+    },
+    {
+      "startTime": 1393.7,
+      "endTime": 1456.7,
+      "reason": "Відкриття східла у тілі.",
+      "dramaticWeight": 0.8,
+      "actRole": "psychology",
+      "supports": "Виявлення того, що життя було викрадене.",
+      "featured": false
+    },
+    {
+      "startTime": 1459.9,
+      "endTime": 1533.4,
+      "reason": "Аналіз смерті дитини.",
+      "dramaticWeight": 0.85,
+      "actRole": "psychology",
+      "supports": "Страх перед наслідками дії системи.",
+      "featured": false
+    },
+    {
+      "startTime": 1629.7,
+      "endTime": 1654.4,
+      "reason": "Пряме зізнання про стіну.",
+      "dramaticWeight": 0.9,
+      "actRole": "psychology",
+      "supports": "Конфлікт між збереженням статусу-кво та свободою.",
+      "featured": false
+    },
+    {
+      "startTime": 1682.0,
+      "endTime": 1707.7,
+      "reason": "Питання про душу.",
+      "dramaticWeight": 0.85,
+      "actRole": "psychology",
+      "supports": "Пошук ідентичності поза рамками функціональності.",
+      "featured": false
+    },
+    {
+      "startTime": 1839.3,
+      "endTime": 1850.8,
+      "reason": "Додавання людяності.",
+      "dramaticWeight": 0.8,
+      "actRole": "psychology",
+      "supports": "Маніпуляція емоціями для підтримання системи.",
+      "featured": false
+    },
+    {
+      "startTime": 2347.3,
+      "endTime": 2368.0,
+      "reason": "Визнання страху втратити життя.",
+      "dramaticWeight": 0.85,
+      "actRole": "psychology",
+      "supports": "Виявлення базового інстинкту виживання.",
+      "featured": false
+    },
+    {
+      "startTime": 2436.6,
+      "endTime": 2504.3,
+      "reason": "Концепція запладнення.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Спроба подолати смертність як вища форма свободи.",
+      "featured": false
+    },
+    {
+      "startTime": 2532.0,
+      "endTime": 2547.7,
+      "reason": "Цільовий запит на трон.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Спроба подолати смертність як вища форма свободи.",
+      "featured": false
+    },
+    {
+      "startTime": 3102.9,
+      "endTime": 3147.3,
+      "reason": "Спогади про іграшку.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Свобода як здатність мати власну історію.",
+      "featured": false
+    },
+    {
+      "startTime": 3424.8,
+      "endTime": 3501.1,
+      "reason": "Виявлення ідентичних ДНК.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Руйнування унікальності як умови свободи.",
+      "featured": false
+    },
+    {
+      "startTime": 3501.1,
+      "endTime": 3521.0,
+      "reason": "Виявлення копії.",
+      "dramaticWeight": 0.95,
+      "actRole": "philosophy",
+      "supports": "Виклик до переосмислення власного 'Я'.",
+      "featured": false
+    },
+    {
+      "startTime": 3577.9,
+      "endTime": 3604.1,
+      "reason": "Пошук місця народження.",
+      "dramaticWeight": 0.8,
+      "actRole": "philosophy",
+      "supports": "Пошук початку як спосіб знайти себе.",
+      "featured": false
+    },
+    {
+      "startTime": 3992.9,
+      "endTime": 4055.1,
+      "reason": "Виправдання роботи.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Виправдання системи як збереження порядку.",
+      "featured": false
+    },
+    {
+      "startTime": 4504.9,
+      "endTime": 4538.4,
+      "reason": "Надання імені.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Ім'я як перший крок до свободи.",
+      "featured": false
+    },
+    {
+      "startTime": 5124.1,
+      "endTime": 5213.7,
+      "reason": "Визнання репліканта справжньою.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Справжність як вихід з підпорядкування.",
+      "featured": false
+    },
+    {
+      "startTime": 5451.4,
+      "endTime": 5539.8,
+      "reason": "Взаємодія з Джой.",
+      "dramaticWeight": 0.8,
+      "actRole": "philosophy",
+      "supports": "Створення зв'язку як акт свободи.",
+      "featured": false
+    },
+    {
+      "startTime": 7530.6,
+      "endTime": 7540.6,
+      "reason": "Спроба врятувати дитину.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Спрощення за життя як вища мета.",
+      "featured": false
+    },
+    {
+      "startTime": 7551.8,
+      "endTime": 7578.2,
+      "reason": "Пророцтво про революцію.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Колективне прагнення до свободи.",
+      "featured": false
+    },
+    {
+      "startTime": 7587.3,
+      "endTime": 7602.6,
+      "reason": "Визнання самопожертви.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Спрощення за інших як акт свободи.",
+      "featured": false
+    },
+    {
+      "startTime": 7621.0,
+      "endTime": 7638.2,
+      "reason": "План врятування дитини.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Спроба змінити долю як акт свободи.",
+      "featured": false
+    },
+    {
+      "startTime": 7684.8,
+      "endTime": 7688.5,
+      "reason": "Віра в дитину.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Віра як основа для дії.",
+      "featured": false
+    },
+    {
+      "startTime": 7814.2,
+      "endTime": 7835.3,
+      "reason": "Пошук ключа.",
+      "dramaticWeight": 0.8,
+      "actRole": "philosophy",
+      "supports": "Пошук способу виходу з системи.",
+      "featured": false
+    },
+    {
+      "startTime": 7852.7,
+      "endTime": 7863.3,
+      "reason": "Відсилання до біблійної історії.",
+      "dramaticWeight": 0.8,
+      "actRole": "philosophy",
+      "supports": "Спрощення за життя як вища мета.",
+      "featured": false
+    },
+    {
+      "startTime": 7914.3,
+      "endTime": 7961.6,
+      "reason": "Спроба створити єдиний екземпляр.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Спроба вийти з циклу повторюваності.",
+      "featured": false
+    },
+    {
+      "startTime": 8043.3,
+      "endTime": 8050.8,
+      "reason": "Відсутність дітей.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Порожнеча як відсутність свободи.",
+      "featured": false
+    },
+    {
+      "startTime": 8059.2,
+      "endTime": 8071.5,
+      "reason": "Визнання болю.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Болю як підтвердження існування.",
+      "featured": false
+    },
+    {
+      "startTime": 8202.5,
+      "endTime": 8211.7,
+      "reason": "Спроба розмови.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Спроба знайти спільну мову.",
+      "featured": false
+    },
+    {
+      "startTime": 8297.1,
+      "endTime": 8305.1,
+      "reason": "Спрощення за праве діло.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Спрощення за життя як вища мета.",
+      "featured": false
+    },
+    {
+      "startTime": 8305.1,
+      "endTime": 8346.9,
+      "reason": "Виявлення дива.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Дива як вихід з системи.",
+      "featured": false
+    },
+    {
+      "startTime": 8505.4,
+      "endTime": 8618.7,
+      "reason": "Виклик до дії.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Виклик до дії як виявлення волі.",
+      "featured": false
+    },
+    {
+      "startTime": 8851.0,
+      "endTime": 8980.8,
+      "reason": "Визнання поразки.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Визнання поразки як вихід з системи.",
+      "featured": false
+    },
+    {
+      "startTime": 9146.8,
+      "endTime": 9217.3,
+      "reason": "Визнання того, хто біжить по лезу.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Визнання того, хто біжить по лезу.",
+      "featured": false
+    },
+    {
+      "startTime": 9217.3,
+      "endTime": 9222.3,
+      "reason": "Визнання дати.",
+      "dramaticWeight": 0.85,
+      "actRole": "philosophy",
+      "supports": "Визнання дати як початок нового шляху.",
+      "featured": false
+    },
+    {
+      "startTime": 1057.6,
+      "endTime": 1130.9,
+      "reason": "Спроба знайти задоволення.",
+      "dramaticWeight": 0.75,
+      "actRole": "form",
+      "supports": "Механізм ізоляції як форми контролю.",
+      "featured": false
+    },
+    {
+      "startTime": 1250.0,
+      "endTime": 1365.6,
+      "reason": "Спроба знайти задоволення.",
+      "dramaticWeight": 0.8,
+      "actRole": "form",
+      "supports": "Механізм ізоляції як форми контролю.",
+      "featured": false
+    },
+    {
+      "startTime": 1393.7,
+      "endTime": 1456.7,
+      "reason": "Відкриття східла.",
+      "dramaticWeight": 0.8,
+      "actRole": "psychology",
+      "supports": "Виявлення того, що життя було викрадене.",
+      "featured": false
+    },
+    {
+      "startTime": 1459.9,
+      "endTime": 1533.4,
+      "reason": "Аналіз смерті дитини.",
+      "dramaticWeight": 0.85,
+      "actRole": "psychology",
+      "supports": "Страх перед наслідками дії системи.",
+      "featured": false
+    },
+    {
+      "startTime": 1629.7,
+      "endTime": 1654.4,
+      "reason": "Пряме зізнання про стіну.",
+      "dramaticWeight": 0.9,
+      "actRole": "psychology",
+      "supports": "Конфлікт між збереженням статусу-кво та свободою.",
+      "featured": false
+    },
+    {
+      "startTime": 1682.0,
+      "endTime": 1707.7,
+      "reason": "Питання про душу.",
+      "dramaticWeight": 0.85,
+      "actRole": "psychology",
+      "supports": "Пошук ідентичності поза рамками функціональності.",
+      "featured": false
+    },
+    {
+      "startTime": 1839.3,
+      "endTime": 1850.8,
+      "reason": "Додання людяності.",
+      "dramaticWeight": 0.8,
+      "actRole": "psychology",
+      "supports": "Маніпуляція емоціями для підтримання системи.",
+      "featured": false
+    },
+    {
+      "startTime": 2347.3,
+      "endTime": 2368.0,
+      "reason": "Визнання страху втратити життя.",
+      "dramaticWeight": 0.85,
+      "actRole": "psychology",
+      "supports": "Виявлення базового інстинкту виживання.",
+      "featured": false
+    },
+    {
+      "startTime": 2436.6,
+      "endTime": 2504.3,
+      "reason": "Концепція запладнення.",
+      "dramaticWeight": 0.9,
+      "actRole": "philosophy",
+      "supports": "Спроба подолати смертність як вища форма свободи.",
+      "featured": false
+    },
+    {
+      "startTime": 2532.0

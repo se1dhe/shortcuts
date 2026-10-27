@@ -296,7 +296,7 @@ final class MomentFinderService {
     }
 
     nonisolated static func log(_ message: String) {
-        FileHandle.standardError.write(Data("[shortcast/director] \(message)\n".utf8))
+        DirectorRunLog.write(message)
     }
 
     /// Captions one clip from its transcript slice (the text-only Copywriter
@@ -666,7 +666,7 @@ final class MomentFinderService {
         for attempt in 1...maxAttempts {
             let prompt = attempt == 1
                 ? userPrompt
-                : userPrompt + "\n\nУВАГА: попередня відповідь була невалідною. Відповідь ТІЛЬКИ валідним JSON-об'єктом без markdown, без пояснень і без тексту до або після об'єкта."
+                : userPrompt + "\n\nУВАГА: попередня відповідь була невалідною або обірваною. Скороти reasoning до 300 символів, почни об'єкт з primaryConcept і поверни ТІЛЬКИ валідний JSON-об'єкт без markdown, без пояснень і без тексту до або після об'єкта."
 
             let session = ChatSession(
                 container,
@@ -682,7 +682,11 @@ final class MomentFinderService {
                 Self.log("analyzeThematicCore attempt \(attempt): \(raw.count) chars")
                 guard !raw.trimmed.isEmpty else { continue }
                 latestText = raw
+                DirectorRunLog.dumpRaw(raw, attempt: attempt)
                 if let parsed = LongformThematicService.parseThematicAnalysis(from: raw) {
+                    Self.log(
+                        "analyzeThematicCore attempt \(attempt): theme '\(parsed.primaryConcept.word)' with \(parsed.selectedMoments.count) moment(s)"
+                    )
                     // Спеллчекер украинского: коррекция concept.word через LLM (Задача 1)
                     var corrected = parsed
                     let correctedPrimary = await self.correctConceptWord(corrected.primaryConcept)
@@ -697,6 +701,9 @@ final class MomentFinderService {
                     }
                     return corrected
                 }
+                Self.log(
+                    "analyzeThematicCore attempt \(attempt): unparseable, head: \(raw.prefix(200))"
+                )
             } catch {
                 lastError = error
                 Self.log("analyzeThematicCore attempt \(attempt) failed: \(error.localizedDescription)")

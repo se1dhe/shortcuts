@@ -141,6 +141,101 @@ enum JSONVariantParser {
         return nil
     }
 
+    /// Восстанавливает объект из ответа, обрезанного по лимиту токенов: закрывает
+    /// незакрытую строку и скобки, отбрасывая недописанный хвост. nil — если даже
+    /// после починки JSON не читается.
+    ///
+    /// Сначала пробуем закрыть хвост как есть (обрыв внутри строки или числа),
+    /// затем — отрезать по последней структурной запятой, пока не получится
+    /// читаемый объект. Запятые внутри строк не считаются границей.
+    static func extractTruncatedJSONObject(from raw: String) -> String? {
+        let cleaned = cleanRawOutput(raw)
+        guard let start = cleaned.firstIndex(of: "{") else { return nil }
+        let text = String(cleaned[start...])
+
+        if let closed = closeTruncatedJSON(text) { return closed }
+        for comma in structuralCommaOffsets(in: text).reversed() {
+            let cut = String(text[text.startIndex..<comma])
+            if let closed = closeTruncatedJSON(cut) { return closed }
+        }
+        return nil
+    }
+
+    /// Позиции запятых вне строк — только по ним можно резать обрезанный JSON,
+    /// не разрывая текст модели.
+    private static func structuralCommaOffsets(in text: String) -> [String.Index] {
+        var offsets: [String.Index] = []
+        var inString = false
+        var escaped = false
+        var index = text.startIndex
+        while index < text.endIndex {
+            let char = text[index]
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if char == "\\" {
+                    escaped = true
+                } else if char == "\"" {
+                    inString = false
+                }
+            } else if char == "\"" {
+                inString = true
+            } else if char == "," {
+                offsets.append(index)
+            }
+            index = text.index(after: index)
+        }
+        return offsets
+    }
+
+    /// Дописывает недостающие кавычку и скобки, снимает висячую запятую и
+    /// проверяет результат десериализацией. nil — если хвост не чинится.
+    private static func closeTruncatedJSON(_ text: String) -> String? {
+        var stack: [Character] = []
+        var inString = false
+        var escaped = false
+        for char in text {
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if char == "\\" {
+                    escaped = true
+                } else if char == "\"" {
+                    inString = false
+                }
+                continue
+            }
+            switch char {
+            case "\"": inString = true
+            case "{", "[": stack.append(char)
+            case "}", "]":
+                guard let open = stack.last,
+                      (open == "{" && char == "}") || (open == "[" && char == "]")
+                else { return nil }
+                stack.removeLast()
+            default: break
+            }
+        }
+
+        var s = text
+        if escaped { s.removeLast() }
+        if inString { s.append("\"") }
+        s = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        while s.hasSuffix(",") {
+            s.removeLast()
+            s = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        for open in stack.reversed() {
+            s.append(open == "{" ? "}" : "]")
+        }
+
+        let candidate = repairDrift(s)
+        guard let data = candidate.data(using: .utf8),
+              (try? JSONSerialization.jsonObject(with: data)) != nil
+        else { return nil }
+        return candidate
+    }
+
     /// Strips common model wrappers (markdown fences, thinking blocks, tool calls)
     /// so `extractJSONObject` sees clean JSON.
     private static func cleanRawOutput(_ raw: String) -> String {

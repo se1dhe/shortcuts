@@ -1780,10 +1780,10 @@ final class WorkspaceModel {
         }
     }
 
-    // MARK: - Timing logs (stderr; visible when launched from the terminal)
+    // MARK: - Timing logs (stderr + ~/Library/Logs/Shortcast/director.log)
 
     nonisolated static func log(_ message: String) {
-        FileHandle.standardError.write(Data("[shortcast/pipeline] \(message)\n".utf8))
+        DirectorRunLog.write(message, source: "pipeline")
     }
 
     /// Formatted seconds elapsed between two dates (defaults `to` = now).

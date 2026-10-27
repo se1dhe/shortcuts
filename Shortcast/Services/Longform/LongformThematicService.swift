@@ -21,7 +21,7 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
 
         КРОК 2: ВИБІР ТЕМИ ТА МОМЕНТІВ
         1. Вияви ОДНЕ потужне якірне слово теми (word) з великої літери (наприклад: «ЕГО», «ОБМАН», «СТРАХ», «ТЕРПІННЯ», «ГЕНІАЛЬНІСТЬ», «ВЛАДА»).
-        2. Сформулюй глибокий драматургічний розбір (aiReasoning): поясни, чому саме ця тема є прихованим двигуном сюжету.
+        2. Сформулюй драматургічний розбір (aiReasoning) — не більше 600 символів: чому саме ця тема є прихованим двигуном сюжету.
         3. Запропонуй гострий слоган (tagline), філософський тез (philosophicalPremise) та вірусний YouTube-заголовок (suggestedTitle).
         4. Склади план есе (essayPlan): thesis, 3 hookVariants, 2 ctaVariants, actFocus.
         5. ВИЗНАЧ 16-24 КОНКРЕТНИХ МОМЕНТІВ для есе (selectedMoments) з таймкодами та ролями.
@@ -50,10 +50,15 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         НЕ вигадуй конкретних візуальних деталей (кольори, ракурси, реквізит), яких немає в діалогах:
         акт form описуй через структуру, монтаж і ритм, які виводяться з матеріалу.
 
+        СТИСЛІСТЬ (відповідь мусить уміститися в ліміт токенів):
+        - Ключі JSON пиши САМЕ в цьому порядку: primaryConcept → essayPlan → selectedMoments → alternativeConcepts → reasoning.
+          Головне — тема й сцени: навіть обірвана відповідь має лишити монтаж придатним.
+        - tagline, philosophicalPremise, reason і supports — до 20 слів кожен.
+        - alternativeConcepts — рівно 3, стисло: word, tagline, suggestedTitle.
+
         ФОРМАТ ВИВОДУ:
         Відповідь СУВОРО валідним JSON-об'єктом без зайвих передмов і коментарів:
         {
-          "reasoning": "Детальний аналіз структури фільму: драматургічна арка, ключові конфлікти, еволюція героя, чому саме ця тема є центральною...",
           "primaryConcept": {
             "word": "Его",
             "tagline": "Твій головний ворог ховається там, де ти найменше будеш його шукати — в твоїй власній голові.",
@@ -107,7 +112,8 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
               "suggestedTitle": "Ти програєш, якщо не зрозумієш цю розводку.",
               "accentColorHex": "#F5D020"
             }
-          ]
+          ],
+          "reasoning": "Головний конфлікт фільму і чому ця тема центральна — 2-3 речення."
         }
 
         ВАЖЛИВО:
@@ -208,35 +214,20 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
     /// должна написать модель, а не код.
     static func parseThematicAnalysis(from jsonText: String) -> ThematicAnalysisResult? {
         if let jsonString = JSONVariantParser.extractJSONObject(from: jsonText),
-           let root = JSONVariantParser.deserializeTolerant(jsonString) as? [String: Any],
-           let primary = parseConcept(root["primaryConcept"]),
-           let reasoning = nonEmptyString(root["aiReasoning"]) ?? nonEmptyString(root["reasoning"]) {
-            let moments = parseSelectedMoments(root["selectedMoments"])
-            // Фильтрация некириллических символов (арабские, латинские и т.п.) из текстовых полей
-            let filteredPrimary = filterConcept(primary)
-            // После фильтрации обязательные поля могут стать пустыми — отбракуем такой результат
-            guard isValidConcept(filteredPrimary) else { return nil }
-            let filteredReasoning = filterNonCyrillic(reasoning)
-            let filteredMoments = moments.map { moment in
-                SelectedMoment(
-                    startTime: moment.startTime,
-                    endTime: moment.endTime,
-                    reason: filterNonCyrillic(moment.reason),
-                    dramaticWeight: moment.dramaticWeight,
-                    actRole: moment.actRole,
-                    supports: moment.supports.map(filterNonCyrillic),
-                    featured: moment.featured
-                )
-            }
-            let plan = parseEssayPlan(root["essayPlan"])
-            let filteredAlts = conceptArray(root["alternativeConcepts"]).map { filterConcept($0) }.filter { isValidConcept($0) }
-            return makeResult(
-                primary: filteredPrimary,
-                reasoning: filteredReasoning,
-                moments: filteredMoments,
-                alternatives: filteredAlts,
-                plan: plan
+           let strict = parseAnalysisObject(jsonString) {
+            return strict
+        }
+
+        // Генерация упирается в maxTokens и обрывает JSON: закрываем хвост и
+        // берём всё, что модель успела выдать целиком. Без хотя бы одной
+        // завершённой сцены монтаж собрать не из чего — тогда честный nil.
+        if let repairedJSON = JSONVariantParser.extractTruncatedJSONObject(from: jsonText),
+           let repaired = parseAnalysisObject(repairedJSON),
+           !repaired.selectedMoments.isEmpty {
+            Self.logger.info(
+                "salvaged truncated thematic JSON: \(repaired.selectedMoments.count) moment(s), theme '\(repaired.primaryConcept.word, privacy: .public)'"
             )
+            return repaired
         }
 
         // Модель иногда возвращает массив вместо объекта: первая грань и есть главная тема.
@@ -249,6 +240,41 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         }
 
         return nil
+    }
+
+    /// Разбирает объект анализа (полный или восстановленный из обрезанного ответа).
+    /// nil — если нет темы или обоснования: без них результат бесполезен.
+    private static func parseAnalysisObject(_ jsonString: String) -> ThematicAnalysisResult? {
+        guard let root = JSONVariantParser.deserializeTolerant(jsonString) as? [String: Any],
+              let primary = parseConcept(root["primaryConcept"]),
+              let reasoning = nonEmptyString(root["aiReasoning"]) ?? nonEmptyString(root["reasoning"])
+        else { return nil }
+
+        // После фильтрации некириллицы обязательные поля могут опустеть.
+        let filteredPrimary = filterConcept(primary)
+        guard isValidConcept(filteredPrimary) else { return nil }
+
+        let filteredMoments = parseSelectedMoments(root["selectedMoments"]).map { moment in
+            SelectedMoment(
+                startTime: moment.startTime,
+                endTime: moment.endTime,
+                reason: filterNonCyrillic(moment.reason),
+                dramaticWeight: moment.dramaticWeight,
+                actRole: moment.actRole,
+                supports: moment.supports.map(filterNonCyrillic),
+                featured: moment.featured
+            )
+        }
+        let filteredAlts = conceptArray(root["alternativeConcepts"])
+            .map { filterConcept($0) }
+            .filter { isValidConcept($0) }
+        return makeResult(
+            primary: filteredPrimary,
+            reasoning: filterNonCyrillic(reasoning),
+            moments: filteredMoments,
+            alternatives: filteredAlts,
+            plan: parseEssayPlan(root["essayPlan"])
+        )
     }
 
     /// Проверяет, что обязательные поля концепта (word, tagline, suggestedTitle) не пусты

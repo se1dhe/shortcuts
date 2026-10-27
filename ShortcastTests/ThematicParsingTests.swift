@@ -243,6 +243,88 @@ struct ThematicParsingTests {
         #expect(LongformThematicService.parseThematicAnalysis(from: cutMidArray) == nil)
     }
 
+    @Test("reply cut off at the token cap keeps the theme and every finished scene")
+    func testTruncatedMomentsAreSalvaged() throws {
+        // Director упирается в maxTokens=8192 и обрывает JSON на середине третьей
+        // сцены. Тема, план и две завершённые сцены обязаны дожить до экрана,
+        // иначе 20 минут генерации выкидываются целиком.
+        let truncated = """
+        {
+          "reasoning": "Фільм досліджує межу між існуванням та ідентичністю.",
+          "primaryConcept": {
+            "word": "Ідентичність",
+            "tagline": "Ти не народжений — тебе зібрали з чужих спогадів.",
+            "philosophicalPremise": "Пам'ять — єдиний доказ того, що ти існуєш.",
+            "suggestedTitle": "Ти не знаєш, чиє життя ти проживаєш.",
+            "accentColorHex": "#E8C46A"
+          },
+          "essayPlan": {
+            "thesis": "Ідентичність — це вибір, а не запис у базі.",
+            "hookVariants": ["Ти впевнений, що твої спогади — твої?"],
+            "ctaVariants": ["Повний розбір — у Telegram."],
+            "actFocus": {
+              "form": "Повтори видають, що герой збирає себе з чужих шматків.",
+              "psychology": "Страх виявитися копією керує кожним рішенням.",
+              "philosophy": "Цінність життя не залежить від способу народження.",
+              "catharsis": "Глядач обирає, ким бути, а не ким його зробили."
+            }
+          },
+          "selectedMoments": [
+            {
+              "startTime": 8421.0,
+              "endTime": 8466.0,
+              "reason": "Герой уперше ставить під сумнів власні спогади.",
+              "dramaticWeight": 0.9,
+              "actRole": "psychology",
+              "supports": "Сумнів у пам'яті руйнує опору героя.",
+              "featured": true
+            },
+            {
+              "startTime": 8618.0,
+              "endTime": 8709.0,
+              "reason": "Розв'язка: герой обирає власне життя.",
+              "dramaticWeight": 0.97,
+              "actRole": "catharsis",
+              "supports": "Вибір перемагає призначення.",
+              "featured": true
+            },
+            {
+              "startTime": 8851.0,
+              "endTime": 8989.0,
+              "reason": "Остання розмова обірвана на середині
+        """
+
+        let analysis = try #require(LongformThematicService.parseThematicAnalysis(from: truncated))
+        try expectFieldsFromModel(analysis)
+        #expect(analysis.primaryConcept.word == "Ідентичність")
+        let moments = analysis.selectedMoments
+        #expect(moments.count >= 2)
+        #expect(moments[0].startTime == 8421.0)
+        #expect(moments[0].actRole == .psychology)
+        #expect(moments[1].startTime == 8618.0)
+        #expect(moments[1].actRole == .catharsis)
+        #expect(moments.allSatisfy { $0.endTime > $0.startTime })
+    }
+
+    @Test("prompt puts the theme first and caps prose so the reply fits 8192 tokens")
+    func testPromptKeepsTheReplyInsideTheTokenCap() throws {
+        let prompt = LongformThematicService.thematicSystemPrompt(movieTitle: "Фільм")
+        let theme = try #require(prompt.range(of: "\"primaryConcept\""))
+        let reasoning = try #require(prompt.range(of: "\"reasoning\""))
+        #expect(theme.lowerBound < reasoning.lowerBound, "тема обязана идти до reasoning")
+        #expect(prompt.contains("600 символів"))
+        #expect(prompt.contains("до 20 слів"))
+    }
+
+    @Test("truncation before primaryConcept is an honest nil, not an invented theme")
+    func testTruncatedBeforeThemeReturnsNil() {
+        let cutBeforeTheme = """
+        {
+          "reasoning": "Фільм досліджує межу між біологічним існуванням та ідентичністю. Головний конфлікт полягає не в тому, чи є герой реплікантом, а в тому, як він усвідо
+        """
+        #expect(LongformThematicService.parseThematicAnalysis(from: cutBeforeTheme) == nil)
+    }
+
     @Test("suggestedTitle must come from the model: missing or blank yields nil")
     func testConceptWithoutSuggestedTitleReturnsNil() {
         let missing = """

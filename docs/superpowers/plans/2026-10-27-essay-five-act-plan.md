@@ -20,7 +20,7 @@
 - Heuristic fallback (`buildArcHeuristic`, `makeSyntheticArc`) stays 4-act and behavior-compatible.
 - All new user-visible content strings are Ukrainian; UI chrome/comments stay Russian.
 - Add new source files only through `xcodegen generate`; new tests go into existing test files.
-- Full `xcodebuild -project "Short Generator.xcodeproj" -scheme Shortcast test` must pass before completion.
+- Full `xcodebuild -project "Shortcast.xcodeproj" -scheme Shortcast test` must pass before completion.
 
 ---
 
@@ -83,7 +83,7 @@ Add to `ShortcastTests/ThematicConceptTests.swift`:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `xcodebuild -project "Short Generator.xcodeproj" -scheme Shortcast test -only-testing:ShortcastTests/ThematicConceptTests`
+Run: `xcodebuild -project "Shortcast.xcodeproj" -scheme Shortcast test -only-testing:ShortcastTests/ThematicConceptTests`
 Expected: compile failure — `EssayPlan` / `promptKey` / `actRole` do not exist.
 
 - [ ] **Step 3: Extend `LongformActType`**
@@ -313,7 +313,7 @@ Add to `ThematicAnalysisResult`: property `var essayPlan: EssayPlan?`, init para
 
 - [ ] **Step 6: Run model tests**
 
-Run: `xcodebuild -project "Short Generator.xcodeproj" -scheme Shortcast test -only-testing:ShortcastTests/ThematicConceptTests`
+Run: `xcodebuild -project "Shortcast.xcodeproj" -scheme Shortcast test -only-testing:ShortcastTests/ThematicConceptTests`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -1274,7 +1274,7 @@ Pass `essayPlan: workspace.thematicAnalysis?.essayPlan` and accept the fourth pa
 
 - [ ] **Step 6: Build the app**
 
-Run: `xcodebuild -project "Short Generator.xcodeproj" -scheme Shortcast build`
+Run: `xcodebuild -project "Shortcast.xcodeproj" -scheme Shortcast build`
 Expected: BUILD SUCCEEDED. There is no automated UI test for this sheet; verify visually by rebuilding and launching if available.
 
 - [ ] **Step 7: Commit**
@@ -1292,12 +1292,12 @@ git commit -m "feat: choose essay hook and duration in concept sheet"
 
 - [ ] **Step 1: Run the whole test suite**
 
-Run: `xcodebuild -project "Short Generator.xcodeproj" -scheme Shortcast test`
+Run: `xcodebuild -project "Shortcast.xcodeproj" -scheme Shortcast test`
 Expected: every suite passes, including legacy 4-act, sanitation, titles, renderer, persistence.
 
 - [ ] **Step 2: Build the app**
 
-Run: `xcodebuild -project "Short Generator.xcodeproj" -scheme Shortcast build`
+Run: `xcodebuild -project "Shortcast.xcodeproj" -scheme Shortcast build`
 Expected: BUILD SUCCEEDED.
 
 - [ ] **Step 3: Commit any test fixes**

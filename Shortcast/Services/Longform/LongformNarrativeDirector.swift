@@ -323,22 +323,16 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             buckets[type] = [candidate]
         }
 
-        // Структурные якоря ставятся ДО добора: они часть бюджета, а не добавка
-        // поверх него. Финал фильма и развязка хука — обещания зрителю, и оба
-        // обязаны попасть в монтаж, даже если Director их не выбрал.
+        // Хук эссе — одна зацепка в начале, а не набор сцен: essays_20_films.md
+        // отводит ему 0:00–0:40. Развязка хука — обещание зрителю, поэтому якорь
+        // ставится ДО добора: он часть бюджета, а не добавка поверх него.
+        Self.consolidateHook(&buckets)
         let usableSegments = TranscriptQualityGate(segments: transcript.segments)
             .filtered(transcript.segments)
-        Self.ensureFinaleAnchor(
-            &buckets,
-            segments: usableSegments,
-            filmDuration: totalMovieDuration,
-            creditsCutoff: creditsCutoff
-        )
         Self.ensureHookRevealAnchor(
             &buckets,
             hookText: plan.chosenHook,
             segments: usableSegments,
-            filmDuration: totalMovieDuration,
             creditsCutoff: creditsCutoff
         )
 
@@ -390,6 +384,20 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         moments.reduce(0) { $0 + ($1.endTime - $1.startTime) }
     }
 
+    /// Бюджет акта: хук фиксирован 0:00–0:40, остальные четыре акта делят
+    /// оставшийся хронометраж по своим аналитическим долям.
+    private func actBudget(for type: LongformActType, target: Double) -> Double {
+        let hookBudget = min(
+            target * LongformActType.hook.analyticDurationRatio,
+            Self.maxHookDuration
+        )
+        guard type != .hook else { return hookBudget }
+        let analytic = LongformActType.canonicalAnalyticOrder.filter { $0 != .hook }
+        let totalRatio = analytic.reduce(0.0) { $0 + $1.analyticDurationRatio }
+        guard totalRatio > 0 else { return 0 }
+        return (target - hookBudget) * type.analyticDurationRatio / totalRatio
+    }
+
     private func nearestBoundary(
         _ type: LongformActType,
         buckets: [LongformActType: [SelectedMoment]]
@@ -405,10 +413,10 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         return 0
     }
 
-    // MARK: - Структурные якоря (финал фильма и развязка хука)
+    // MARK: - Структурные якоря (хук и его развязка)
 
-    /// Последние 15% фильма — это финал: место, где тема получает ответ.
-    static let finaleActStartRatio: Double = 0.85
+    /// Хук эссе в `essays_20_films.md` занимает 0:00–0:40: это зацепка, а не акт анализа.
+    static let maxHookDuration: Double = 40.0
     /// Вес якоря выше добра (0.35) и ниже сильнейшей сцены модели (0.9+):
     /// бюджет его не режет, пока есть что резать кроме не-featured добра.
     static let structuralAnchorWeight: Double = 0.65
@@ -418,61 +426,43 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
     /// Комфортная длина якоря: до неё растём, дальше не жадничаем.
     static let anchorTargetDuration: Double = 30.0
 
-    /// Гарантирует, что катарсис доходит до финала фильма. Director видит только
-    /// прореженную выборку реплик и систематически ставит пятый акт на середину;
-    /// без якоря последние минуты фильма не входят в эссе вообще.
-    private static func ensureFinaleAnchor(
-        _ buckets: inout [LongformActType: [SelectedMoment]],
-        segments: [TranscriptSegment],
-        filmDuration: Double,
-        creditsCutoff: Double
+    /// Хук — первая и единственная сцена эссе: оставляем сильнейшую из роли `hook`
+    /// и обрезаем её до 40 с. Остальные зацепки модели в хук не помещаются.
+    private static func consolidateHook(
+        _ buckets: inout [LongformActType: [SelectedMoment]]
     ) {
-        guard filmDuration > 0 else { return }
-        let finaleStart = filmDuration * finaleActStartRatio
-        let allScenes = buckets.values.flatMap { $0 }
-        guard !allScenes.contains(where: { $0.startTime >= finaleStart }) else { return }
-
-        let sorted = segments.sorted { $0.start < $1.start }
-        let finaleSegments = sorted.filter { $0.start >= finaleStart && $0.end <= creditsCutoff }
-        let seed = finaleSegments.max { lhs, rhs in
-            let lhsScore = ThoughtCompletionScorer
-                .evaluateConcludingPhrase(lhs.text, isFinaleAct: true).scoreModifier
-            let rhsScore = ThoughtCompletionScorer
-                .evaluateConcludingPhrase(rhs.text, isFinaleAct: true).scoreModifier
-            if lhsScore != rhsScore { return lhsScore < rhsScore }
-            return lhs.start < rhs.start
-        }
-        guard let seed,
-              let run = dialogueRun(
-                around: seed,
-                in: sorted,
-                lowerBound: finaleStart,
-                upperBound: creditsCutoff
-              )
-        else { return }
-        guard !allScenes.contains(where: {
-            $0.startTime < run.end && $0.endTime > run.start
+        let scenes = buckets[.hook] ?? []
+        guard let strongest = scenes.max(by: { lhs, rhs in
+            let lhsFeatured = lhs.featured ?? false
+            let rhsFeatured = rhs.featured ?? false
+            if lhsFeatured != rhsFeatured { return rhsFeatured }
+            return lhs.dramaticWeight < rhs.dramaticWeight
         }) else { return }
 
-        appendAnchor(
-            to: &buckets,
-            run: run,
-            role: .catharsis,
-            reason: "Фінал фільму: катарсис"
-        )
+        let end = min(strongest.endTime, strongest.startTime + maxHookDuration)
+        guard end > strongest.startTime else { return }
+        buckets[.hook] = [SelectedMoment(
+            startTime: strongest.startTime,
+            endTime: end,
+            reason: strongest.reason,
+            dramaticWeight: strongest.dramaticWeight,
+            actRole: .hook,
+            supports: strongest.supports,
+            featured: strongest.featured
+        )]
     }
 
     /// Гарантирует, что строка, которая «оплачивает» обещание хука, попадёт в монтаж.
     /// Ищем её по содержательным словам хука, а не по догадке модели: если такой
-    /// реплики нет, якоря тоже нет — ничего не сочиняем.
+    /// реплики нет, якоря тоже нет — ничего не сочиняем. Акт выбирается по роли —
+    /// развязка принадлежит выводу, а не той четверти фильма, где прозвучала.
     private static func ensureHookRevealAnchor(
         _ buckets: inout [LongformActType: [SelectedMoment]],
         hookText: String?,
         segments: [TranscriptSegment],
-        filmDuration: Double,
         creditsCutoff: Double
     ) {
-        guard let hookText, filmDuration > 0 else { return }
+        guard let hookText else { return }
         let stems = contentStems(hookText)
         guard stems.count >= 2 else { return }
 
@@ -491,8 +481,12 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             upperBound: creditsCutoff
         ) else { return }
 
-        let role = actPositionBand(forStartTime: seed.start, filmDuration: filmDuration)
-        appendAnchor(to: &buckets, run: run, role: role, reason: "Розкриття обіцянки хука")
+        appendAnchor(
+            to: &buckets,
+            run: run,
+            role: .catharsis,
+            reason: "Розкриття обіцянки хука: висновок"
+        )
     }
 
     private static func appendAnchor(
@@ -511,20 +505,6 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             featured: false
         ))
         buckets[role]?.sort { $0.startTime < $1.startTime }
-    }
-
-    /// Акт по позиции реплики в фильме — та же раскладка, что у аналитических долей.
-    static func actPositionBand(
-        forStartTime start: Double,
-        filmDuration: Double
-    ) -> LongformActType {
-        guard filmDuration > 0 else { return .psychology }
-        let ratio = start / filmDuration
-        if ratio < 0.12 { return .hook }
-        if ratio < 0.36 { return .form }
-        if ratio < 0.62 { return .psychology }
-        if ratio < finaleActStartRatio { return .philosophy }
-        return .catharsis
     }
 
     /// Содержательные основы слов: служебные слова и короткие частицы не
@@ -679,7 +659,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
 
         for type in LongformActType.canonicalAnalyticOrder {
             var scenes = buckets[type] ?? []
-            var deficit = target * type.analyticDurationRatio - bucketDuration(scenes)
+            var deficit = actBudget(for: type, target: target) - bucketDuration(scenes)
             guard deficit > 1.0 else { continue }
 
             let order = scenes.indices.sorted {
@@ -704,7 +684,8 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                     segments: sortedSegments,
                     blocked: blocked,
                     gapLimit: sceneGapLimit(for: type),
-                    limit: creditsCutoff
+                    limit: creditsCutoff,
+                    durationCap: type == .hook ? Self.maxHookDuration : Self.maxExpandedSceneDuration
                 )
                 let gained = (expanded.endTime - expanded.startTime)
                     - (scene.endTime - scene.startTime)
@@ -743,9 +724,9 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             }.min() ?? .infinity
         }
 
-        for type in LongformActType.canonicalAnalyticOrder {
+        for type in LongformActType.canonicalAnalyticOrder where type != .hook {
             var scenes = buckets[type] ?? []
-            var deficit = target * type.analyticDurationRatio - bucketDuration(scenes)
+            var deficit = actBudget(for: type, target: target) - bucketDuration(scenes)
             while deficit > 1.0 {
                 let anchors = scenes.map {
                     TimeSegment(start: $0.startTime, end: $0.endTime)
@@ -801,12 +782,13 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         segments: [TranscriptSegment],
         blocked: [TimeSegment],
         gapLimit: Double,
-        limit: Double
+        limit: Double,
+        durationCap: Double
     ) -> SelectedMoment {
         var start = scene.startTime
         var end = scene.endTime
         var added = 0.0
-        let maxDuration = max(Self.maxExpandedSceneDuration, end - start)
+        let maxDuration = max(durationCap, end - start)
         let blockedRanges = blocked.sorted { $0.start < $1.start }
 
         var lo = 0

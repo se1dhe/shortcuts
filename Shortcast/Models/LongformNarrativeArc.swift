@@ -16,6 +16,20 @@ enum LongformActType: String, Codable, CaseIterable, Sendable {
         .hook, .form, .psychology, .philosophy, .catharsis
     ]
 
+    /// Название акта для зрителя и промпта: структура эссе из `essays_20_films.md`.
+    /// `rawValue` остаётся русским только ради совместимости архивов.
+    var displayName: String {
+        switch self {
+        case .hook: return "Хук і теза"
+        case .form: return "Аналіз форми"
+        case .psychology: return "Психологія героя"
+        case .philosophy: return "Прихований філософський підтекст"
+        case .catharsis: return "Катарсис і висновок"
+        case .downfall: return "Падіння і випробування"
+        case .struggle: return "Боротьба і завзятість"
+        }
+    }
+
     /// Ключ акта в JSON-протоколе Director
     var promptKey: String {
         switch self {

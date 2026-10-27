@@ -338,11 +338,11 @@ struct ActBalancingAndCreditsTests {
     @Test func analyticArcLeavesAPoolThatAlreadyMeetsTheRuntimeUnchanged() async throws {
         let transcript = dialogueTranscript(until: 2400)
         let moments = [
-            planned(100, 200, .hook, weight: 0.9, featured: true),
-            planned(500, 600, .form),
-            planned(900, 1000, .psychology),
-            planned(1400, 1500, .philosophy),
-            planned(2100, 2200, .catharsis, weight: 0.95, featured: true)
+            planned(100, 140, .hook, weight: 0.9, featured: true),
+            planned(500, 620, .form),
+            planned(900, 1020, .psychology),
+            planned(1400, 1510, .philosophy),
+            planned(2100, 2190, .catharsis, weight: 0.95, featured: true)
         ]
         let plan = EssayPlan(targetDuration: 480)
 
@@ -457,16 +457,16 @@ struct ActBalancingAndCreditsTests {
         #expect(total < 300, "Добор набрал \(total) с из мусора вместо честных 150 с")
     }
 
-    /// Катарсис обязан доходить до финала фильма: в прошлой сборке акт V был
-    /// спором на 11-й минуте, а последние 36 минут фильма не вошли вообще.
-    @Test func analyticArcReachesTheFilmFinale() async throws {
+    /// Эссе не идёт хронологией фильма: хук первым кадром может быть из середины,
+    /// а вторая сцена — из начала. Сам хук при этом один и не длиннее 40 с.
+    @Test func analyticArcOpensWithTheHookThenJumpsToTheFilmStart() async throws {
         let transcript = dialogueTranscript(until: 2400)
         let moments = [
-            planned(200, 230, .hook, weight: 0.9, featured: true),
-            planned(400, 430, .form),
+            planned(100, 130, .form),
             planned(900, 930, .psychology),
             planned(1400, 1430, .philosophy),
-            planned(1700, 1730, .catharsis, weight: 0.95, featured: true),
+            planned(1900, 1930, .hook, weight: 0.9, featured: true),
+            planned(2200, 2230, .catharsis, weight: 0.95, featured: true),
         ]
         let arc = try await LongformNarrativeDirector().buildArc(
             from: transcript,
@@ -477,20 +477,28 @@ struct ActBalancingAndCreditsTests {
             essayPlan: EssayPlan(targetDuration: 480)
         )
 
-        let finaleStart = 2400.0 * 0.85
-        let catharsis = arc.acts.first { $0.type == .catharsis }
-        let reachesFinale = (catharsis?.segments ?? []).contains { $0.start >= finaleStart }
-        #expect(reachesFinale, "Катарсис не начинается в последних 15% фильма: \(catharsis?.segments ?? [])")
+        let hook = try #require(arc.acts.first)
+        #expect(hook.type == .hook)
+        #expect(hook.segments.count == 1, "Хук — одна сцена, а не набор: \(hook.segments)")
+        let teaser = try #require(hook.segments.first)
+        #expect(teaser.start >= 1800, "Хук должен быть взят из середины фильма: \(teaser)")
+        #expect(teaser.duration <= 40.001, "Хук растянулся до \(teaser.duration) с при лимите 40 с")
+
+        let form = try #require(arc.acts.dropFirst().first)
+        #expect(form.type == .form)
+        let second = try #require(form.segments.first)
+        #expect(second.start < 300, "Вторая сцена эссе — из начала фильма, а не после хука: \(second)")
     }
 
     /// Хук обещает зрителю ответ. Если строка-развязка существует в транскрипте,
-    /// она обязана попасть в монтаж, а не остаться за кадром.
+    /// она обязана попасть в монтаж — и в акт вывода, а не в ту четверть фильма,
+    /// где прозвучала: эссе не идёт хронологией фильма.
     @Test func analyticArcCoversTheLineThatPaysOffTheHook() async throws {
         var segments = stride(from: 0.0, to: 2400.0, by: 10.0).map { start in
             TranscriptSegment(start: start, end: start + 9.0, text: "Репліка \(Int(start))")
         }
         let reveal = TranscriptSegment(
-            start: 2000, end: 2009,
+            start: 120, end: 129,
             text: "Серійне ім'я — це серійний номер. Він народився, щоб служити."
         )
         segments.append(reveal)
@@ -519,7 +527,13 @@ struct ActBalancingAndCreditsTests {
         let covered = arc.acts.flatMap(\.segments).contains {
             $0.start < reveal.end && $0.end > reveal.start
         }
-        #expect(covered, "Развязка хука [2000, 2009] не вошла в эссе")
+        #expect(covered, "Развязка хука [120, 129] не вошла в эссе")
+
+        let catharsis = arc.acts.first { $0.type == .catharsis }
+        let inConclusion = (catharsis?.segments ?? []).contains {
+            $0.start < reveal.end && $0.end > reveal.start
+        }
+        #expect(inConclusion, "Развязка хука должна быть в акте вывода, а не там, где прозвучала")
     }
 
     /// Промпт обязан требовать сцены, из которых вообще можно собрать
@@ -531,6 +545,17 @@ struct ActBalancingAndCreditsTests {
         #expect(prompt.contains("20-60"), "Промпт не задаёт длину сцены")
         #expect(prompt.contains("720") && prompt.contains("900"),
                 "Промпт не задаёт суммарный запас материала под хронометраж")
+    }
+
+    /// Промпт обязан держать структуру из `essays_20_films.md`: хук 0:00–0:40
+    /// одной сценой и CTA-закличем у Telegram, а не в комментарии.
+    @Test func thematicPromptFollowsTheEssaysStructure() {
+        let prompt = LongformThematicService.thematicSystemPrompt(movieTitle: "Фільм")
+
+        #expect(prompt.contains("0:00–0:40"), "Промпт не задаёт окно хука")
+        #expect(prompt.contains("РІВНО ОДНА сцена"), "Промпт не ограничивает хук одной сценой")
+        #expect(prompt.contains("Telegram"), "CTA по структуре эссе — заклик у Telegram")
+        #expect(!prompt.contains("Напиши в коментарях"), "CTA не должен звать в комментарии")
     }
 
     @Test @MainActor func storyAnalysisStageNamesTheDirector() {

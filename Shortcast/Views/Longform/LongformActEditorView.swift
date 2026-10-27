@@ -265,7 +265,7 @@ struct LongformActEditorView: View {
                                 }
                             }
 
-                            Text(act.type.rawValue)
+                            Text(act.type.displayName)
                                 .font(.caption.weight(.semibold))
                                 .lineLimit(1)
                                 .foregroundStyle(isSelected ? .primary : .secondary)
@@ -315,7 +315,7 @@ struct LongformActEditorView: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
-                            Text("АКТ \(actIndex + 1): \(act.type.rawValue.uppercased())")
+                            Text("АКТ \(actIndex + 1): \(act.type.displayName.uppercased())")
                                 .font(.caption.weight(.black))
                                 .foregroundStyle(.yellow)
 

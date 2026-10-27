@@ -111,7 +111,7 @@ struct LongformResultsView: View {
                 HStack(spacing: 8) {
                     ForEach(result.arc.acts) { act in
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(act.type.rawValue)
+                            Text(act.type.displayName)
                                 .font(.caption2.weight(.bold))
                                 .foregroundStyle(.primary)
 

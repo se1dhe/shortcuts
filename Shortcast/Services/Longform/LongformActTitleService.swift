@@ -190,7 +190,7 @@ final class LongformActTitleService: LongformActTitling, Sendable {
     ) -> (block: String, stride: Int) {
         let romanNumerals = ["I", "II", "III", "IV", "V", "VI"]
         let roman = actIndex < romanNumerals.count ? romanNumerals[actIndex] : "\(actIndex + 1)"
-        let header = "АКТ \(roman) (\(act.type.rawValue)):"
+        let header = "АКТ \(roman) (\(act.type.displayName)):"
         guard !lines.isEmpty else {
             return ("\(header)\n(у цьому акті немає реплік)", 1)
         }

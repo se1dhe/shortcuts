@@ -220,12 +220,22 @@ struct LongformOverlayTypographyTests {
         #expect(LongformSubtitleRenderer.themeFont(k: 1.0).pointSize < LongformSubtitleRenderer.captionFont(k: 1.0).pointSize * 2.0)
     }
 
-    @Test("хук набран крупнее слогана и усаживается до трёх строк, а не в стену текста")
+    @Test("хук — тот же шрифт, что у темы, но меньше и тоньше")
     func testHookTypographyIsBiggerThanTagline() {
         let attrs = LongformSubtitleRenderer.hookAttributes(k: 1.0)
-        let pointSize = (attrs[.font] as? NSFont)?.pointSize ?? 0
-        #expect(pointSize >= 28.0)
+        let font = attrs[.font] as? NSFont
+        let pointSize = font?.pointSize ?? 0
+        #expect(pointSize >= 24.0)
+        #expect(pointSize < LongformSubtitleRenderer.themePointSize(k: 1.0))
         #expect(pointSize > LongformSubtitleRenderer.taglinePointSize(k: 1.0))
+        // Шрифт хука — тот же Russo One, что у главного слова темы.
+        #expect(font?.fontName == LongformSubtitleRenderer.themeFont(k: 1.0).fontName,
+                "Хук набран не тем шрифтом, что тема: \(font?.fontName ?? "nil")")
+        // «Тоньше»: обводка легче, чем у темы.
+        let themeStroke = (LongformSubtitleRenderer.themeAttributes(pointSize: 44, k: 1.0)[.strokeWidth] as? NSNumber)?.doubleValue ?? 0
+        let hookStroke = (attrs[.strokeWidth] as? NSNumber)?.doubleValue ?? 0
+        #expect(abs(hookStroke) < abs(themeStroke),
+                "Обводка хука \(hookStroke) не тоньше обводки темы \(themeStroke)")
 
         let short = LongformSubtitleRenderer.resolvedHookPointSize(
             text: "Он верил, что он избранный.", k: 1.0, maxWidth: 1440.0)

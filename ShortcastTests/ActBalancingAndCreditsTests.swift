@@ -536,6 +536,44 @@ struct ActBalancingAndCreditsTests {
         #expect(inConclusion, "Развязка хука должна быть в акте вывода, а не там, где прозвучала")
     }
 
+    /// Сильнейшая сцена Director — финал эссе. Даже если модель положила её
+    /// в другой акт, последним кадром становится она, а не экспозиция; акт-донор
+    /// при этом не опустевает.
+    @Test func analyticArcEndsOnTheStrongestDirectorScene() async throws {
+        let ranges: [(start: Double, end: Double, role: LongformActType, weight: Double, featured: Bool)] = [
+            (200, 240, .hook, 0.90, true),
+            (400, 450, .form, 0.50, false),
+            (900, 950, .psychology, 0.50, false),
+            (1400, 1470, .philosophy, 0.99, true),
+            (1500, 1550, .philosophy, 0.50, false),
+            (1900, 1950, .catharsis, 0.95, true),
+        ]
+        let segments = ranges.map {
+            TranscriptSegment(start: $0.start, end: $0.end, text: "Сцена про вибір і ціну свободи.")
+        } + [TranscriptSegment(start: 2300, end: 2310, text: "Репліка поза монтажем.")]
+        let moments = ranges.map {
+            planned($0.start, $0.end, $0.role, weight: $0.weight, featured: $0.featured)
+        }
+
+        let arc = try await LongformNarrativeDirector().buildArc(
+            from: Transcript(segments: segments, language: "uk"),
+            concept: analyticConcept,
+            selectedMoments: moments,
+            movieTitle: "Test",
+            targetDuration: 300,
+            essayPlan: EssayPlan(targetDuration: 300)
+        )
+
+        let catharsis = try #require(arc.acts.last)
+        #expect(catharsis.type == .catharsis)
+        let finale = try #require(catharsis.segments.last)
+        #expect(abs(finale.start - 1400) < 0.01 && abs(finale.end - 1470) < 0.01,
+                "Эссе заканчивается не сильнейшей сценой Director: \(finale)")
+
+        let philosophy = try #require(arc.acts.first { $0.type == .philosophy })
+        #expect(!philosophy.segments.isEmpty, "Акт-донор опустел после переноса сцены")
+    }
+
     /// Промпт обязан требовать сцены, из которых вообще можно собрать
     /// выбранные 8–15 минут, а не девять реплик.
     @Test func thematicPromptAsksForScenesThatCanFillTheRuntime() {
@@ -545,6 +583,17 @@ struct ActBalancingAndCreditsTests {
         #expect(prompt.contains("20-60"), "Промпт не задаёт длину сцены")
         #expect(prompt.contains("720") && prompt.contains("900"),
                 "Промпт не задаёт суммарный запас материала под хронометраж")
+    }
+
+    /// Catharsis в промпте — это развязка фильма, а сильнейшая сцена — его финал:
+    /// иначе модель отдаёт на катарсис экспозицию, и эссе обрывается.
+    @Test func thematicPromptMakesTheStrongestSceneTheFinale() {
+        let prompt = LongformThematicService.thematicSystemPrompt(movieTitle: "Фільм")
+
+        #expect(prompt.contains("найсильніша сцена всього есе"),
+                "Промпт не требует сильнейшую сцену в финал эссе")
+        #expect(prompt.contains("розв'язка фільму"),
+                "Промпт не связывает катарсис с развязкой фильма")
     }
 
     /// Промпт обязан держать структуру из `essays_20_films.md`: хук 0:00–0:40

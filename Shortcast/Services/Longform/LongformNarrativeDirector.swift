@@ -343,6 +343,9 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             creditsCutoff: creditsCutoff
         )
         trimToBudget(&buckets, target: targetDuration * 1.10)
+        // Финальный кадр эссе — не хронологический хвост и не экспозиция, а
+        // сильнейшая сцена Director: она и есть катарсис/развязка для зрителя.
+        Self.promoteStrongestSceneToCatharsis(&buckets)
         var acts: [LongformAct] = []
         for type in LongformActType.canonicalAnalyticOrder {
             let scenes = buckets[type] ?? []
@@ -641,6 +644,49 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
 
     /// Целевой потолок одной сцены после добора: длиннее — уже не сцена, а кусок фильма.
     private static let maxExpandedSceneDuration: Double = 120.0
+
+    /// Ставит сильнейшую сцену Director последней в катарсис. Модель распределяет
+    /// сцены по смыслу и может отдать вывод экспозиции, оставив развязку в другом
+    /// акте — тогда эссе обрывается на объяснении. Хук как зацепка не участвует.
+    /// Акт-донор не опустевает: сцену, которую нечем заменить, не переносим.
+    static func promoteStrongestSceneToCatharsis(
+        _ buckets: inout [LongformActType: [SelectedMoment]]
+    ) {
+        let movable = LongformActType.canonicalAnalyticOrder
+            .filter { $0 != .hook }
+            .flatMap { type in
+                (buckets[type] ?? []).map { (type: type, moment: $0) }
+            }
+            .filter { (buckets[$0.type]?.count ?? 0) > 1 }
+        guard let strongest = movable.max(by: { lhs, rhs in
+            isStronger(rhs.moment, than: lhs.moment)
+        }) else { return }
+
+        var catharsis = buckets[.catharsis] ?? []
+        // Слабее текущего финала не двигаем: перенос ради переноса только
+        // отодвинул бы сильную сцену модели.
+        if let last = catharsis.last, !isStronger(strongest.moment, than: last) {
+            return
+        }
+        guard let index = buckets[strongest.type]?.firstIndex(where: {
+            $0.startTime == strongest.moment.startTime && $0.endTime == strongest.moment.endTime
+        }) else { return }
+        buckets[strongest.type]?.remove(at: index)
+        catharsis.append(strongest.moment)
+        buckets[.catharsis] = catharsis
+    }
+
+    /// Сила сцены для финала: featured от Director важнее веса, при равенстве
+    /// выигрывает более поздняя сцена — она ближе к развязке истории.
+    private static func isStronger(_ lhs: SelectedMoment, than rhs: SelectedMoment) -> Bool {
+        let lhsFeatured = lhs.featured ?? false
+        let rhsFeatured = rhs.featured ?? false
+        if lhsFeatured != rhsFeatured { return lhsFeatured }
+        if lhs.dramaticWeight != rhs.dramaticWeight {
+            return lhs.dramaticWeight > rhs.dramaticWeight
+        }
+        return lhs.startTime > rhs.startTime
+    }
 
     /// Доливает акты до их доли заказанного хронометража, когда модель вернула
     /// меньше материала, чем нужно («9 реплик на 2,5 минуты» при выбранных 12).

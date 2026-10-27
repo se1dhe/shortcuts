@@ -169,10 +169,11 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
     static let captionBasePointSize: Double = 32.0
     /// Эталонный кегль вступительного слогана
     static let taglineBasePointSize: Double = 20.0
-    /// Эталонный кегль хука: это первая мысль эссе, а не подпись под словом
-    static let hookBasePointSize: Double = 30.0
+    /// Эталонный кегль хука: это первая мысль эссе, но набрана тем же Russo One,
+    /// что и главное слово темы — меньше и тоньше, а не чужим системным шрифтом.
+    static let hookBasePointSize: Double = 26.0
     /// Пол авто-усадки хука: длинный хук ужимается до трёх строк, но не исчезает
-    static let hookMinPointSize: Double = 22.0
+    static let hookMinPointSize: Double = 20.0
     /// Хук держится дольше cold open: 0,8 с проявление и 9,2 с до затухания
     static let hookFadeInDuration: Double = 0.8
     static let hookHoldDuration: Double = 8.4
@@ -211,10 +212,12 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         NSFont.systemFont(ofSize: CGFloat(taglinePointSize(k: k)), weight: .medium)
     }
 
+    /// Хук — тот же Russo One, что у темы, но меньшего кегля: шрифт один на всё эссе.
     static func hookFont(k: Double, pointSize: Double? = nil) -> NSFont {
-        NSFont.systemFont(
-            ofSize: CGFloat(pointSize ?? hookPointSize(k: k)),
-            weight: .semibold
+        SubtitleRenderer.resolveFont(
+            name: "RussoOne-Regular",
+            size: CGFloat(pointSize ?? hookPointSize(k: k)),
+            fallback: .heavy
         )
     }
 
@@ -275,16 +278,16 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         ]
     }
 
-    /// Атрибуты хука: крупнее слогана и чуть плотнее, чтобы первая мысль читалась
-    /// как заявление, а не как подпись под словом темы
+    /// Атрибуты хука: тот же Russo One, что у темы, но легче — меньший кегль,
+    /// тонкая обводка и мягкая тень, чтобы первая мысль не спорила с темой.
     static func hookAttributes(k: Double, pointSize: Double? = nil) -> [NSAttributedString.Key: Any] {
         [
             .font: hookFont(k: k, pointSize: pointSize),
             .foregroundColor: NSColor(hex: "#F2F2F4") ?? .white,
             .strokeColor: NSColor.black,
-            .strokeWidth: CGFloat(-2.0 * k),
+            .strokeWidth: CGFloat(-1.2 * k),
             .paragraphStyle: centerParagraph(),
-            .shadow: cinematicShadow(blur: 12.0 * k, offsetY: -2.0 * k, alpha: 0.92),
+            .shadow: cinematicShadow(blur: 10.0 * k, offsetY: -2.0 * k, alpha: 0.82),
             .kern: CGFloat(0.6 * k)
         ]
     }
@@ -386,7 +389,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         rootLayer.addSublayer(conceptLayer)
 
         // 2. Плавные синхронные субтитры реплик персонажей прямо под концептом
-        let (subtitlePhrasesLayer, subtitleBottom) = buildSynchronizedSubtitlesLayer(
+        let (subtitlePhrasesLayer, _) = buildSynchronizedSubtitlesLayer(
             renderSize: renderSize,
             k: k,
             concept: concept,
@@ -420,50 +423,18 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             rootLayer.addSublayer(ctaLayer)
         }
 
-        // 5. Знак канала — ВСЕГДА добавляется последней и только если
-        // для неё реально есть место. Раньше вставать в середину нельзя: тесты читают
-        // sublayers по позициям, а у слоя-картинки ненулевой `contents`.
-        appendChannelLogoBand(to: rootLayer, renderSize: renderSize,
-                              subtitleBottom: subtitleBottom, layout: layout)
+        // 5. Вотермарк-карточка канала — три коротких стинга (после минуты,
+        // в середине, за минуту до финала), а не постоянная плашка под субтитрами.
+        if let style = layout.watermarkSting,
+           let stings = ChannelWatermarkCard.makeContainer(
+               renderSize: renderSize,
+               totalDuration: calculatedTotalDuration,
+               style: style
+           ) {
+            rootLayer.addSublayer(stings)
+        }
 
         return rootLayer
-    }
-
-    /// Единственная точка, решающая «рисовать ли знак в эссе».
-    /// Места нет — не рисуем ничего (никаких самодельных эмблем) и пишем ОДНО notice на рендер.
-    private func appendChannelLogoBand(
-        to rootLayer: CALayer,
-        renderSize: CGSize,
-        subtitleBottom: CGFloat,
-        layout: LongformOverlayLayout
-    ) {
-        guard let style = layout.channelLogo else { return }
-        let rect = ChannelLogoPlacement.essay(
-            renderSize: renderSize,
-            subtitleBottom: subtitleBottom,
-            bottomBarHeight: layout.bottomBarHeight,
-            style: style
-        )
-        guard let rect else {
-            Self.reportMissingLogoRoom(renderSize: renderSize, subtitleBottom: subtitleBottom,
-                                       bottomBarHeight: layout.bottomBarHeight, style: style)
-            return
-        }
-        guard let logoLayer = ChannelLogo.makeLayer(frame: rect, renderSize: renderSize,
-                                                   opacity: style.opacity) else { return }
-        rootLayer.addSublayer(logoLayer)
-    }
-
-    /// Одна строка на рендер: молча обесбренденное видео — худший из вариантов,
-    /// но и писать по строке на каждый из сотен кадров — шум.
-    static func reportMissingLogoRoom(renderSize: CGSize, subtitleBottom: CGFloat,
-                                      bottomBarHeight: CGFloat, style: ChannelLogoStyle) {
-        let height = renderSize.height
-        let k = height / 1080.0
-        let gap = style.gapBelowSubtitles * k
-        let floorY = bottomBarHeight + style.edgeInset * k
-        let available = subtitleBottom - gap - floorY
-        logger.notice("ChannelLogo skipped in essay: needs \(Int(style.sizeFraction * height))px, free \(Int(available))px (subtitleBottom \(Int(subtitleBottom))px, bottomBar \(Int(bottomBarHeight))px, gap \(Int(gap))px, floor \(Int(floorY))px, min \(Int(style.minSizeFraction * height))px)")
     }
 
     // MARK: - 1. Центральное якорное слово концепта (Shortcast Cinema Typography)
@@ -963,20 +934,8 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             subStr.draw(at: subOrigin)
         }
 
-        // 3. Знак канала — ровно та же цепочка раскладки, что в видео, иначе превью разойдётся с рендером.
-        if let style = layout.channelLogo {
-            let conceptY = Self.conceptBottomY(renderSize: renderSize, textSize: conceptSize, k: k)
-            let logoRect = Self.essayLogoBand(renderSize: renderSize, conceptY: conceptY, lines: 1,
-                                              bottomBarHeight: layout.bottomBarHeight, style: style)
-            if let logoRect {
-                ChannelLogo.composite(in: context, rect: logoRect, opacity: CGFloat(style.opacity))
-            } else {
-                let subtitleBottom = Self.essaySubtitleBand(renderSize: renderSize, conceptY: conceptY, lines: 1).minY
-                    - Self.subtitleLogoClearance * CGFloat(k)
-                Self.reportMissingLogoRoom(renderSize: renderSize, subtitleBottom: max(0, subtitleBottom),
-                                           bottomBarHeight: layout.bottomBarHeight, style: style)
-            }
-        }
+        // 3. Вотермарк-стинги в статичном превью не рисуются: это три коротких
+        // момента таймлайна, а не постоянный бренд-элемент кадра.
 
         NSGraphicsContext.restoreGraphicsState()
         return context.makeImage()

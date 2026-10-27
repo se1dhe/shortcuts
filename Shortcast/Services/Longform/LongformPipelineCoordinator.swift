@@ -232,6 +232,33 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             }
         }
 
+        // 3b. Звук трёх появлений вотермарк-карточки — те же секунды, что у анимации.
+        if channelLogoEnabled,
+           let stingURL = ChannelWatermarkStingAudio.makeFile(),
+           let stingTrack = composition.addMutableTrack(
+               withMediaType: .audio,
+               preferredTrackID: kCMPersistentTrackID_Invalid
+           ) {
+            let stingAsset = AVURLAsset(url: stingURL)
+            if let sourceStingTrack = try? await stingAsset.loadTracks(withMediaType: .audio).first,
+               let stingDuration = try? await stingAsset.load(.duration) {
+                let range = CMTimeRange(start: .zero, duration: stingDuration)
+                for time in ChannelWatermarkCard.stingTimes(totalDuration: totalDuration) {
+                    do {
+                        try stingTrack.insertTimeRange(
+                            range,
+                            of: sourceStingTrack,
+                            at: CMTime(seconds: time, preferredTimescale: 600)
+                        )
+                    } catch {
+                        Self.logger.warning(
+                            "Watermark sting audio skipped at \(time, privacy: .public)s: \(error.localizedDescription, privacy: .public)"
+                        )
+                    }
+                }
+            }
+        }
+
         // 4. Отрисовка фирменных кинематографических оверлеев Shortcast Cinema (1920x1080)
         progressHandler?(0.70, "Рендеринг титров и анимации...")
         let renderSize = CGSize(width: 1920, height: 1080)
@@ -348,7 +375,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         // Накладываем оверлей Shortcast Cinema (титульная карточка темы, ритмичные субтитры)
         let overlayLayout = LongformOverlayLayout(
             bottomBarHeight: ty > 0.5 ? ceil(ty) + 2 : 0,
-            channelLogo: channelLogoEnabled ? .essay : nil
+            watermarkSting: channelLogoEnabled ? .essay : nil
         )
         let overlayLayer = await subtitleRenderer.makeOverlayLayer(
             renderSize: renderSize,

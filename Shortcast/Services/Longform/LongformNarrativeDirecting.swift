@@ -9,11 +9,13 @@ protocol LongformNarrativeDirecting: Sendable {
     ///   - selectedMoments: Конкретные моменты (сцены), выбранные LLM для эссе
     ///   - movieTitle: Название фильма
     ///   - targetDuration: Целевая длительность эссе в секундах
+    ///   - essayPlan: План эссе от Director (хук, CTA, фокус актов). nil — старая 4-актная арка.
     func buildArc(
         from transcript: Transcript,
         concept: ThematicConcept,
         selectedMoments: [SelectedMoment],
         movieTitle: String,
-        targetDuration: Double
+        targetDuration: Double,
+        essayPlan: EssayPlan?
     ) async throws -> LongformNarrativeArc
 }

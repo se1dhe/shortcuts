@@ -23,8 +23,22 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         1. Вияви ОДНЕ потужне якірне слово теми (word) з великої літери (наприклад: «ЕГО», «ОБМАН», «СТРАХ», «ТЕРПІННЯ», «ГЕНІАЛЬНІСТЬ», «ВЛАДА»).
         2. Сформулюй глибокий драматургічний розбір (aiReasoning): поясни, чому саме ця тема є прихованим двигуном сюжету.
         3. Запропонуй гострий слоган (tagline), філософський тез (philosophicalPremise) та вірусний YouTube-заголовок (suggestedTitle).
-        4. ВИЗНАЧ КОНКРЕТНІ МОМЕНТИ для есе (selectedMoments) — 5-10 сцен з таймкодами, які найкраще розкривають тему.
-        5. Запропонуй РІВНО 3 альтернативні грані фільму (alternativeConcepts).
+        4. Склади план есе (essayPlan): thesis, 3 hookVariants, 2 ctaVariants, actFocus.
+        5. ВИЗНАЧ 8-14 КОНКРЕТНИХ МОМЕНТІВ для есе (selectedMoments) з таймкодами та ролями.
+        6. Запропонуй РІВНО 3 альтернативні грані фільму (alternativeConcepts).
+
+        СТРУКТУРА ЕСЕ (5 аналітичних актів, саме в цьому порядку):
+        1. hook — обіцянка/парадокс, який утримує глядача; 1-2 речення, без переказу фіналу.
+        2. form — як фільм зроблений: монтаж, ритм, повторювані прийоми, структура сцен.
+        3. psychology — що насправді рухає героєм: страх, бажання, захист, самообман.
+        4. philosophy — прихований підтекст: що фільм каже про людину, свободу, владу, вибір.
+        5. catharsis — розв'язка думки: що змінюється в глядачеві після цього аналізу.
+        Для кожного акта сформулюй у actFocus, ЩО САМЕ цей акт доводить у цьому фільмі.
+        Кожній сцені признач actRole зі списку: hook|form|psychology|philosophy|catharsis.
+        supports — одним реченням, який тезис акта доводить сцена; featured=true лише для найсильніших 1-2 сцен акта.
+        Розподіляй сцени за РОЛЛЮ В ІСТОРІЇ, а не рівномірно по хронометражу: хук може бути з будь-якої частини фільму.
+        НЕ вигадуй конкретних візуальних деталей (кольори, ракурси, реквізит), яких немає в діалогах:
+        акт form описуй через структуру, монтаж і ритм, які виводяться з матеріалу.
 
         ФОРМАТ ВИВОДУ:
         Відповідь СУВОРО валідним JSON-об'єктом без зайвих передмов і коментарів:
@@ -37,18 +51,42 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
             "suggestedTitle": "Цей фільм знищить твою гординю. Філософія Револьвера",
             "accentColorHex": "#F5D020"
           },
+          "essayPlan": {
+            "thesis": "Контроль — це не сила, а страх, який ти називаєш порядком.",
+            "hookVariants": [
+              "Ти контролюєш усе, крім того, що насправді вирішує твоє життя.",
+              "Герой цього фільму переміг усіх. Крім одного — себе.",
+              "Що, як твоя найбільша сила — це й твоя найбільша пастка?"
+            ],
+            "ctaVariants": [
+              "Напиши в коментарях, від чого ти досі не відпустив контроль.",
+              "Який момент змусив тебе засумніватися у власних правилах?"
+            ],
+            "actFocus": {
+              "form": "Ритм і повторювані прийоми видають внутрішній конфлікт героя.",
+              "psychology": "Страх втратити контроль керує кожним його рішенням.",
+              "philosophy": "Свобода починається там, де закінчується потреба все тримати.",
+              "catharsis": "Глядач бачить ціну контролю і власний вибір."
+            }
+          },
           "selectedMoments": [
             {
               "startTime": 754.5,
               "endTime": 810.3,
               "reason": "Ця сцена показує перший конфлікт героя з власним его, коли він усвідомлює...",
-              "dramaticWeight": 0.85
+              "dramaticWeight": 0.85,
+              "actRole": "hook",
+              "supports": "Герой ще вірить, що контролює ситуацію.",
+              "featured": true
             },
             {
               "startTime": 4500.0,
               "endTime": 4570.7,
               "reason": "Кульмінація внутрішнього конфлікту: герой стикається з наслідками своєї гордині...",
-              "dramaticWeight": 0.95
+              "dramaticWeight": 0.95,
+              "actRole": "catharsis",
+              "supports": "Ціна контролю стає очевидною.",
+              "featured": true
             }
           ],
           "alternativeConcepts": [
@@ -63,13 +101,13 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         }
 
         ВАЖЛИВО:
-        - selectedMoments повинен містити 5-10 сцен з точними таймкодами (startTime, endTime)
-        - Кожен момент повинен мати reason (пояснення, чому ця сцена важлива) та dramaticWeight (0.0-1.0)
+        - selectedMoments повинен містити 8-14 сцен з точними таймкодами (startTime, endTime)
+        - Кожен момент повинен мати reason, dramaticWeight (0.0-1.0), actRole, supports і featured
         - НЕ включай титри в кінці фільму — фокусуйся на сюжетних сценах
         - Таймкоди повинні відповідати реальним сценам з транскрипту
         - Таймкоди в транскрипті — це СЕКУНДИ ВІД ПОЧАТКУ ФІЛЬМУ (наприклад, [754.5] = 12 хвилин 34.5 секунди)
         - startTime та endTime у відповіді — теж у секундах від початку фільму (числа, не MM:SS)
-        - Розподіли моменти РІВНОМІРНО по всьому фільму: не кластеризуй у перших хвилинах
+        - Кожен з п'яти актів має отримати хоча б одну сцену
 
         МОВА (КРИТИЧНО ВАЖЛИВО):
         - Використовуй ВИКЛЮЧНО ПРАВИЛЬНУ УКРАЇНСЬКУ ЛІТЕРАТУРНУ МОВУ
@@ -164,11 +202,25 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
             guard isValidConcept(filteredPrimary) else { return nil }
             let filteredReasoning = filterNonCyrillic(reasoning)
             let filteredMoments = moments.map { moment in
-                SelectedMoment(startTime: moment.startTime, endTime: moment.endTime,
-                               reason: filterNonCyrillic(moment.reason), dramaticWeight: moment.dramaticWeight)
+                SelectedMoment(
+                    startTime: moment.startTime,
+                    endTime: moment.endTime,
+                    reason: filterNonCyrillic(moment.reason),
+                    dramaticWeight: moment.dramaticWeight,
+                    actRole: moment.actRole,
+                    supports: moment.supports.map(filterNonCyrillic),
+                    featured: moment.featured
+                )
             }
+            let plan = parseEssayPlan(root["essayPlan"])
             let filteredAlts = conceptArray(root["alternativeConcepts"]).map { filterConcept($0) }.filter { isValidConcept($0) }
-            return makeResult(primary: filteredPrimary, reasoning: filteredReasoning, moments: filteredMoments, alternatives: filteredAlts)
+            return makeResult(
+                primary: filteredPrimary,
+                reasoning: filteredReasoning,
+                moments: filteredMoments,
+                alternatives: filteredAlts,
+                plan: plan
+            )
         }
 
         // Модель иногда возвращает массив вместо объекта: первая грань и есть главная тема.
@@ -224,7 +276,63 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
             else { return nil }
             
             let weight = parseDouble(dict["dramaticWeight"]) ?? 0.5
-            return SelectedMoment(startTime: startTime, endTime: endTime, reason: reason, dramaticWeight: weight)
+            let role = (dict["actRole"] as? String).flatMap { LongformActType(promptKey: $0) }
+            let supports = nonEmptyString(dict["supports"])
+            return SelectedMoment(
+                startTime: startTime,
+                endTime: endTime,
+                reason: reason,
+                dramaticWeight: weight,
+                actRole: role,
+                supports: supports,
+                featured: dict["featured"] as? Bool
+            )
+        }
+    }
+
+    /// Разбирает необязательный план эссе. Модель может ответить без него или
+    /// с частичными полями — тогда работаем с тем, что есть, и не выдумываем остальное.
+    static func parseEssayPlan(_ value: Any?) -> EssayPlan? {
+        guard let dict = value as? [String: Any] else { return nil }
+        let hooks = parseTextVariants(dict["hookVariants"])
+        let ctas = parseTextVariants(dict["ctaVariants"])
+        var focus: [String: String] = [:]
+        if let rawFocus = dict["actFocus"] as? [String: Any] {
+            for (key, raw) in rawFocus {
+                guard let type = LongformActType(promptKey: key),
+                      let text = nonEmptyString(raw) else { continue }
+                let filtered = filterNonCyrillic(text).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !filtered.isEmpty {
+                    focus[type.promptKey] = filtered
+                }
+            }
+        }
+        let thesis = nonEmptyString(dict["thesis"]).map(filterNonCyrillic)
+        guard thesis != nil || !hooks.isEmpty || !ctas.isEmpty || !focus.isEmpty else { return nil }
+        return EssayPlan(
+            thesis: thesis,
+            hookVariants: Array(hooks.prefix(3)),
+            selectedHook: hooks.first,
+            ctaVariants: Array(ctas.prefix(2)),
+            selectedCTA: ctas.first,
+            actFocus: focus
+        )
+    }
+
+    private static func parseTextVariants(_ value: Any?) -> [EssayPlan.TextVariant] {
+        guard let entries = value as? [Any] else { return [] }
+        return entries.compactMap { entry in
+            let raw: String?
+            if let text = entry as? String {
+                raw = text
+            } else if let dict = entry as? [String: Any] {
+                raw = nonEmptyString(dict["text"])
+            } else {
+                raw = nil
+            }
+            guard let raw else { return nil }
+            let filtered = filterNonCyrillic(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+            return filtered.isEmpty ? nil : EssayPlan.TextVariant(text: filtered, source: .llm)
         }
     }
 
@@ -240,7 +348,8 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         primary: ThematicConcept,
         reasoning: String,
         moments: [SelectedMoment],
-        alternatives: [ThematicConcept]
+        alternatives: [ThematicConcept],
+        plan: EssayPlan? = nil
     ) -> ThematicAnalysisResult {
         var main = primary
         main.isPrimaryChoice = true
@@ -250,6 +359,7 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
             aiReasoning: reasoning,
             selectedMoments: moments,
             alternativeConcepts: alternatives,
+            essayPlan: plan,
             source: .llm
         )
     }

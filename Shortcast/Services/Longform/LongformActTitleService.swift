@@ -68,7 +68,11 @@ final class LongformActTitleService: LongformActTitling, Sendable {
                 cap: Self.actMaterialCapChars
             )
         }
-        let templates = LongformNarrativeDirector().adaptiveActDescriptors(for: arc.concept)
+        let templates = {
+            let director = LongformNarrativeDirector()
+            return arc.acts.map { director.adaptiveActDescriptor(for: $0.type, concept: arc.concept) }
+        }()
+        let expectedTypes = arc.acts.map(\.type)
 
         var notes: [String] = []
         var proposals: [LongformActType: ActTitleProposal] = [:]
@@ -81,7 +85,8 @@ final class LongformActTitleService: LongformActTitling, Sendable {
                     from: model,
                     materials: materials.map { $0.block },
                     movieTitle: movieTitle,
-                    concept: arc.concept
+                    concept: arc.concept,
+                    expectedTypes: expectedTypes
                 )
                 if proposals.isEmpty {
                     notes.append("модель не повернула розбір за \(Self.maxAttempts) спроби")
@@ -181,7 +186,7 @@ final class LongformActTitleService: LongformActTitling, Sendable {
         lines: [String],
         cap: Int
     ) -> (block: String, stride: Int) {
-        let romanNumerals = ["I", "II", "III", "IV"]
+        let romanNumerals = ["I", "II", "III", "IV", "V", "VI"]
         let roman = actIndex < romanNumerals.count ? romanNumerals[actIndex] : "\(actIndex + 1)"
         let header = "АКТ \(roman) (\(act.type.rawValue)):"
         guard !lines.isEmpty else {
@@ -196,8 +201,16 @@ final class LongformActTitleService: LongformActTitling, Sendable {
 
     // MARK: - Промпт
 
-    static func actTitlesSystemPrompt(movieTitle: String, concept: ThematicConcept) -> String {
-        """
+    static func actTitlesSystemPrompt(
+        movieTitle: String,
+        concept: ThematicConcept,
+        expectedTypes: [LongformActType] = [.hook, .downfall, .struggle, .catharsis]
+    ) -> String {
+        let typeList = expectedTypes.map(\.promptKey).joined(separator: ", ")
+        let skeleton = expectedTypes
+            .map { #"{"type":"\#($0.promptKey)","title":"...","dramaticBeat":"...","quotedLine":"..."}"# }
+            .joined(separator: ",")
+        return """
         Ти — драматург Shortcast Cinema. Есе «\(concept.word)» за фільмом «\(movieTitle)» вже змонтовано.
         Нижче — МАТЕРІАЛИ АКТІВ: реальні репліки тих сцен, які увійшли до кожного акту, у хронологічному порядку.
         Слоган теми: \(concept.tagline)
@@ -211,19 +224,25 @@ final class LongformActTitleService: LongformActTitling, Sendable {
           Це доказ: якщо такого рядка немає в матеріалі саме цього акту, назву відхилено повністю.
         - ЗАБОРОНЕНО вигадувати репліки, імена та події, яких немає в матеріалах актів.
         - ЗАБОРОНЕНО брати репліку з матеріалу іншого акту.
-        - Типи актів строго у заданому порядку: hook, downfall, struggle, catharsis.
+        - Типи актів строго у заданому порядку: \(typeList).
 
         ФОРМАТ — СУВОРО валідний JSON без markdown, без пояснень і без тексту до або після:
-        {"acts":[{"type":"hook","title":"...","dramaticBeat":"...","quotedLine":"..."},{"type":"downfall","title":"...","dramaticBeat":"...","quotedLine":"..."},{"type":"struggle","title":"...","dramaticBeat":"...","quotedLine":"..."},{"type":"catharsis","title":"...","dramaticBeat":"...","quotedLine":"..."}]}
+        {"acts":[\(skeleton)]}
         """
     }
 
-    static func actTitlesUserPrompt(materials: [String], movieTitle: String, concept: ThematicConcept) -> String {
+    static func actTitlesUserPrompt(
+        materials: [String],
+        movieTitle: String,
+        concept: ThematicConcept,
+        expectedTypes: [LongformActType] = [.hook, .downfall, .struggle, .catharsis]
+    ) -> String {
         var parts: [String] = ["Фільм: «\(movieTitle)». Тема есе: «\(concept.word)».", "МАТЕРІАЛИ АКТІВ:"]
         parts.append(contentsOf: materials)
         parts.append("""
-        Назви всі чотири акти за їхніми власними репліками. Поверни СУВОРО валідний JSON-об'єкт \
-        з полем "acts" з чотирьох елементів у канонічному порядку типів.
+        Назви всі \(expectedTypes.count) актів за їхніми власними репліками. Поверни СУВОРО валідний JSON-об'єкт \
+        з полем "acts" з \(expectedTypes.count) елементів у канонічному порядку типів: \
+        \(expectedTypes.map(\.promptKey).joined(separator: ", ")).
         """)
         return parts.joined(separator: "\n\n")
     }
@@ -240,10 +259,13 @@ final class LongformActTitleService: LongformActTitling, Sendable {
         from model: any LongformActTitleModeling,
         materials: [String],
         movieTitle: String,
-        concept: ThematicConcept
+        concept: ThematicConcept,
+        expectedTypes: [LongformActType]
     ) async -> [LongformActType: ActTitleProposal] {
-        let instructions = actTitlesSystemPrompt(movieTitle: movieTitle, concept: concept)
-        let basePrompt = actTitlesUserPrompt(materials: materials, movieTitle: movieTitle, concept: concept)
+        let instructions = actTitlesSystemPrompt(
+            movieTitle: movieTitle, concept: concept, expectedTypes: expectedTypes)
+        let basePrompt = actTitlesUserPrompt(
+            materials: materials, movieTitle: movieTitle, concept: concept, expectedTypes: expectedTypes)
 
         for attempt in 1...maxAttempts {
             let prompt = attempt == 1 ? basePrompt : invalidOutputNudge(basePrompt)
@@ -252,7 +274,7 @@ final class LongformActTitleService: LongformActTitling, Sendable {
                 prompt: prompt,
                 maxTokens: titlingMaxTokens
             ) else { continue }
-            if let parsed = parseActTitleProposals(from: raw) {
+            if let parsed = parseActTitleProposals(from: raw, expectedTypes: expectedTypes) {
                 var byType: [LongformActType: ActTitleProposal] = [:]
                 for proposal in parsed { byType[proposal.type] = proposal }
                 return byType
@@ -268,11 +290,13 @@ final class LongformActTitleService: LongformActTitling, Sendable {
     /// («модель не справилась»), а не частичный ответ, который пришлось бы
     /// молча латать шаблоном. Толерантность — через `JSONVariantParser`, как в
     /// `LongformThematicService.parseThematicAnalysis`.
-    static func parseActTitleProposals(from jsonText: String) -> [ActTitleProposal]? {
-        guard let rows = actsArray(from: jsonText), rows.count == 4 else { return nil }
-        let canonicalOrder: [LongformActType] = [.hook, .downfall, .struggle, .catharsis]
+    static func parseActTitleProposals(
+        from jsonText: String,
+        expectedTypes: [LongformActType] = [.hook, .downfall, .struggle, .catharsis]
+    ) -> [ActTitleProposal]? {
+        guard let rows = actsArray(from: jsonText), rows.count == expectedTypes.count else { return nil }
         var proposals: [ActTitleProposal] = []
-        for (row, expectedType) in zip(rows, canonicalOrder) {
+        for (row, expectedType) in zip(rows, expectedTypes) {
             let rawType = (row["type"] as? String)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased() ?? ""
@@ -308,6 +332,9 @@ final class LongformActTitleService: LongformActTitling, Sendable {
         case "downfall", "падение", "падение и испытание", "падіння", "падіння і випробування": return .downfall
         case "struggle", "борьба", "борьба и упорство", "боротьба", "боротьба й наполегливість": return .struggle
         case "catharsis", "катарсис", "катарсис и прорыв", "катарсис і прорив": return .catharsis
+        case "form", "форма", "аналіз форми", "анализ формы": return .form
+        case "psychology", "психологія", "психология", "психологія героя": return .psychology
+        case "philosophy", "філософія", "философия", "філософський підтекст": return .philosophy
         default: return nil
         }
     }

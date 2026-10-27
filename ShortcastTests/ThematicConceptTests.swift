@@ -235,6 +235,45 @@ struct ThematicConceptTests {
         #expect(restored.primaryConcept.word == "Ілюзія")
         #expect(restored.alternativeConcepts.first?.accentColorHex == "#E50914")
     }
+
+    @Test("essay plan round-trips and exposes chosen texts")
+    func essayPlanRoundTripsAndDefaults() throws {
+        let plan = EssayPlan(
+            thesis: "Ціна контролю",
+            hookVariants: [.init(text: "Ти контролюєш усе, крім себе.")],
+            ctaVariants: [.init(text: "Напиши, від чого ти досі не відпустив.")],
+            targetDuration: 600,
+            actFocus: ["form": "ритм", "psychology": "страх"]
+        )
+        let decoded = try JSONDecoder().decode(EssayPlan.self, from: JSONEncoder().encode(plan))
+        #expect(decoded == plan)
+        #expect(decoded.chosenHook == "Ти контролюєш усе, крім себе.")
+        #expect(decoded.chosenCTA == "Напиши, від чого ти досі не відпустив.")
+        #expect(decoded.effectiveTargetDuration == 600)
+        #expect(decoded.focus(for: .form) == "ритм")
+    }
+
+    @Test("legacy analysis decodes without essay plan or scene roles")
+    func legacyAnalysisDecodesWithoutEssayPlanOrRoles() throws {
+        let json = """
+        {"primaryConcept":{"word":"ЕГО","tagline":"т","philosophicalPremise":"п","suggestedTitle":"з","source":"llm"},
+         "aiReasoning":"р","source":"llm",
+         "selectedMoments":[{"startTime":1,"endTime":9,"reason":"r","dramaticWeight":0.5}]}
+        """
+        let result = try decoded(json)
+        #expect(result.essayPlan == nil)
+        #expect(result.selectedMoments.first?.actRole == nil)
+        #expect(result.selectedMoments.first?.featured == nil)
+    }
+
+    @Test("analytic act order and prompt keys stay stable")
+    func analyticActOrderAndPromptKeysAreStable() {
+        #expect(LongformActType.canonicalAnalyticOrder.map(\.promptKey)
+                == ["hook", "form", "psychology", "philosophy", "catharsis"])
+        #expect(LongformActType.allCases.prefix(4) == [.hook, .downfall, .struggle, .catharsis])
+        #expect(LongformActType(promptKey: "psychology") == .psychology)
+        #expect(LongformActType(promptKey: "unknown") == nil)
+    }
 }
 
 /// Клампинг акцентного цвета по WCAG 2.1 — чистая арифметика, без CALayer и без рендера.

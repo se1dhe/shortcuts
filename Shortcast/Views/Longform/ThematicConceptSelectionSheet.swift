@@ -7,9 +7,11 @@ struct ThematicConceptSelectionSheet: View {
     let concepts: [ThematicConcept]
     let aiReasoning: String?
     let source: ThematicSource
+    /// План эссе от Director: варианты хука, CTA, целевой хронометраж.
+    let initialEssayPlan: EssayPlan?
     /// Идёт ли сейчас настоящий анализ Director — состояние модели, а не таймера.
     let isRegenerating: Bool
-    let onSelect: (ThematicConcept, String, LongformAudioSettings) -> Void
+    let onSelect: (ThematicConcept, String, LongformAudioSettings, EssayPlan) -> Void
     let onCancel: () -> Void
     let onRegenerate: (() -> Void)?
 
@@ -18,6 +20,11 @@ struct ThematicConceptSelectionSheet: View {
     @State private var customWord: String = ""
     @State private var customTitle: String = ""
     @State private var showCustomInput: Bool = false
+
+    // Хук эссе: вариант модели или свой текст (0:00–0:06)
+    @State private var selectedHookIndex: Int = 0
+    @State private var customHook: String = ""
+    @AppStorage("shortcast.longform.essayDurationMinutes") private var essayDurationMinutes: Int = 11
 
     // Аудиомастеринг и звукорежиссура Shortcast Cinema (автоматически сохраняются в UserDefaults)
     @AppStorage("shortcast.longform.dialogueFocusEnabled") private var dialogueFocusEnabled: Bool = true
@@ -62,7 +69,8 @@ struct ThematicConceptSelectionSheet: View {
         aiReasoning: String? = nil,
         source: ThematicSource = .unknown,
         isRegenerating: Bool = false,
-        onSelect: @escaping (ThematicConcept, String, LongformAudioSettings) -> Void,
+        essayPlan: EssayPlan? = nil,
+        onSelect: @escaping (ThematicConcept, String, LongformAudioSettings, EssayPlan) -> Void,
         onCancel: @escaping () -> Void,
         onRegenerate: (() -> Void)? = nil
     ) {
@@ -71,6 +79,7 @@ struct ThematicConceptSelectionSheet: View {
         self.concepts = concepts
         self.aiReasoning = aiReasoning
         self.source = source
+        self.initialEssayPlan = essayPlan
         self.isRegenerating = isRegenerating
         self.onSelect = onSelect
         self.onCancel = onCancel
@@ -78,6 +87,13 @@ struct ThematicConceptSelectionSheet: View {
 
         let primaryId = concepts.first(where: { $0.isPrimaryChoice })?.id ?? concepts.first?.id
         self._selectedConceptId = State(initialValue: primaryId)
+
+        let pickedHook = essayPlan?.selectedHook
+        let hookIndex = pickedHook.flatMap { hook in
+            essayPlan?.hookVariants.firstIndex(where: { $0.text == hook.text })
+        } ?? 0
+        self._selectedHookIndex = State(initialValue: hookIndex)
+        self._customHook = State(initialValue: pickedHook?.source == .manual ? pickedHook?.text ?? "" : "")
     }
 
     private var provenance: (header: String, badge: String, badgeIcon: String, reasoning: String, reasoningIcon: String, warning: String?) {
@@ -516,6 +532,68 @@ struct ThematicConceptSelectionSheet: View {
             }
             .frame(maxHeight: 285)
 
+            // Хук эссе: модель предлагает варианты, пользователь выбирает или вписывает свой
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Хук (0:00–0:06)")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Text("Кликните вариант или впишите свой")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                let variants = initialEssayPlan?.hookVariants ?? []
+                if !variants.isEmpty {
+                    HStack(spacing: 8) {
+                        ForEach(Array(variants.enumerated()), id: \.offset) { index, variant in
+                            Button {
+                                selectedHookIndex = index
+                                customHook = ""
+                            } label: {
+                                Text(variant.text)
+                                    .font(.caption)
+                                    .multilineTextAlignment(.leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(8)
+                            }
+                            .buttonStyle(.plain)
+                            .background(RoundedRectangle(cornerRadius: 8)
+                                .fill(selectedHookIndex == index && customHook.isEmpty
+                                      ? Color.yellow.opacity(0.18) : Color.secondary.opacity(0.06)))
+                            .overlay(RoundedRectangle(cornerRadius: 8)
+                                .stroke(selectedHookIndex == index && customHook.isEmpty
+                                        ? Color.yellow.opacity(0.7) : Color.clear))
+                        }
+                    }
+                }
+                TextField("Свой хук (1–2 предложения)", text: $customHook, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(1...3)
+                Text("Хук задаёт обещание эссе. Модель предложила варианты из диалогов; свой текст заменит их.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.05)))
+
+            // Целевой хронометраж эссе
+            HStack(spacing: 10) {
+                Text("Хронометраж:")
+                    .font(.subheadline.weight(.semibold))
+                Picker("", selection: $essayDurationMinutes) {
+                    Text("8 мин").tag(8)
+                    Text("10 мин").tag(10)
+                    Text("11 мин").tag(11)
+                    Text("12 мин").tag(12)
+                    Text("15 мин").tag(15)
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 360)
+                Spacer()
+            }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.05)))
+
             Divider()
 
             // Блок аудиомастеринга и звукорежиссуры Shortcast Cinema
@@ -739,12 +817,21 @@ struct ThematicConceptSelectionSheet: View {
                             antiCopyrightEnabled: antiCopyrightEnabled,
                             antiCopyrightPreset: antiCopyrightPreset
                         )
-                        onSelect(chosen, finalTitle, audioSettings)
+                        let variants = initialEssayPlan?.hookVariants ?? []
+                        let chosenHook: String? = customHook.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? (variants.indices.contains(selectedHookIndex) ? variants[selectedHookIndex].text : variants.first?.text)
+                            : customHook
+                        let plan = (initialEssayPlan ?? EssayPlan()).confirming(
+                            hookText: chosenHook,
+                            ctaText: initialEssayPlan?.chosenCTA,
+                            targetDuration: Double(essayDurationMinutes) * 60.0
+                        )
+                        onSelect(chosen, finalTitle, audioSettings, plan)
                     }
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "wand.and.stars")
-                        Text("Смонтировать кино-эссе (7–10 мин)")
+                        Text("Смонтировать кино-эссе (~\(essayDurationMinutes) мин)")
                     }
                     .font(.headline)
                     .padding(.horizontal, 16)

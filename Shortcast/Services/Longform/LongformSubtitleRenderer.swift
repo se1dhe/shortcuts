@@ -172,6 +172,8 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
     static let actOverlineBasePointSize: Double = 20.0
     /// Эталонный кегль названия главы в карточке акта
     static let actTitleBasePointSize: Double = 34.0
+    /// Эталонный кегль финального CTA
+    static let ctaBasePointSize: Double = 30.0
 
     /// Запас под самой нижней строкой субтитров (в единицах `k`): там живёт слоган интро
     /// (20·k кегль + отступы) и нижняя золотая черта. Знак канала отступает на эту величину,
@@ -188,6 +190,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
     static func taglinePointSize(k: Double) -> Double { taglineBasePointSize * k }
     static func actOverlinePointSize(k: Double) -> Double { actOverlineBasePointSize * k }
     static func actTitlePointSize(k: Double) -> Double { actTitleBasePointSize * k }
+    static func ctaPointSize(k: Double) -> Double { ctaBasePointSize * k }
 
     /// Шрифт якорного слова для уже разрешённого (после авто-усадки) кегля
     static func themeFont(pointSize: Double) -> NSFont {
@@ -210,6 +213,10 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
 
     static func actTitleFont(k: Double) -> NSFont {
         SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: CGFloat(actTitlePointSize(k: k)), fallback: .heavy)
+    }
+
+    static func ctaFont(k: Double) -> NSFont {
+        SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: CGFloat(ctaPointSize(k: k)), fallback: .heavy)
     }
 
     private static func centerParagraph() -> NSMutableParagraphStyle {
@@ -287,6 +294,19 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             .paragraphStyle: centerParagraph(),
             .shadow: cinematicShadow(blur: 16.0 * k, offsetY: -3.0 * k, alpha: 0.98),
             .kern: CGFloat(3.0 * k)
+        ]
+    }
+
+    /// Атрибуты финального CTA: белый Russo One с той же обводкой/тенью, что и карточка акта
+    static func ctaAttributes(k: Double) -> [NSAttributedString.Key: Any] {
+        [
+            .font: ctaFont(k: k),
+            .foregroundColor: NSColor.white,
+            .strokeColor: NSColor.black,
+            .strokeWidth: CGFloat(-2.2 * k),
+            .paragraphStyle: centerParagraph(),
+            .shadow: cinematicShadow(blur: 14.0 * k, offsetY: -3.0 * k, alpha: 0.96),
+            .kern: CGFloat(1.5 * k)
         ]
     }
 
@@ -370,7 +390,9 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         acts: [LongformAct] = [],
         actStartTimes: [Double] = [],
         totalDuration: Double = 0.0,
-        layout: LongformOverlayLayout = LongformOverlayLayout()
+        layout: LongformOverlayLayout = LongformOverlayLayout(),
+        hookText: String? = nil,
+        ctaText: String? = nil
     ) async -> CALayer {
         let rootLayer = CALayer()
         rootLayer.frame = CGRect(origin: .zero, size: renderSize)
@@ -379,6 +401,10 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         let calculatedTotalDuration = max(totalDuration, timedPhrases.last?.end ?? 300.0)
         // Единый множитель типографики для всего оверлея (1920x1080 -> k = 1.0)
         let k = Self.scaleFactor(renderSize: renderSize)
+
+        let hook = hookText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasHook = !(hook ?? "").isEmpty
+        let introEnd = hasHook ? 6.2 : 4.5
 
         // 1. Центральное якорное слово концепта (висит весь фильм, плавно растворяется в финале)
         let (conceptLayer, conceptY, _) = buildCentralConceptLayer(
@@ -396,17 +422,19 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             concept: concept,
             conceptY: conceptY,
             timedPhrases: timedPhrases,
-            totalDuration: calculatedTotalDuration
+            totalDuration: calculatedTotalDuration,
+            introEnd: introEnd
         )
         rootLayer.addSublayer(subtitlePhrasesLayer)
 
-        // 3. Вступительная золотая линия и философский слоган (0.0с – 4.2с)
+        // 3. Вступительная золотая линия и хук/философский слоган (с хуком — до 6.0с)
         let introTaglineLayer = buildIntroTaglineLayer(
             renderSize: renderSize,
             k: k,
             concept: concept,
             conceptY: conceptY,
-            totalDuration: calculatedTotalDuration
+            totalDuration: calculatedTotalDuration,
+            hookText: hasHook ? hook : nil
         )
         rootLayer.addSublayer(introTaglineLayer)
 
@@ -421,7 +449,19 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         )
         rootLayer.addSublayer(actCardsLayer)
 
-        // 5. Знак канала — пятая полоса, ВСЕГДА добавляется последней (индекс [4]) и только если
+        // 5. Финальный CTA — только когда задан; иначе слой-состав остаётся прежним (4 подслоя)
+        if let cta = ctaText?.trimmingCharacters(in: .whitespacesAndNewlines), !cta.isEmpty {
+            let ctaLayer = buildFinalCTALayer(
+                renderSize: renderSize,
+                k: k,
+                concept: concept,
+                ctaText: cta,
+                totalDuration: calculatedTotalDuration
+            )
+            rootLayer.addSublayer(ctaLayer)
+        }
+
+        // 6. Знак канала — ВСЕГДА добавляется последней и только если
         // для неё реально есть место. Раньше вставать в середину нельзя: тесты читают
         // sublayers по позициям, а у слоя-картинки ненулевой `contents`.
         appendChannelLogoBand(to: rootLayer, renderSize: renderSize,
@@ -658,7 +698,8 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         concept: ThematicConcept,
         conceptY: CGFloat,
         timedPhrases: [TimedSubtitlePhrase],
-        totalDuration: Double
+        totalDuration: Double,
+        introEnd: Double = 4.5
     ) -> (layer: CALayer, subtitleBottom: CGFloat) {
         let container = CALayer()
         container.frame = CGRect(origin: .zero, size: renderSize)
@@ -683,8 +724,9 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             // одиночные «♪» / «you» и прочие артефакты декодера не выжигаются на экран.
             guard !Self.isHallucinationLine(cleanText) else { continue }
             guard !cleanText.isEmpty, phrase.end > phrase.start else { continue }
-            // Не показываем субтитры во время вступительной заставки (0.0-4.5с), чтобы не перекрывать тезис
-            guard phrase.end > 4.5 else { continue }
+            // Не показываем субтитры во время вступительной заставки (4.5с без хука, 6.2с с хуком),
+            // чтобы не перекрывать тезис
+            guard phrase.end > introEnd else { continue }
 
             let subStr = NSAttributedString(string: cleanText.uppercased(), attributes: subAttrs)
             let boundingRect = subStr.boundingRect(
@@ -703,8 +745,8 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             phraseLayer.contents = renderAttributedText(subStr, size: phraseLayer.frame.size)
             phraseLayer.opacity = 0.0
 
-            // Если фраза началась до окончания заставки, плавно включаем ее сразу после исчезновения заставки (4.55с)
-            let pStart = max(phrase.start, 4.55)
+            // Если фраза началась до окончания заставки, плавно включаем ее сразу после исчезновения заставки
+            let pStart = max(phrase.start, introEnd + 0.05)
             let maxEndTime = max(pStart + 0.35, totalDuration - 2.0)
             let pEnd = min(max(phrase.end, pStart + 0.35), maxEndTime)
             guard pEnd > pStart else { continue }
@@ -746,14 +788,15 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         return (container, max(0, referenceBottom - Self.subtitleLogoClearance * CGFloat(k)))
     }
 
-    // MARK: - 3. Вступительный подзаголовок темы (Intro Hook, 0.0с – 4.5с)
+    // MARK: - 3. Вступительный подзаголовок темы / хук (0.0с – 4.5с / 6.0с)
 
     private func buildIntroTaglineLayer(
         renderSize: CGSize,
         k: Double,
         concept: ThematicConcept,
         conceptY: CGFloat,
-        totalDuration: Double
+        totalDuration: Double,
+        hookText: String? = nil
     ) -> CALayer {
         let container = CALayer()
         container.frame = CGRect(origin: .zero, size: renderSize)
@@ -761,6 +804,8 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
 
         let W = renderSize.width
         let t = max(totalDuration, 5.0)
+        let hook = hookText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasHook = !(hook ?? "").isEmpty
 
         // Золотая акцентная черта строго под словом концепта
         let accentColor = NSColor(hex: concept.accentColorHex)?.cgColor ?? CGColor(srgbRed: 0.96, green: 0.82, blue: 0.13, alpha: 1.0)
@@ -775,15 +820,17 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         lineLayer.shadowOffset = CGSize(width: 0, height: -1.0)
         container.addSublayer(lineLayer)
 
-        // Подзаголовок / тезис размещается строго ПОД золотой чертой с зазором
-        let taglineText = concept.tagline.isEmpty ? concept.philosophicalPremise : concept.tagline
+        // Подзаголовок / тезис / хук размещается строго ПОД золотой чертой с зазором
+        let taglineText = hasHook ? hook! : (concept.tagline.isEmpty ? concept.philosophicalPremise : concept.tagline)
         if !taglineText.isEmpty {
             let subAttrs = Self.taglineAttributes(k: k)
 
             let subStr = NSAttributedString(string: taglineText, attributes: subAttrs)
+            // Хук — 1–2 предложения: держим в пределах трёх строк, как и задумано карточкой
             let maxTaglineW = min(W * 0.75, CGFloat(960.0 * k))
+            let maxTaglineH = hasHook ? CGFloat(3.0 * Self.taglinePointSize(k: k) * 1.6 + 16.0 * k) : CGFloat(160.0)
             let boundingRect = subStr.boundingRect(
-                with: CGSize(width: maxTaglineW, height: 160.0),
+                with: CGSize(width: maxTaglineW, height: maxTaglineH),
                 options: [.usesLineFragmentOrigin, .usesFontLeading]
             )
             let subW = min(W * 0.85, ceil(boundingRect.width) + CGFloat(40.0 * k))
@@ -798,10 +845,10 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             container.addSublayer(subLayer)
         }
 
-        // Анимация: плавно появляется (0.0-0.8с), держится до 3.2с, плавно затухает к 4.2с
+        // Анимация: хук держится до 6.0с, прежний слоган — до 4.2с
         let tFadeIn = 0.8 / t
-        let tHold = 3.2 / t
-        let tFadeOut = 4.2 / t
+        let tHold = (hasHook ? 5.2 : 3.2) / t
+        let tFadeOut = (hasHook ? 6.0 : 4.2) / t
 
         let anim = CAKeyframeAnimation(keyPath: "opacity")
         anim.values = [0.0, 1.0, 1.0, 0.0, 0.0]
@@ -817,6 +864,83 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         anim.fillMode = .both
         anim.isRemovedOnCompletion = false
         container.add(anim, forKey: "introTaglineFade")
+
+        return container
+    }
+
+    // MARK: - 5. Финальный CTA (последние ~4 секунды)
+
+    private func buildFinalCTALayer(
+        renderSize: CGSize,
+        k: Double,
+        concept: ThematicConcept,
+        ctaText: String,
+        totalDuration: Double
+    ) -> CALayer {
+        let container = CALayer()
+        container.frame = CGRect(origin: .zero, size: renderSize)
+        container.opacity = 0.0
+
+        let W = renderSize.width
+        let H = renderSize.height
+        let t = max(totalDuration, 5.0)
+
+        let accentColor = NSColor(hex: concept.accentColorHex)?.cgColor ?? CGColor(srgbRed: 0.96, green: 0.82, blue: 0.13, alpha: 1.0)
+        let lineW = CGFloat(120.0 * k)
+        let lineH: CGFloat = 2.5
+        let textAttrs = Self.ctaAttributes(k: k)
+        let textStr = NSAttributedString(string: ctaText.uppercased(), attributes: textAttrs)
+        let maxTextW = min(W * 0.78, CGFloat(1100.0 * k))
+        let bounding = textStr.boundingRect(
+            with: CGSize(width: maxTextW, height: CGFloat(4.0 * Self.ctaPointSize(k: k) * 1.6)),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+        let textW = min(W * 0.88, ceil(bounding.width) + CGFloat(24.0 * k))
+        let textH = ceil(bounding.height) + CGFloat(12.0 * k)
+
+        // Нижняя треть кадра: не спорит с якорным словом по центру
+        let blockY = H * 0.30
+        let textY = blockY
+        let lineY = textY + textH + CGFloat(14.0 * k)
+
+        let lineLayer = CALayer()
+        lineLayer.frame = CGRect(x: (W - lineW) / 2.0, y: lineY, width: lineW, height: lineH)
+        lineLayer.backgroundColor = accentColor
+        lineLayer.cornerRadius = lineH / 2.0
+        lineLayer.shadowColor = CGColor(gray: 0, alpha: 0.9)
+        lineLayer.shadowRadius = 6.0
+        lineLayer.shadowOffset = CGSize(width: 0, height: -1.0)
+        container.addSublayer(lineLayer)
+
+        let textLayer = CALayer()
+        textLayer.frame = CGRect(x: (W - textW) / 2.0, y: textY, width: textW, height: textH)
+        textLayer.contentsScale = 2.0
+        textLayer.contents = renderAttributedText(textStr, size: textLayer.frame.size)
+        container.addSublayer(textLayer)
+
+        // Появляется за 4.2с до конца, держится до -0.7с, гаснет ровно к концу
+        let ctaStart = max(0.0, totalDuration - 4.2)
+        let ctaHold = max(ctaStart, totalDuration - 0.7)
+        let k0 = max(0.0, (ctaStart - 0.01) / t)
+        let k1 = min(1.0, (ctaStart + 0.40) / t)
+        let k2 = min(1.0, ctaHold / t)
+        let k3 = min(1.0, max(k2, (totalDuration - 0.1) / t))
+
+        let anim = CAKeyframeAnimation(keyPath: "opacity")
+        anim.values = [0.0, 0.0, 1.0, 1.0, 0.0, 0.0]
+        anim.keyTimes = [
+            NSNumber(value: 0.0),
+            NSNumber(value: k0),
+            NSNumber(value: k1),
+            NSNumber(value: k2),
+            NSNumber(value: k3),
+            NSNumber(value: 1.0)
+        ]
+        anim.duration = t
+        anim.beginTime = AVCoreAnimationBeginTimeAtZero
+        anim.fillMode = .both
+        anim.isRemovedOnCompletion = false
+        container.add(anim, forKey: "finalCTAFade")
 
         return container
     }

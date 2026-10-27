@@ -1,18 +1,62 @@
 import Foundation
 
-/// Тип акта в 4-актной драматургической структуре длинного ролика
+/// Тип акта длинного ролика: аналитическая 5-актная структура и legacy-типы эвристики
 enum LongformActType: String, Codable, CaseIterable, Sendable {
     case hook = "Хук и Тезис"
     case downfall = "Падение и Испытание"
     case struggle = "Борьба и Упорство"
     case catharsis = "Катарсис и Прорыв"
+    // Аналитическая структура LLM-пути. Объявлены после legacy, чтобы
+    // allCases.prefix(4) оставался каноническим порядком старой 4-актной арки.
+    case form = "Анализ формы"
+    case psychology = "Психология героя"
+    case philosophy = "Философский подтекст"
+
+    static let canonicalAnalyticOrder: [LongformActType] = [
+        .hook, .form, .psychology, .philosophy, .catharsis
+    ]
+
+    /// Ключ акта в JSON-протоколе Director
+    var promptKey: String {
+        switch self {
+        case .hook: return "hook"
+        case .downfall: return "downfall"
+        case .struggle: return "struggle"
+        case .catharsis: return "catharsis"
+        case .form: return "form"
+        case .psychology: return "psychology"
+        case .philosophy: return "philosophy"
+        }
+    }
+
+    init?(promptKey: String) {
+        let clean = promptKey.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let type = LongformActType.allCases.first(where: { $0.promptKey == clean }) else { return nil }
+        self = type
+    }
 
     var targetDurationRatio: Double {
         switch self {
-        case .hook: return 0.12       // ~40-50s
-        case .downfall: return 0.33   // ~120-140s
-        case .struggle: return 0.35   // ~130-150s
-        case .catharsis: return 0.20  // ~70-90s
+        case .hook: return 0.12
+        case .downfall: return 0.33
+        case .struggle: return 0.35
+        case .catharsis: return 0.20
+        case .form: return 0.24
+        case .psychology: return 0.26
+        case .philosophy: return 0.24
+        }
+    }
+
+    /// Доли аналитической 5-актной арки: только для LLM-пути, legacy-бюджеты не затрагивает.
+    var analyticDurationRatio: Double {
+        switch self {
+        case .hook: return 0.12
+        case .form: return 0.24
+        case .psychology: return 0.26
+        case .philosophy: return 0.24
+        case .catharsis: return 0.14
+        case .downfall: return 0.33
+        case .struggle: return 0.35
         }
     }
 }
@@ -116,6 +160,13 @@ struct LongformNarrativeArc: Codable, Identifiable, Equatable, Sendable {
     /// Отчёт по хронометражу. Опционален: старые архивы арок декодируются без него.
     var durationReport: DurationReport? = nil
 
+    /// Выбранный хук эссе: карточка 0–6 с и первая строка описания. nil — старый архив/план без хука.
+    var hookText: String? = nil
+    /// Заключительный призыв к действию: финальная карточка и закреплённый комментарий.
+    var ctaText: String? = nil
+    /// Главный тезис эссе из плана Director.
+    var thesis: String? = nil
+
     var segments: [TimeSegment] {
         acts.flatMap(\.segments)
     }
@@ -131,7 +182,10 @@ struct LongformNarrativeArc: Codable, Identifiable, Equatable, Sendable {
         acts: [LongformAct],
         summary: String,
         mood: String = "dramatic",
-        durationReport: DurationReport? = nil
+        durationReport: DurationReport? = nil,
+        hookText: String? = nil,
+        ctaText: String? = nil,
+        thesis: String? = nil
     ) {
         self.id = id
         self.movieTitle = movieTitle
@@ -140,5 +194,8 @@ struct LongformNarrativeArc: Codable, Identifiable, Equatable, Sendable {
         self.summary = summary
         self.mood = mood
         self.durationReport = durationReport
+        self.hookText = hookText
+        self.ctaText = ctaText
+        self.thesis = thesis
     }
 }

@@ -23,14 +23,17 @@ enum LongformMetadataGenerator {
             movieTitle: movieTitle,
             safeMovieTitle: safeMovieTitle,
             concept: concept,
-            chaptersText: chaptersText
+            chaptersText: chaptersText,
+            hook: arc.hookText,
+            thesis: arc.thesis
         )
 
         // 4. Глубокие смысловые теги
         let tags = buildPrrodanTags(movieTitle: movieTitle, concept: concept)
 
         // 5. Провокационный закрепленный комментарий
-        let pinnedComment = buildPrrodanPinnedComment(movieTitle: displayMovieTitle, concept: concept)
+        let pinnedComment = buildPrrodanPinnedComment(
+            movieTitle: displayMovieTitle, concept: concept, cta: arc.ctaText)
 
         return LongformYouTubeMetadata(
             title: title,
@@ -103,13 +106,27 @@ enum LongformMetadataGenerator {
         movieTitle: String,
         safeMovieTitle: String,
         concept: ThematicConcept,
-        chaptersText: String
+        chaptersText: String,
+        hook: String?,
+        thesis: String?
     ) -> String {
         let isKnownMovie = !MovieMetadataService.isGarbageTitle(movieTitle)
         let movieRef = isKnownMovie ? "фільму «\(movieTitle)»" : "цієї історії"
+        let cleanHook = hook?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let cleanThesis = thesis?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        let opening: String
+        if !cleanHook.isEmpty {
+            opening = cleanHook
+        } else {
+            opening = "Це відео — про інший бік \(movieRef)."
+        }
+        let thesisBlock = (!cleanThesis.isEmpty && cleanThesis != cleanHook)
+            ? "\n\n\(cleanThesis)"
+            : ""
 
         return """
-        Це відео — про інший бік \(movieRef).
+        \(opening)\(thesisBlock)
 
         Не про зовнішні декорації.
         Не про слова на поверхні.
@@ -160,8 +177,20 @@ enum LongformMetadataGenerator {
         return tags
     }
 
-    private static func buildPrrodanPinnedComment(movieTitle: String, concept: ThematicConcept) -> String {
+    private static func buildPrrodanPinnedComment(
+        movieTitle: String,
+        concept: ThematicConcept,
+        cta: String?
+    ) -> String {
         let movieStr = movieTitle.isEmpty ? "цього фільму" : movieTitle
+        let cleanCTA = cta?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !cleanCTA.isEmpty {
+            return """
+            \(cleanCTA)
+
+            Який момент з \(movieStr) змусив тебе по-справжньому засумніватися в тому, хто насправді робить вибір у твоєму житті? Напиши свої думки в коментарях 👇
+            """
+        }
         return """
         Найнебезпечніший ворог — той, хто ховається там, де ти найменше будеш його шукати: всередині твоєї власної голови.
 

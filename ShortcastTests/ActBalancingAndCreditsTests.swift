@@ -207,4 +207,84 @@ struct ActBalancingAndCreditsTests {
                     "Credits guard не должен применяться к фильму короче 20 мин")
         }
     }
+
+    // MARK: - Аналитическая 5-актная арка
+
+    private func planned(
+        _ start: Double,
+        _ end: Double,
+        _ role: LongformActType?,
+        weight: Double = 0.5,
+        featured: Bool? = nil
+    ) -> SelectedMoment {
+        SelectedMoment(
+            startTime: start,
+            endTime: end,
+            reason: "scene",
+            dramaticWeight: weight,
+            actRole: role,
+            supports: nil,
+            featured: featured
+        )
+    }
+
+    @Test func analyticArcBuildsFiveActsByRole() async throws {
+        let transcript = Transcript(segments: [
+            TranscriptSegment(start: 0, end: 1200, text: "Тестовий транскрипт")
+        ], language: "uk")
+        let concept = ThematicConcept(
+            word: "КОНТРОЛЬ", tagline: "т", philosophicalPremise: "п",
+            suggestedTitle: "з", accentColorHex: "#FFFFFF"
+        )
+        let moments = [
+            planned(10, 30, .hook, weight: 0.9, featured: true),
+            planned(100, 130, .form),
+            planned(200, 240, .psychology),
+            planned(300, 340, .philosophy),
+            planned(400, 440, .catharsis, weight: 0.95)
+        ]
+        let plan = EssayPlan(
+            thesis: "Контроль — це страх",
+            hookVariants: [.init(text: "Ти контролюєш усе, крім себе.")],
+            targetDuration: 480,
+            actFocus: ["philosophy": "свобода"]
+        )
+
+        let arc = try await LongformNarrativeDirector().buildArc(
+            from: transcript,
+            concept: concept,
+            selectedMoments: moments,
+            movieTitle: "Test",
+            targetDuration: 520,
+            essayPlan: plan
+        )
+
+        #expect(arc.acts.map(\.type) == LongformActType.canonicalAnalyticOrder)
+        #expect(arc.acts.allSatisfy { !$0.segments.isEmpty })
+        #expect(arc.hookText == "Ти контролюєш усе, крім себе.")
+        #expect(arc.thesis == "Контроль — це страх")
+        #expect(arc.acts[3].dramaticBeat == "свобода")
+    }
+
+    @Test func rolelessMomentsKeepLegacyFourActPath() async throws {
+        let transcript = Transcript(segments: [
+            TranscriptSegment(start: 0, end: 1000, text: "Тестовий транскрипт")
+        ], language: "uk")
+        let concept = ThematicConcept(
+            word: "СТРАХ", tagline: "т", philosophicalPremise: "п",
+            suggestedTitle: "з", accentColorHex: "#FFFFFF"
+        )
+        let moments = [moment(50, 80), moment(300, 330), moment(600, 640), moment(800, 840)]
+
+        let arc = try await LongformNarrativeDirector().buildArc(
+            from: transcript,
+            concept: concept,
+            selectedMoments: moments,
+            movieTitle: "Test",
+            targetDuration: 520
+        )
+
+        #expect(arc.acts.count == 4)
+        #expect(arc.acts.map(\.type) == [.hook, .downfall, .struggle, .catharsis])
+    }
 }

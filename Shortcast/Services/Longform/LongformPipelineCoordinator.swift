@@ -40,6 +40,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         transcript: Transcript,
         concept: ThematicConcept,
         selectedMoments: [SelectedMoment] = [],
+        essayPlan: EssayPlan? = nil,
         audioSettings: LongformAudioSettings,
         existingArc: LongformNarrativeArc? = nil,
         workingDirectory: URL? = nil,
@@ -59,7 +60,8 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
                 concept: concept,
                 selectedMoments: selectedMoments,
                 movieTitle: movieTitle,
-                targetDuration: 520.0
+                targetDuration: essayPlan?.effectiveTargetDuration ?? 520.0,
+                essayPlan: essayPlan
             )
             // Второй LLM-проход: названия актов из РЕАЛЬНОГО диалога, вошедшего в каждый акт.
             // Выполняется ровно один раз и до stagedArc, иначе LongformAct.id меняется под
@@ -356,7 +358,9 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             acts: arc.acts,
             actStartTimes: actStartTimes,
             totalDuration: totalDuration,
-            layout: overlayLayout
+            layout: overlayLayout,
+            hookText: arc.hookText,
+            ctaText: arc.ctaText
         )
 
         // Подложка глубокого чёрного цвета (YUV Black Fix — предотвращает появление зелёных полос)

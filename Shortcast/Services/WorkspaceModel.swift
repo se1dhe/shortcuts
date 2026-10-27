@@ -109,6 +109,7 @@ final class WorkspaceModel {
     var stagedConfirmedMovieTitle: String?
     var stagedAudioSettings: LongformAudioSettings?
     var stagedArc: LongformNarrativeArc?
+    var stagedEssayPlan: EssayPlan?
     /// Результат генерации длинного ролика
     var longformResult: LongformBuildResult?
     /// Прогресс рендеринга длинного видео
@@ -675,12 +676,14 @@ final class WorkspaceModel {
         _ concept: ThematicConcept,
         confirmedMovieTitle: String? = nil,
         audioSettings: LongformAudioSettings = LongformAudioSettings(),
+        essayPlan: EssayPlan? = nil,
         settings: AppSettings
     ) {
         guard let transcript = storedTranscript else { return }
         self.stagedConcept = concept
         self.stagedConfirmedMovieTitle = confirmedMovieTitle
         self.stagedAudioSettings = audioSettings
+        self.stagedEssayPlan = essayPlan
 
         let candidate = (confirmedMovieTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let finalMovieTitle: String
@@ -702,7 +705,9 @@ final class WorkspaceModel {
                     from: transcript,
                     concept: concept,
                     selectedMoments: selectedMoments,
-                    movieTitle: finalMovieTitle
+                    movieTitle: finalMovieTitle,
+                    targetDuration: essayPlan?.effectiveTargetDuration ?? 520.0,
+                    essayPlan: essayPlan
                 )
                 self.stagedArc = arc
                 self.phase = .editingLongformSubtitles
@@ -740,6 +745,7 @@ final class WorkspaceModel {
             concept,
             confirmedMovieTitle: stagedConfirmedMovieTitle,
             audioSettings: audioSettings,
+            essayPlan: stagedEssayPlan,
             modelManager: modelManager,
             settings: settings
         )
@@ -749,10 +755,18 @@ final class WorkspaceModel {
         _ concept: ThematicConcept,
         confirmedMovieTitle: String? = nil,
         audioSettings: LongformAudioSettings = LongformAudioSettings(),
+        essayPlan: EssayPlan? = nil,
         modelManager: ModelManager,
         settings: AppSettings
     ) {
-        confirmLongformConceptInternal(concept, confirmedMovieTitle: confirmedMovieTitle, audioSettings: audioSettings, modelManager: modelManager, settings: settings)
+        confirmLongformConceptInternal(
+            concept,
+            confirmedMovieTitle: confirmedMovieTitle,
+            audioSettings: audioSettings,
+            essayPlan: essayPlan,
+            modelManager: modelManager,
+            settings: settings
+        )
     }
 
     func confirmLongformConcept(
@@ -761,6 +775,7 @@ final class WorkspaceModel {
         backgroundMusicURL: URL? = nil,
         musicVolume: Float = 0.28,
         duckingEnabled: Bool = true,
+        essayPlan: EssayPlan? = nil,
         modelManager: ModelManager,
         settings: AppSettings
     ) {
@@ -769,7 +784,14 @@ final class WorkspaceModel {
             musicVolume: musicVolume,
             duckingEnabled: duckingEnabled
         )
-        confirmLongformConceptInternal(concept, confirmedMovieTitle: confirmedMovieTitle, audioSettings: audioSettings, modelManager: modelManager, settings: settings)
+        confirmLongformConceptInternal(
+            concept,
+            confirmedMovieTitle: confirmedMovieTitle,
+            audioSettings: audioSettings,
+            essayPlan: essayPlan,
+            modelManager: modelManager,
+            settings: settings
+        )
     }
 
     /// Перерендер готового кино-эссе с исправленными субтитрами (сохраняя тот же монтаж сцен и звук)
@@ -814,6 +836,7 @@ final class WorkspaceModel {
             concept,
             confirmedMovieTitle: movieTitle,
             audioSettings: stagedAudioSettings ?? LongformAudioSettings(),
+            essayPlan: stagedEssayPlan ?? thematicAnalysis?.essayPlan,
             modelManager: modelManager,
             settings: settings
         )
@@ -866,6 +889,7 @@ final class WorkspaceModel {
                     transcript: transcript,
                     concept: concept,
                     selectedMoments: selectedMoments,
+                    essayPlan: stagedEssayPlan ?? thematicAnalysis?.essayPlan,
                     audioSettings: audioSettings,
                     existingArc: existingArc,
                     workingDirectory: workDir,
@@ -892,12 +916,19 @@ final class WorkspaceModel {
         _ concept: ThematicConcept,
         confirmedMovieTitle: String? = nil,
         audioSettings: LongformAudioSettings,
+        essayPlan: EssayPlan? = nil,
         modelManager: ModelManager,
         settings: AppSettings
     ) {
         guard let currentJob = job, let transcript = storedTranscript else { return }
         self.selectedConcept = concept
         self.stagedAudioSettings = audioSettings
+        self.stagedEssayPlan = essayPlan
+        if let essayPlan {
+            self.thematicAnalysis?.essayPlan = essayPlan
+            self.currentProject?.thematicAnalysis = self.thematicAnalysis
+            Task { await persistThemeState(reason: "essay-plan") }
+        }
 
         let candidate = (confirmedMovieTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let finalMovieTitle: String
@@ -948,6 +979,7 @@ final class WorkspaceModel {
                     transcript: transcript,
                     concept: concept,
                     selectedMoments: selectedMoments,
+                    essayPlan: essayPlan,
                     audioSettings: audioSettings,
                     workingDirectory: workDir,
                     channelLogoEnabled: settings.channelLogoWatermarkEnabled
@@ -1027,6 +1059,7 @@ final class WorkspaceModel {
         self.thematicAnalysis = nil
         self.legacyDiscoveredConcepts = []
         self.selectedConcept = nil
+        self.stagedEssayPlan = nil
         self.storedTranscript = nil
         self.detectedMovie = nil
         cleanUpTempInput()
@@ -1782,6 +1815,7 @@ final class WorkspaceModel {
         stagedConfirmedMovieTitle = nil
         stagedAudioSettings = nil
         stagedArc = nil
+        stagedEssayPlan = nil
         detectedMovie = nil
         isRegeneratingConcepts = false
         currentProject = nil

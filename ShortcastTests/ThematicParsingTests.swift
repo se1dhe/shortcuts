@@ -439,4 +439,41 @@ struct ThematicParsingTests {
         #expect(full.split(separator: "\n").count == 12)
         #expect(full.contains("[660.0] Реплика 11 "))
     }
+
+    @Test("director essay plan and scene roles parse together")
+    func testParsesEssayPlanAndMomentRoles() throws {
+        let json = """
+        {"reasoning":"р","primaryConcept":{"word":"ЕГО","tagline":"т","philosophicalPremise":"п","suggestedTitle":"з"},
+         "essayPlan":{"thesis":"Контроль — це страх","hookVariants":["Ти контролюєш усе, крім себе.","Хто насправді обирає за тебе?"],
+           "ctaVariants":["Напиши, від чого ти не відпустив."],
+           "actFocus":{"form":"монтаж","psychology":"страх","philosophy":"свобода","catharsis":"вибір"}},
+         "selectedMoments":[
+           {"startTime":10,"endTime":20,"reason":"відкриття","dramaticWeight":0.9,"actRole":"hook","supports":"теза","featured":true},
+           {"startTime":100,"endTime":130,"reason":"розбір","dramaticWeight":0.8,"actRole":"form"},
+           {"startTime":300,"endTime":340,"reason":"страх","dramaticWeight":0.7,"actRole":"psychology"}
+         ]}
+        """
+        let result = try #require(LongformThematicService.parseThematicAnalysis(from: json))
+        let plan = try #require(result.essayPlan)
+        #expect(plan.thesis == "Контроль — це страх")
+        #expect(plan.hookVariants.count == 2)
+        #expect(plan.chosenHook == "Ти контролюєш усе, крім себе.")
+        #expect(plan.chosenCTA == "Напиши, від чого ти не відпустив.")
+        #expect(plan.focus(for: .philosophy) == "свобода")
+        #expect(result.selectedMoments.map(\.actRole) == [.hook, .form, .psychology])
+        #expect(result.selectedMoments[0].featured == true)
+        #expect(result.selectedMoments[1].featured == nil)
+    }
+
+    @Test("legacy director response still parses without an essay plan")
+    func testLegacyResponseStillParsesWithoutEssayPlan() throws {
+        let json = """
+        {"reasoning":"р","primaryConcept":{"word":"ЕГО","tagline":"т","philosophicalPremise":"п","suggestedTitle":"з"},
+         "selectedMoments":[{"startTime":10,"endTime":20,"reason":"r","dramaticWeight":0.5}],
+         "alternativeConcepts":[]}
+        """
+        let result = try #require(LongformThematicService.parseThematicAnalysis(from: json))
+        #expect(result.essayPlan == nil)
+        #expect(result.selectedMoments.first?.actRole == nil)
+    }
 }

@@ -36,11 +36,11 @@ protocol LongformSubtitleRenderingProtocol: Sendable {
     /// - синхронные реплики строго под ним (32pt, акцент не ниже WCAG AA 4.5:1 против кадра),
     /// - вступительный слоган под субтитрами и карточки актов.
     /// - Плашки, рамки и фоны под текстом запрещены — только обводка и кино-тень.
-    /// - Порядок подслоёв корня зафиксирован: `[0]` слово темы, `[1]` субтитры, `[2]` слоган,
-    ///   `[3]` карточки актов, `[4]` знак канала. Знак добавляется строго в конец списка:
-    ///   вставлять его в середину нельзя — тесты читают `sublayers` по индексам, а у слоя-картинки
-    ///   ненулевой `contents`, и проверка «никаких плашек» посчитала бы его плашкой.
-    /// - `layout.channelLogo == nil` — пятая полоса не создаётся вовсе (4 подслоя, как раньше).
+    /// - Порядок подслоёв корня зафиксирован: `[0]` слово темы, `[1]` субтитры, `[2]` слоган/хук,
+    ///   `[3]` карточки актов, `[4]` финальный CTA (только если `ctaText` задан), знак канала — последним.
+    /// - `layout.channelLogo == nil` — знак канала не создаётся вовсе.
+    /// - `hookText` заменяет слоган на вступительной карточке и держит субтитры скрытыми до 6.2 с;
+    ///   nil — прежнее поведение (слоган до 4.2 с, субтитры с 4.5 с).
     func makeOverlayLayer(
         renderSize: CGSize,
         concept: ThematicConcept,
@@ -48,7 +48,9 @@ protocol LongformSubtitleRenderingProtocol: Sendable {
         acts: [LongformAct],
         actStartTimes: [Double],
         totalDuration: Double,
-        layout: LongformOverlayLayout
+        layout: LongformOverlayLayout,
+        hookText: String?,
+        ctaText: String?
     ) async -> CALayer
 
     /// Генерирует статический кадр для SwiftUI превью в фирменном стиле Shortcast.
@@ -64,6 +66,29 @@ protocol LongformSubtitleRenderingProtocol: Sendable {
 }
 
 extension LongformSubtitleRenderingProtocol {
+    /// Старый вызов без хука/CTA: сохраняет прежнюю вступительную карточку и слой-состав.
+    func makeOverlayLayer(
+        renderSize: CGSize,
+        concept: ThematicConcept,
+        timedPhrases: [TimedSubtitlePhrase],
+        acts: [LongformAct],
+        actStartTimes: [Double],
+        totalDuration: Double,
+        layout: LongformOverlayLayout
+    ) async -> CALayer {
+        await makeOverlayLayer(
+            renderSize: renderSize,
+            concept: concept,
+            timedPhrases: timedPhrases,
+            acts: acts,
+            actStartTimes: actStartTimes,
+            totalDuration: totalDuration,
+            layout: layout,
+            hookText: nil,
+            ctaText: nil
+        )
+    }
+
     func makeOverlayLayer(
         renderSize: CGSize,
         concept: ThematicConcept,
@@ -79,7 +104,9 @@ extension LongformSubtitleRenderingProtocol {
             acts: acts,
             actStartTimes: actStartTimes,
             totalDuration: totalDuration,
-            layout: LongformOverlayLayout()
+            layout: LongformOverlayLayout(),
+            hookText: nil,
+            ctaText: nil
         )
     }
 
@@ -98,7 +125,9 @@ extension LongformSubtitleRenderingProtocol {
             acts: acts,
             actStartTimes: [],
             totalDuration: totalDuration,
-            layout: layout
+            layout: layout,
+            hookText: nil,
+            ctaText: nil
         )
     }
 

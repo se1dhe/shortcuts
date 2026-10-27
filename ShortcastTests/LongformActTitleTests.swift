@@ -414,4 +414,21 @@ struct LongformActTitleTests {
         // Чаптеры уже используют act.title — названию акта больше не нужно быть константой
         #expect(a.description.contains(arc.acts[0].title))
     }
+
+    @Test("Five-act proposal requires five canonical rows")
+    func testFiveActProposalsRequireFiveCanonicalRows() {
+        let json = """
+        {"acts":[
+          {"type":"hook","title":"Обіцянка","quotedLine":"a"},
+          {"type":"form","title":"Ритм","quotedLine":"b"},
+          {"type":"psychology","title":"Страх","quotedLine":"c"},
+          {"type":"philosophy","title":"Свобода","quotedLine":"d"},
+          {"type":"catharsis","title":"Вибір","quotedLine":"e"}
+        ]}
+        """
+        let parsed = LongformActTitleService.parseActTitleProposals(
+            from: json, expectedTypes: LongformActType.canonicalAnalyticOrder)
+        #expect(parsed?.map(\.type) == LongformActType.canonicalAnalyticOrder)
+        #expect(LongformActTitleService.parseActTitleProposals(from: json) == nil)
+    }
 }

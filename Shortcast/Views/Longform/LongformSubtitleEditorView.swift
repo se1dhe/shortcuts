@@ -195,10 +195,10 @@ struct LongformSubtitleEditorView: View {
             HStack(spacing: 6) {
                 actFilterButton(title: "Все акты (\(phrases.count))", actIndex: nil)
 
-                ForEach(Array(arc.acts.enumerated()), id: \.offset) { idx, act in
+                ForEach(Array(arc.acts.enumerated()), id: \.offset) { idx, _ in
                     let count = phrases.filter { $0.actIndex == idx }.count
                     actFilterButton(
-                        title: "\(act.type.shortBadge) (\(count))",
+                        title: "Акт \(Self.romanNumeral(idx + 1)) (\(count))",
                         actIndex: idx
                     )
                 }
@@ -594,15 +594,11 @@ struct LongformSubtitleEditorView: View {
         }
         onConfirm(updated)
     }
-}
 
-private extension LongformActType {
-    var shortBadge: String {
-        switch self {
-        case .hook: return "Акт I"
-        case .downfall: return "Акт II"
-        case .struggle: return "Акт III"
-        case .catharsis: return "Акт IV"
-        }
+    /// Номер акта по позиции: у аналитической арки пять актов и пропуски пустых,
+    /// поэтому номер берётся из места в арке, а не из типа.
+    static func romanNumeral(_ number: Int) -> String {
+        let numerals = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII"]
+        return numerals.indices.contains(number - 1) ? numerals[number - 1] : "\(number)"
     }
 }

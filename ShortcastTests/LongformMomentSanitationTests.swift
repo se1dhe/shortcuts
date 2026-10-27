@@ -70,7 +70,8 @@ struct LongformMomentSanitationTests {
         #expect(clean[0].startTime == 100)
         #expect(clean[0].endTime == 200)
         #expect(clean[0].dramaticWeight == 0.9)
-        #expect(clean[0].reason == "Перший")
+        // Метаданные (reason/actRole/supports/featured) берутся у момента с большим весом
+        #expect(clean[0].reason == "Другий")
         #expect(clean[1].startTime == 400)
     }
 

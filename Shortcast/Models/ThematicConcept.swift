@@ -92,6 +92,9 @@ struct ThematicAnalysisResult: Codable, Sendable, Equatable {
     /// Альтернативные философские грани и темы, выявленные в диалогах
     var alternativeConcepts: [ThematicConcept]
 
+    /// План эссе от Director: хук, CTA, тезис и фокус актов. nil — старый кэш анализа.
+    var essayPlan: EssayPlan?
+
     /// Провенанс всего анализа. `.unknown` / не-`.llm` означает, что тему
     /// выбирала не модель, и такой анализ нельзя кэшировать как результат.
     var source: ThematicSource
@@ -110,6 +113,7 @@ struct ThematicAnalysisResult: Codable, Sendable, Equatable {
         aiReasoning: String,
         selectedMoments: [SelectedMoment] = [],
         alternativeConcepts: [ThematicConcept] = [],
+        essayPlan: EssayPlan? = nil,
         source: ThematicSource = .unknown
     ) {
         var primary = primaryConcept
@@ -124,11 +128,12 @@ struct ThematicAnalysisResult: Codable, Sendable, Equatable {
         self.aiReasoning = aiReasoning
         self.selectedMoments = selectedMoments
         self.alternativeConcepts = alternativeConcepts
+        self.essayPlan = essayPlan
         self.source = source
     }
 
     private enum CodingKeys: String, CodingKey {
-        case primaryConcept, aiReasoning, selectedMoments, alternativeConcepts, source
+        case primaryConcept, aiReasoning, selectedMoments, alternativeConcepts, essayPlan, source
     }
 
     init(from decoder: Decoder) throws {
@@ -137,6 +142,7 @@ struct ThematicAnalysisResult: Codable, Sendable, Equatable {
         aiReasoning = try c.decode(String.self, forKey: .aiReasoning)
         selectedMoments = try c.decodeIfPresent([SelectedMoment].self, forKey: .selectedMoments) ?? []
         alternativeConcepts = try c.decodeIfPresent([ThematicConcept].self, forKey: .alternativeConcepts) ?? []
+        essayPlan = try c.decodeIfPresent(EssayPlan.self, forKey: .essayPlan)
         source = try c.decodeIfPresent(ThematicSource.self, forKey: .source) ?? .unknown
     }
 }
@@ -156,11 +162,147 @@ struct SelectedMoment: Codable, Sendable, Equatable, Identifiable {
     
     /// Драматургический вес сцены (0.0-1.0)
     let dramaticWeight: Double
+
+    /// Роль сцены в аналитической 5-актной арке, если её назначила модель
+    let actRole: LongformActType?
+
+    /// Тезис акта, который доказывает эта сцена
+    let supports: String?
+
+    /// Сильнейшая сцена акта: не режется бюджетом, пока есть другие кандидаты
+    let featured: Bool?
     
-    init(startTime: Double, endTime: Double, reason: String, dramaticWeight: Double) {
+    init(
+        startTime: Double,
+        endTime: Double,
+        reason: String,
+        dramaticWeight: Double,
+        actRole: LongformActType? = nil,
+        supports: String? = nil,
+        featured: Bool? = nil
+    ) {
         self.startTime = startTime
         self.endTime = endTime
         self.reason = reason
         self.dramaticWeight = dramaticWeight
+        self.actRole = actRole
+        self.supports = supports
+        self.featured = featured
+    }
+}
+
+/// План эссе, который Director предлагает вместе с темой: тезис, варианты хука и CTA,
+/// фокус каждого аналитического акта и выбранный хронометраж.
+struct EssayPlan: Codable, Equatable, Sendable {
+
+    struct TextVariant: Codable, Equatable, Hashable, Sendable, Identifiable {
+        var id: String { text }
+        var text: String
+        var source: ThematicSource
+
+        init(text: String, source: ThematicSource = .llm) {
+            self.text = text
+            self.source = source
+        }
+
+        private enum CodingKeys: String, CodingKey { case text, source }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            text = try c.decode(String.self, forKey: .text)
+            source = try c.decodeIfPresent(ThematicSource.self, forKey: .source) ?? .llm
+        }
+    }
+
+    var thesis: String?
+    var hookVariants: [TextVariant]
+    var selectedHook: TextVariant?
+    var ctaVariants: [TextVariant]
+    var selectedCTA: TextVariant?
+    var targetDuration: Double?
+    /// promptKey акта -> что именно доказывает акт в этом фильме
+    var actFocus: [String: String]
+
+    init(
+        thesis: String? = nil,
+        hookVariants: [TextVariant] = [],
+        selectedHook: TextVariant? = nil,
+        ctaVariants: [TextVariant] = [],
+        selectedCTA: TextVariant? = nil,
+        targetDuration: Double? = nil,
+        actFocus: [String: String] = [:]
+    ) {
+        self.thesis = thesis
+        self.hookVariants = hookVariants
+        self.selectedHook = selectedHook
+        self.ctaVariants = ctaVariants
+        self.selectedCTA = selectedCTA
+        self.targetDuration = targetDuration
+        self.actFocus = actFocus
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case thesis, hookVariants, selectedHook, ctaVariants, selectedCTA, targetDuration, actFocus
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        thesis = try c.decodeIfPresent(String.self, forKey: .thesis)
+        hookVariants = try c.decodeIfPresent([TextVariant].self, forKey: .hookVariants) ?? []
+        selectedHook = try c.decodeIfPresent(TextVariant.self, forKey: .selectedHook)
+        ctaVariants = try c.decodeIfPresent([TextVariant].self, forKey: .ctaVariants) ?? []
+        selectedCTA = try c.decodeIfPresent(TextVariant.self, forKey: .selectedCTA)
+        targetDuration = try c.decodeIfPresent(Double.self, forKey: .targetDuration)
+        actFocus = try c.decodeIfPresent([String: String].self, forKey: .actFocus) ?? [:]
+    }
+
+    var chosenHook: String? {
+        Self.nonEmpty(selectedHook?.text) ?? hookVariants.lazy.compactMap { Self.nonEmpty($0.text) }.first
+    }
+
+    var chosenCTA: String? {
+        Self.nonEmpty(selectedCTA?.text) ?? ctaVariants.lazy.compactMap { Self.nonEmpty($0.text) }.first
+    }
+
+    var effectiveTargetDuration: Double {
+        min(max(targetDuration ?? 520.0, 300.0), 900.0)
+    }
+
+    func focus(for type: LongformActType) -> String? {
+        Self.nonEmpty(actFocus[type.promptKey])
+    }
+
+    /// Фиксирует выбор пользователя: свой хук становится ручным вариантом плана.
+    func confirming(hookText: String?, ctaText: String?, targetDuration: Double) -> EssayPlan {
+        var copy = self
+        if let hookText = Self.nonEmpty(hookText) {
+            if let index = copy.hookVariants.firstIndex(where: { $0.text == hookText }) {
+                copy.selectedHook = copy.hookVariants[index]
+            } else {
+                let manual = TextVariant(text: hookText, source: .manual)
+                copy.hookVariants.append(manual)
+                copy.selectedHook = manual
+            }
+        } else {
+            copy.selectedHook = copy.selectedHook ?? copy.hookVariants.first
+        }
+        if let ctaText = Self.nonEmpty(ctaText) {
+            if let index = copy.ctaVariants.firstIndex(where: { $0.text == ctaText }) {
+                copy.selectedCTA = copy.ctaVariants[index]
+            } else {
+                let manual = TextVariant(text: ctaText, source: .manual)
+                copy.ctaVariants.append(manual)
+                copy.selectedCTA = manual
+            }
+        } else {
+            copy.selectedCTA = copy.selectedCTA ?? copy.ctaVariants.first
+        }
+        copy.targetDuration = min(max(targetDuration, 300.0), 900.0)
+        return copy
+    }
+
+    private static func nonEmpty(_ text: String?) -> String? {
+        guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        return trimmed
     }
 }

@@ -265,11 +265,13 @@ struct ContentView: View {
                 aiReasoning: workspace.thematicReasoning,
                 source: workspace.thematicAnalysis?.source ?? .unknown,
                 isRegenerating: workspace.isRegeneratingConcepts,
-                onSelect: { concept, confirmedTitle, audioSettings in
+                essayPlan: workspace.thematicAnalysis?.essayPlan,
+                onSelect: { concept, confirmedTitle, audioSettings, essayPlan in
                     workspace.confirmLongformConcept(
                         concept,
                         confirmedMovieTitle: confirmedTitle,
                         audioSettings: audioSettings,
+                        essayPlan: essayPlan,
                         modelManager: modelManager,
                         settings: settings
                     )

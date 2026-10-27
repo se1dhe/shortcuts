@@ -259,4 +259,57 @@ struct ChannelLogoWatermarkTests {
         )
         #expect(noLogo.sublayers?.count == 4)
     }
+
+    // MARK: - Хук и финальный CTA
+
+    @Test("хук и CTA добавляют слои; без них состав прежний")
+    func hookAndCTALayersAppearOnlyWhenProvided() async {
+        let renderer = LongformSubtitleRenderer()
+        let concept = ThematicConcept(
+            word: "КОНТРОЛЬ",
+            tagline: "т",
+            philosophicalPremise: "п",
+            suggestedTitle: "з",
+            accentColorHex: "#FFFFFF"
+        )
+        let size = CGSize(width: 1920, height: 1080)
+        let phrases = [TimedSubtitlePhrase(start: 1, end: 5, text: "Реплика под хуком")]
+
+        let withTexts = await renderer.makeOverlayLayer(
+            renderSize: size, concept: concept, timedPhrases: phrases,
+            acts: [], actStartTimes: [], totalDuration: 120,
+            layout: LongformOverlayLayout(channelLogo: nil),
+            hookText: "Ти контролюєш усе, крім себе.",
+            ctaText: "Напиши, від чого ти не відпустив."
+        )
+        #expect(withTexts.sublayers?.count == 5)
+
+        let withoutTexts = await renderer.makeOverlayLayer(
+            renderSize: size, concept: concept, timedPhrases: phrases,
+            acts: [], actStartTimes: [], totalDuration: 120,
+            layout: LongformOverlayLayout(channelLogo: nil)
+        )
+        #expect(withoutTexts.sublayers?.count == 4)
+    }
+
+    @Test("под хуком субтитры молчат до 6.2с")
+    func subtitlesStayHiddenUnderHookUntilSixSeconds() async throws {
+        let renderer = LongformSubtitleRenderer()
+        let concept = ThematicConcept(
+            word: "КОНТРОЛЬ",
+            tagline: "т",
+            philosophicalPremise: "п",
+            suggestedTitle: "з",
+            accentColorHex: "#FFFFFF"
+        )
+        let phrases = [TimedSubtitlePhrase(start: 1, end: 5, text: "Рання репліка")]
+        let root = await renderer.makeOverlayLayer(
+            renderSize: CGSize(width: 1920, height: 1080), concept: concept,
+            timedPhrases: phrases, acts: [], actStartTimes: [], totalDuration: 120,
+            layout: LongformOverlayLayout(channelLogo: nil),
+            hookText: "Хук", ctaText: nil
+        )
+        let subtitleBand = try #require(root.sublayers?[1])
+        #expect(subtitleBand.sublayers?.isEmpty ?? true)
+    }
 }

@@ -55,11 +55,15 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             }
 
             if let last = clean.last, start <= last.endTime {
+                let primary = raw.dramaticWeight >= last.dramaticWeight ? raw : last
                 clean[clean.count - 1] = SelectedMoment(
                     startTime: last.startTime,
                     endTime: max(last.endTime, end),
-                    reason: last.reason,
-                    dramaticWeight: max(last.dramaticWeight, raw.dramaticWeight)
+                    reason: primary.reason,
+                    dramaticWeight: max(last.dramaticWeight, raw.dramaticWeight),
+                    actRole: primary.actRole,
+                    supports: primary.supports,
+                    featured: (last.featured ?? false) || (raw.featured ?? false)
                 )
             } else {
                 clean.append(
@@ -67,7 +71,10 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                         startTime: start,
                         endTime: end,
                         reason: raw.reason,
-                        dramaticWeight: raw.dramaticWeight
+                        dramaticWeight: raw.dramaticWeight,
+                        actRole: raw.actRole,
+                        supports: raw.supports,
+                        featured: raw.featured
                     )
                 )
             }
@@ -80,9 +87,11 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         concept: ThematicConcept,
         selectedMoments: [SelectedMoment],
         movieTitle: String,
-        targetDuration: Double = 520.0
+        targetDuration: Double = 520.0,
+        essayPlan: EssayPlan? = nil
     ) async throws -> LongformNarrativeArc {
-        let clampedAsk = min(max(targetDuration, 300.0), 600.0)
+        let requestedDuration = essayPlan?.targetDuration ?? targetDuration
+        let clampedAsk = min(max(requestedDuration, 300.0), 900.0)
         let segments = transcript.segments
 
         guard !segments.isEmpty else {
@@ -102,12 +111,28 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             totalMovieDuration: segments.last?.end ?? 0
         )
         if !sanitizedMoments.isEmpty {
+            // Аналитическая 5-актная арка только когда модель реально разметила сцены
+            // минимум по трём ролям; иначе сохраняем прежнюю 4-актную раскладку.
+            if let plan = essayPlan,
+               Self.analyticCoverage(of: sanitizedMoments) >= 3 {
+                return try buildAnalyticArc(
+                    selectedMoments: sanitizedMoments,
+                    transcript: transcript,
+                    concept: concept,
+                    movieTitle: movieTitle,
+                    targetDuration: clampedAsk,
+                    plan: plan
+                )
+            }
             return try buildArcFromSelectedMoments(
                 selectedMoments: sanitizedMoments,
                 transcript: transcript,
                 concept: concept,
                 movieTitle: movieTitle,
-                targetDuration: clampedAsk
+                targetDuration: clampedAsk,
+                hookText: essayPlan?.chosenHook,
+                ctaText: essayPlan?.chosenCTA,
+                thesis: essayPlan?.thesis
             )
         }
 
@@ -120,13 +145,23 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         )
     }
 
+    static func analyticCoverage(of moments: [SelectedMoment]) -> Int {
+        Set(
+            moments.compactMap(\.actRole)
+                .filter { LongformActType.canonicalAnalyticOrder.contains($0) }
+        ).count
+    }
+
     /// Строит 4-актную арку из моментов, выбранных LLM
     private func buildArcFromSelectedMoments(
         selectedMoments: [SelectedMoment],
         transcript: Transcript,
         concept: ThematicConcept,
         movieTitle: String,
-        targetDuration: Double
+        targetDuration: Double,
+        hookText: String? = nil,
+        ctaText: String? = nil,
+        thesis: String? = nil
     ) throws -> LongformNarrativeArc {
         let totalMovieDuration = transcript.segments.last?.end ?? targetDuration
         
@@ -225,8 +260,148 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             concept: concept,
             acts: acts,
             summary: "LLM-selected moments: \(momentsToUse.count) moments distributed across 4 acts\(filterNote)",
-            mood: "dramatic"
+            mood: "dramatic",
+            hookText: hookText,
+            ctaText: ctaText,
+            thesis: thesis
         )
+    }
+
+    // MARK: - Аналитическая 5-актная арка по ролям сцен
+
+    /// Раскладывает сцены по ролям, назначенным Director'ом, и укладывает сумму
+    /// в бюджет. Сцены без роли идут в самый «голодный» акт, а не в четверть фильма:
+    /// роль важнее хронологической позиции.
+    private func buildAnalyticArc(
+        selectedMoments: [SelectedMoment],
+        transcript: Transcript,
+        concept: ThematicConcept,
+        movieTitle: String,
+        targetDuration: Double,
+        plan: EssayPlan
+    ) throws -> LongformNarrativeArc {
+        let totalMovieDuration = transcript.segments.last?.end ?? targetDuration
+        let creditsCutoff = totalMovieDuration * 0.95
+        let filtered = selectedMoments.filter { $0.endTime < creditsCutoff }
+        let moments = filtered.isEmpty ? selectedMoments : filtered
+
+        var buckets: [LongformActType: [SelectedMoment]] = [:]
+        for type in LongformActType.canonicalAnalyticOrder {
+            buckets[type] = []
+        }
+        for moment in moments {
+            if let role = moment.actRole, buckets[role] != nil {
+                buckets[role]?.append(moment)
+            }
+        }
+        // Сцены без валидной роли — в акт с наименьшим накопленным хронометражем.
+        for moment in moments where moment.actRole == nil || buckets[moment.actRole!] == nil {
+            let target = LongformActType.canonicalAnalyticOrder.min {
+                bucketDuration(buckets[$0] ?? []) < bucketDuration(buckets[$1] ?? [])
+            } ?? .psychology
+            buckets[target]?.append(moment)
+        }
+        for type in LongformActType.canonicalAnalyticOrder {
+            buckets[type]?.sort { $0.startTime < $1.startTime }
+        }
+
+        // Каждый акт получает хотя бы одну сцену, если у соседа их больше одной:
+        // пустой акт — это дыра в драматургии, а не экономия бюджета.
+        for type in LongformActType.canonicalAnalyticOrder where (buckets[type] ?? []).isEmpty {
+            guard let donor = LongformActType.canonicalAnalyticOrder
+                .filter({ $0 != type && (buckets[$0]?.count ?? 0) > 1 })
+                .max(by: { bucketDuration(buckets[$0] ?? []) < bucketDuration(buckets[$1] ?? []) })
+            else { continue }
+            let boundary = nearestBoundary(type, buckets: buckets)
+            let candidate = (buckets[donor] ?? []).min {
+                min(abs($0.startTime - boundary), abs($0.endTime - boundary))
+                    < min(abs($1.startTime - boundary), abs($1.endTime - boundary))
+            }
+            guard let candidate,
+                  let index = buckets[donor]?.firstIndex(of: candidate) else { continue }
+            buckets[donor]?.remove(at: index)
+            buckets[type] = [candidate]
+        }
+
+        trimToBudget(&buckets, target: targetDuration * 1.10)
+
+        var acts: [LongformAct] = []
+        for type in LongformActType.canonicalAnalyticOrder {
+            let scenes = buckets[type] ?? []
+            guard !scenes.isEmpty else { continue }
+            acts.append(LongformAct(
+                type: type,
+                title: "",
+                dramaticBeat: plan.focus(for: type) ?? scenes.first?.reason ?? "Тема «\(concept.word)»",
+                segments: scenes.map { TimeSegment(start: $0.startTime, end: $0.endTime) }
+            ))
+        }
+
+        guard !acts.isEmpty else {
+            return try buildArcFromSelectedMoments(
+                selectedMoments: moments,
+                transcript: transcript,
+                concept: concept,
+                movieTitle: movieTitle,
+                targetDuration: targetDuration,
+                hookText: plan.chosenHook,
+                ctaText: plan.chosenCTA,
+                thesis: plan.thesis
+            )
+        }
+
+        return LongformNarrativeArc(
+            movieTitle: movieTitle,
+            concept: concept,
+            acts: acts,
+            summary: "Analytic plan: \(moments.count) moments across \(acts.count) acts",
+            mood: "dramatic",
+            hookText: plan.chosenHook,
+            ctaText: plan.chosenCTA,
+            thesis: plan.thesis
+        )
+    }
+
+    private func bucketDuration(_ moments: [SelectedMoment]) -> Double {
+        moments.reduce(0) { $0 + ($1.endTime - $1.startTime) }
+    }
+
+    private func nearestBoundary(
+        _ type: LongformActType,
+        buckets: [LongformActType: [SelectedMoment]]
+    ) -> Double {
+        let order = LongformActType.canonicalAnalyticOrder
+        guard let index = order.firstIndex(of: type) else { return 0 }
+        if index > 0, let previous = buckets[order[index - 1]]?.last {
+            return previous.endTime
+        }
+        if index + 1 < order.count, let next = buckets[order[index + 1]]?.first {
+            return next.startTime
+        }
+        return 0
+    }
+
+    /// Режет целыми сценами: сначала не-featured с минимальным весом, никогда не
+    /// оставляя акт пустым. Крой посередине мысли запрещён.
+    private func trimToBudget(
+        _ buckets: inout [LongformActType: [SelectedMoment]],
+        target: Double
+    ) {
+        func totalDuration() -> Double {
+            buckets.values.reduce(0) { $0 + bucketDuration($1) }
+        }
+        while totalDuration() > target {
+            let removable = LongformActType.canonicalAnalyticOrder.compactMap { type
+                -> (type: LongformActType, index: Int, weight: Double)? in
+                guard let scenes = buckets[type], scenes.count > 1 else { return nil }
+                let candidates = scenes.enumerated().filter { !($0.element.featured ?? false) }
+                guard let weakest = candidates.min(by: { $0.element.dramaticWeight < $1.element.dramaticWeight })
+                else { return nil }
+                return (type, weakest.offset, weakest.element.dramaticWeight)
+            }.min(by: { $0.weight < $1.weight })
+            guard let removable else { break }
+            buckets[removable.type]?.remove(at: removable.index)
+        }
     }
 
     /// Балансировка актов: если акт пустой, заимствует ближайший момент из соседнего непустого акта.
@@ -327,7 +502,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         movieTitle: String,
         targetDuration: Double
     ) async throws -> LongformNarrativeArc {
-        let clampedAsk = min(max(targetDuration, 300.0), 600.0)
+        let clampedAsk = min(max(targetDuration, 300.0), 900.0)
         let segments = transcript.segments
 
         guard !segments.isEmpty else {
@@ -595,6 +770,9 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         case .downfall: return 0.5
         case .struggle: return 1.2
         case .catharsis: return 1.5
+        case .form: return 1.0
+        case .psychology: return 0.8
+        case .philosophy: return 1.8
         }
     }
 
@@ -1124,6 +1302,37 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             return ["стріляй", "спробуй", "дивись", "ми", "проти", "я не здамся", "вихід", "роби", "бий", "стій", "тримайся", "вперед"]
         case .catharsis:
             return ["тепер", "розумію", "все скінчено", "вільний", "життя", "вибір", "правда", "насправді", "кінець", "пробач", "відпусти"]
+        case .form:
+            return ["сцена", "кадр", "ритм", "повтор", "монтаж", "структура", "порядок", "прийом", "мова", "форма"]
+        case .psychology:
+            return ["боїшся", "страх", "сором", "провина", "хочеш", "потрібно", "захист", "самообман", "біль", "самотність"]
+        case .philosophy:
+            return ["свобода", "влада", "вибір", "людина", "сенс", "правда", "ціна", "контроль", "ілюзія", "природа"]
+        }
+    }
+
+    /// Драматургическое название и задача одного акта. Выводятся только из темы и типа:
+    /// ни таблиц под конкретный фильм, ни таблиц под конкретную тему здесь нет.
+    func adaptiveActDescriptor(
+        for type: LongformActType,
+        concept: ThematicConcept
+    ) -> (title: String, beat: String) {
+        let cleanWord = concept.word.trimmingCharacters(in: .whitespacesAndNewlines).capitalized
+        switch type {
+        case .hook:
+            return ("Зародження «\(cleanWord)»", "Відкриваючий виклик і перший крок назустріч невідомому.")
+        case .form:
+            return ("Мова «\(cleanWord)»", "Як влаштована форма: монтаж, ритм і повторювані прийоми.")
+        case .psychology:
+            return ("Під маскою", "Що насправді рухає героєм: страх, бажання і самообман.")
+        case .philosophy:
+            return ("Ціна «\(cleanWord)»", "Прихований підтекст: що фільм каже про людину і вибір.")
+        case .catharsis:
+            return ("Прозріння", "Катарсис: осягнення справжнього сенсу та ціни пройденого шляху.")
+        case .downfall:
+            return ("Випробування сумнівом", "Криза та зіткнення з суворою реальністю.")
+        case .struggle:
+            return ("Точка зламу", "Боротьба на межі сил всупереч усім обставинам.")
         }
     }
 
@@ -1131,13 +1340,9 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
     /// Выводятся только из темы: ни таблиц под конкретный фильм, ни таблиц под конкретную тему здесь нет.
     /// Internal — проверяется юнит-тестом на отсутствие фильмных хардкодов.
     func adaptiveActDescriptors(for concept: ThematicConcept) -> [(title: String, beat: String)] {
-        let cleanWord = concept.word.trimmingCharacters(in: .whitespacesAndNewlines).capitalized
-        return [
-            ("Зародження «\(cleanWord)»", "Відкриваючий виклик і перший крок назустріч невідомому."),
-            ("Випробування сумнівом", "Криза та зіткнення з суворою реальністю."),
-            ("Точка зламу", "Боротьба на межі сил всупереч усім обставинам."),
-            ("Прозріння", "Катарсис: осягнення справжнього сенсу та ціни пройденого шляху.")
-        ]
+        [LongformActType.hook, .downfall, .struggle, .catharsis].map {
+            adaptiveActDescriptor(for: $0, concept: concept)
+        }
     }
 
     /// Синтетическая арка при отсутствии детального транскрипта

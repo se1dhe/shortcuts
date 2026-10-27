@@ -32,7 +32,7 @@ final class LongformActTitleService: LongformActTitling, Sendable {
     /// JSON-скелетом влезает в KV-окно прогретого Director'а без потери головных актов.
     static let actMaterialCapChars: Int = 2_500
     /// Порог доверия и типографики: название длиннее не влезает в карточку акта
-    /// (`LongformSubtitleRenderer.resolvedActTitlePointSize` держит две строки).
+    /// в результате и таймкодах (на видео название не выводится).
     static let maxTitleGraphemes: Int = 44
     /// Потолок dramaticBeat
     static let maxBeatChars: Int = 160

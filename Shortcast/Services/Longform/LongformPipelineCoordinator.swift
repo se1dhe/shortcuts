@@ -107,7 +107,6 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         let qualityGate = TranscriptQualityGate(segments: transcript.segments)
         var sceneCutPoints: [Double] = [introPadding]
         var cutTransitions: [LongformCutTransition] = []
-        var actStartTimes: [Double] = []
         let interActGap: Double = 0.8 // Мягкая кинематографическая пауза (дыхание) между актами
         let intraActGap: Double = 0.5 // Мягкая кинематографическая пауза между сценами внутри акта
 
@@ -131,7 +130,6 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
                 sceneCutPoints.append(nextStart)
             }
             let actStartSec = insertTime.seconds
-            actStartTimes.append(actStartSec)
 
             for (segIndex, segment) in act.segments.enumerated() {
                 if segIndex > 0 {
@@ -347,7 +345,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         instruction.layerInstructions = [layerInstruction]
         videoComposition.instructions = [instruction]
 
-        // Накладываем оверлей Shortcast Cinema (титульная карточка темы, ритмичные субтитры, карточки актов)
+        // Накладываем оверлей Shortcast Cinema (титульная карточка темы, ритмичные субтитры)
         let overlayLayout = LongformOverlayLayout(
             bottomBarHeight: ty > 0.5 ? ceil(ty) + 2 : 0,
             channelLogo: channelLogoEnabled ? .essay : nil
@@ -356,8 +354,6 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             renderSize: renderSize,
             concept: concept,
             timedPhrases: timedPhrases,
-            acts: arc.acts,
-            actStartTimes: actStartTimes,
             totalDuration: totalDuration,
             layout: overlayLayout,
             hookText: arc.hookText,

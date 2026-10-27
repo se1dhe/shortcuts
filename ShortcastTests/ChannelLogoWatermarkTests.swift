@@ -102,29 +102,6 @@ struct ChannelLogoWatermarkTests {
         }
     }
 
-    @Test("знак никогда не накрывает карточку акта на H*0.77")
-    func testNeverCoversActCard() throws {
-        let y = conceptY("ПАМ'ЯТЬ", renderSize: essay)
-        let actCard = LongformSubtitleRenderer.actCardRect(renderSize: essay)
-        let bars: [CGFloat] = [0, 0.06 * essay.height, 0.135 * essay.height]
-        for lines in [1, 2, 3, 4, 5] {
-            for bar in bars {
-                let rect = LongformSubtitleRenderer.essayLogoBand(
-                    renderSize: essay, conceptY: y, lines: lines, bottomBarHeight: bar, style: style
-                )
-                if let rect {
-                    #expect(!rect.intersects(actCard), "строки \(lines), летбокс \(bar): знак на карточке акта")
-                    #expect(rect.maxY < actCard.minY)
-                }
-            }
-        }
-        // И чистая геометрия на реалистичной полосе: знак всегда ниже 0.77·H.
-        let rect = try #require(ChannelLogoPlacement.essay(
-            renderSize: essay, subtitleBottom: 500, bottomBarHeight: 0, style: style
-        ))
-        #expect(rect.maxY <= essay.height * 0.77)
-    }
-
     // MARK: - Шортсы
 
     @Test("шортс: пустые snapRects дают полосу по умолчанию 0.12·H")
@@ -232,32 +209,29 @@ struct ChannelLogoWatermarkTests {
         ]
         let root = await renderer.makeOverlayLayer(
             renderSize: essay, concept: concept, timedPhrases: phrases,
-            acts: [], actStartTimes: [], totalDuration: 30.0,
+            totalDuration: 30.0,
             layout: LongformOverlayLayout(bottomBarHeight: 0)
         )
         let layers = try #require(root.sublayers)
-        // [0] тема, [1] субтитры, [2] слоган, [3] карточки актов — как до знака.
-        #expect(layers.count == 5)
+        // [0] тема, [1] субтитры, [2] слоган — как до знака. Карточек актов на видео нет.
+        #expect(layers.count == 4)
         #expect(layers[0].contents != nil)
         #expect(layers[1].sublayers?.count == phrases.count)
         #expect((layers[2].sublayers ?? []).contains { $0.contents != nil })
-        // Карточек не передавали — контейнер пуст, но на месте (индекс [3] свободен под знак? нет:
-        // знак всегда следующий, [4]).
-        #expect(layers[3].sublayers == nil || layers[3].sublayers?.isEmpty == true)
-        let logo = layers[4]
-        #expect(logo.contents != nil, "пятая полоса — растр знака, а не плашка")
+        let logo = layers[3]
+        #expect(logo.contents != nil, "четвёртая полоса — растр знака, а не плашка")
         #expect(abs(Double(logo.opacity) - style.opacity) < 0.0001)
         #expect(abs(logo.frame.height - style.sizeFraction * essay.height) < 0.001)
         #expect(logo.frame.minY >= style.edgeInset - 0.001)
         #expect(!logo.frame.intersects(layers[1].sublayers![0].frame))
 
-        // Выключенный знак — ровно четыре полосы, как раньше.
+        // Выключенный знак — ровно три полосы: тема, субтитры, слоган.
         let noLogo = await renderer.makeOverlayLayer(
             renderSize: essay, concept: concept, timedPhrases: phrases,
-            acts: [], actStartTimes: [], totalDuration: 30.0,
+            totalDuration: 30.0,
             layout: LongformOverlayLayout(bottomBarHeight: 0, channelLogo: nil)
         )
-        #expect(noLogo.sublayers?.count == 4)
+        #expect(noLogo.sublayers?.count == 3)
     }
 
     // MARK: - Хук и финальный CTA
@@ -277,19 +251,19 @@ struct ChannelLogoWatermarkTests {
 
         let withTexts = await renderer.makeOverlayLayer(
             renderSize: size, concept: concept, timedPhrases: phrases,
-            acts: [], actStartTimes: [], totalDuration: 120,
+            totalDuration: 120,
             layout: LongformOverlayLayout(channelLogo: nil),
             hookText: "Ти контролюєш усе, крім себе.",
             ctaText: "Напиши, від чого ти не відпустив."
         )
-        #expect(withTexts.sublayers?.count == 5)
+        #expect(withTexts.sublayers?.count == 4)
 
         let withoutTexts = await renderer.makeOverlayLayer(
             renderSize: size, concept: concept, timedPhrases: phrases,
-            acts: [], actStartTimes: [], totalDuration: 120,
+            totalDuration: 120,
             layout: LongformOverlayLayout(channelLogo: nil)
         )
-        #expect(withoutTexts.sublayers?.count == 4)
+        #expect(withoutTexts.sublayers?.count == 3)
     }
 
     @Test("под хуком субтитры молчат до 6.2с")
@@ -305,7 +279,7 @@ struct ChannelLogoWatermarkTests {
         let phrases = [TimedSubtitlePhrase(start: 1, end: 5, text: "Рання репліка")]
         let root = await renderer.makeOverlayLayer(
             renderSize: CGSize(width: 1920, height: 1080), concept: concept,
-            timedPhrases: phrases, acts: [], actStartTimes: [], totalDuration: 120,
+            timedPhrases: phrases, totalDuration: 120,
             layout: LongformOverlayLayout(channelLogo: nil),
             hookText: "Хук", ctaText: nil
         )

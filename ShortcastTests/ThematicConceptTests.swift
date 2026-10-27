@@ -395,8 +395,7 @@ struct LongformAccentContrastTests {
         for hex in ["#1C7FD8", "#E50914", "#2BB673", "#F5D020"] {
             let originalL = try #require(String.wcagLuminance(hex: hex))
             let styles: [String: [NSAttributedString.Key: Any]] = [
-                "субтитры": LongformSubtitleRenderer.captionAttributes(k: 1.0, accentHex: hex),
-                "надстрочник акта": LongformSubtitleRenderer.actOverlineAttributes(k: 1.0, accentHex: hex)
+                "субтитры": LongformSubtitleRenderer.captionAttributes(k: 1.0, accentHex: hex)
             ]
             for (name, attrs) in styles {
                 let color = try #require(attrs[.foregroundColor] as? NSColor)

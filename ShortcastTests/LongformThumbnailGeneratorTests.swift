@@ -213,27 +213,11 @@ struct LongformOverlayTypographyTests {
         #expect(LongformSubtitleRenderer.captionPointSize(k: 1.0) == 32.0)
         #expect(LongformSubtitleRenderer.captionPointSize(k: 2.0) == 64.0)
         #expect(LongformSubtitleRenderer.taglinePointSize(k: 1.0) == 20.0)
-        #expect(LongformSubtitleRenderer.actOverlinePointSize(k: 1.0) == 24.0)
-        #expect(LongformSubtitleRenderer.actTitlePointSize(k: 1.0) == 40.0)
 
         // кегль из помощника и кегль real шрифта — одно и то же (иначе константы разъехались)
         #expect(LongformSubtitleRenderer.themeFont(k: 1.0).pointSize == CGFloat(LongformSubtitleRenderer.themePointSize(k: 1.0)))
         #expect(LongformSubtitleRenderer.captionFont(k: 2.0).pointSize == 64.0)
         #expect(LongformSubtitleRenderer.themeFont(k: 1.0).pointSize < LongformSubtitleRenderer.captionFont(k: 1.0).pointSize * 2.0)
-    }
-
-    @Test("надстрочник карточки акта получил обводку, которой раньше не было")
-    func testActOverlineHasStrokeAndScales() {
-        let attrs = LongformSubtitleRenderer.actOverlineAttributes(k: 1.0, accentHex: "#F5D020")
-        #expect(attrs[.strokeColor] as? NSColor == NSColor.black)
-        #expect(abs((attrs[.strokeWidth] as? CGFloat ?? 0.0) + 2.0) < 0.001)
-        let scaled = LongformSubtitleRenderer.actOverlineAttributes(k: 2.0, accentHex: "#F5D020")
-        #expect(abs((scaled[.strokeWidth] as? CGFloat ?? 0.0) + 4.0) < 0.001)
-        #expect((scaled[.font] as? NSFont)?.pointSize == 48.0)
-
-        let title = LongformSubtitleRenderer.actTitleAttributes(k: 1.0)
-        #expect(abs((title[.strokeWidth] as? CGFloat ?? 0.0) + 2.4) < 0.001)
-        #expect((title[.font] as? NSFont)?.pointSize == 40.0)
     }
 
     @Test("хук набран крупнее слогана и усаживается до трёх строк, а не в стену текста")

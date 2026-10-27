@@ -34,10 +34,11 @@ protocol LongformSubtitleRenderingProtocol: Sendable {
     /// Включает фирменную кино-типографику Shortcast:
     /// - якорное слово темы по центру кадра (кегль 44pt при 1080 строках, авто-усадка до 60% ширины),
     /// - синхронные реплики строго под ним (32pt, акцент не ниже WCAG AA 4.5:1 против кадра),
-    /// - вступительный слоган под субтитрами и карточки актов.
+    /// - вступительный слоган или хук под субтитрами.
     /// - Плашки, рамки и фоны под текстом запрещены — только обводка и кино-тень.
     /// - Порядок подслоёв корня зафиксирован: `[0]` слово темы, `[1]` субтитры, `[2]` слоган/хук,
-    ///   `[3]` карточки актов, `[4]` финальный CTA (только если `ctaText` задан), знак канала — последним.
+    ///   `[3]` финальный CTA (только если `ctaText` задан), знак канала — последним.
+    /// - Карточки актов на видео не выводятся: акты видны в результате и таймкодах, не на экране.
     /// - `layout.channelLogo == nil` — знак канала не создаётся вовсе.
     /// - `hookText` заменяет слоган на вступительной карточке и держит субтитры скрытыми до 9.2 с;
     ///   nil — прежнее поведение (слоган до 4.2 с, субтитры с 4.5 с).
@@ -45,8 +46,6 @@ protocol LongformSubtitleRenderingProtocol: Sendable {
         renderSize: CGSize,
         concept: ThematicConcept,
         timedPhrases: [TimedSubtitlePhrase],
-        acts: [LongformAct],
-        actStartTimes: [Double],
         totalDuration: Double,
         layout: LongformOverlayLayout,
         hookText: String?,
@@ -71,8 +70,6 @@ extension LongformSubtitleRenderingProtocol {
         renderSize: CGSize,
         concept: ThematicConcept,
         timedPhrases: [TimedSubtitlePhrase],
-        acts: [LongformAct],
-        actStartTimes: [Double],
         totalDuration: Double,
         layout: LongformOverlayLayout
     ) async -> CALayer {
@@ -80,8 +77,6 @@ extension LongformSubtitleRenderingProtocol {
             renderSize: renderSize,
             concept: concept,
             timedPhrases: timedPhrases,
-            acts: acts,
-            actStartTimes: actStartTimes,
             totalDuration: totalDuration,
             layout: layout,
             hookText: nil,
@@ -93,58 +88,16 @@ extension LongformSubtitleRenderingProtocol {
         renderSize: CGSize,
         concept: ThematicConcept,
         timedPhrases: [TimedSubtitlePhrase],
-        acts: [LongformAct],
-        actStartTimes: [Double],
         totalDuration: Double
     ) async -> CALayer {
         await makeOverlayLayer(
             renderSize: renderSize,
             concept: concept,
             timedPhrases: timedPhrases,
-            acts: acts,
-            actStartTimes: actStartTimes,
             totalDuration: totalDuration,
             layout: LongformOverlayLayout(),
             hookText: nil,
             ctaText: nil
-        )
-    }
-
-    func makeOverlayLayer(
-        renderSize: CGSize,
-        concept: ThematicConcept,
-        timedPhrases: [TimedSubtitlePhrase],
-        acts: [LongformAct],
-        totalDuration: Double,
-        layout: LongformOverlayLayout
-    ) async -> CALayer {
-        await makeOverlayLayer(
-            renderSize: renderSize,
-            concept: concept,
-            timedPhrases: timedPhrases,
-            acts: acts,
-            actStartTimes: [],
-            totalDuration: totalDuration,
-            layout: layout,
-            hookText: nil,
-            ctaText: nil
-        )
-    }
-
-    func makeOverlayLayer(
-        renderSize: CGSize,
-        concept: ThematicConcept,
-        timedPhrases: [TimedSubtitlePhrase],
-        acts: [LongformAct],
-        totalDuration: Double
-    ) async -> CALayer {
-        await makeOverlayLayer(
-            renderSize: renderSize,
-            concept: concept,
-            timedPhrases: timedPhrases,
-            acts: acts,
-            totalDuration: totalDuration,
-            layout: LongformOverlayLayout()
         )
     }
 
@@ -157,8 +110,10 @@ extension LongformSubtitleRenderingProtocol {
             renderSize: renderSize,
             concept: concept,
             timedPhrases: timedPhrases,
-            acts: [],
-            totalDuration: timedPhrases.last?.end ?? 300.0
+            totalDuration: timedPhrases.last?.end ?? 300.0,
+            layout: LongformOverlayLayout(),
+            hookText: nil,
+            ctaText: nil
         )
     }
 

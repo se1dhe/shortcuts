@@ -177,10 +177,6 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
     static let hookFadeInDuration: Double = 0.8
     static let hookHoldDuration: Double = 8.4
     static let hookFadeOutDuration: Double = 9.2
-    /// Эталонный кегль надстрочника карточки акта («— ЧАСТЬ II —»)
-    static let actOverlineBasePointSize: Double = 24.0
-    /// Эталонный кегль названия главы в карточке акта
-    static let actTitleBasePointSize: Double = 40.0
     /// Эталонный кегль финального CTA
     static let ctaBasePointSize: Double = 30.0
 
@@ -198,8 +194,6 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
     static func captionPointSize(k: Double) -> Double { captionBasePointSize * k }
     static func taglinePointSize(k: Double) -> Double { taglineBasePointSize * k }
     static func hookPointSize(k: Double) -> Double { hookBasePointSize * k }
-    static func actOverlinePointSize(k: Double) -> Double { actOverlineBasePointSize * k }
-    static func actTitlePointSize(k: Double) -> Double { actTitleBasePointSize * k }
     static func ctaPointSize(k: Double) -> Double { ctaBasePointSize * k }
 
     /// Шрифт якорного слова для уже разрешённого (после авто-усадки) кегля
@@ -222,14 +216,6 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             ofSize: CGFloat(pointSize ?? hookPointSize(k: k)),
             weight: .semibold
         )
-    }
-
-    static func actOverlineFont(k: Double) -> NSFont {
-        SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: CGFloat(actOverlinePointSize(k: k)), fallback: .heavy)
-    }
-
-    static func actTitleFont(k: Double) -> NSFont {
-        SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: CGFloat(actTitlePointSize(k: k)), fallback: .heavy)
     }
 
     static func ctaFont(k: Double) -> NSFont {
@@ -325,32 +311,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         return pointSize
     }
 
-    /// Атрибуты надстрочника акта: раньше был единственный текст в app вообще без обводки
-    static func actOverlineAttributes(k: Double, accentHex: String) -> [NSAttributedString.Key: Any] {
-        [
-            .font: actOverlineFont(k: k),
-            .foregroundColor: String.legibleAccent(hex: accentHex),
-            .strokeColor: NSColor.black,
-            .strokeWidth: CGFloat(-2.0 * k),
-            .paragraphStyle: centerParagraph(),
-            .shadow: cinematicShadow(blur: 8.0 * k, offsetY: -2.0 * k, alpha: 0.92),
-            .kern: CGFloat(5.0 * k)
-        ]
-    }
-
-    static func actTitleAttributes(k: Double) -> [NSAttributedString.Key: Any] {
-        [
-            .font: actTitleFont(k: k),
-            .foregroundColor: NSColor.white,
-            .strokeColor: NSColor.black,
-            .strokeWidth: CGFloat(-2.4 * k),
-            .paragraphStyle: centerParagraph(),
-            .shadow: cinematicShadow(blur: 16.0 * k, offsetY: -3.0 * k, alpha: 0.98),
-            .kern: CGFloat(3.0 * k)
-        ]
-    }
-
-    /// Атрибуты финального CTA: белый Russo One с той же обводкой/тенью, что и карточка акта
+    /// Атрибуты финального CTA: белый Russo One с обводкой и глубокой кино-тенью
     static func ctaAttributes(k: Double) -> [NSAttributedString.Key: Any] {
         [
             .font: ctaFont(k: k),
@@ -394,54 +355,10 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         (renderSize.height - (textSize.height + CGFloat(20.0 * k))) / 2.0
     }
 
-    /// Авто-усадка названия акта: старт `actTitlePointSize(k)` (40·k), пол 28·k, текст обязан
-    /// влезть в `maxWidth` НЕ БОЛЕЕ ЧЕМ В ДВЕ СТРОКИ — при 34pt вторая строка названия
-    /// залезает в верхнюю литербокс-полосу карточки. Измерение — теми же атрибутами, что
-    /// рисует карточка (Russo One, трекинг 3.0·k, обводка −2.4·k); передавать ровно тот
-    /// текст, что рисуется, вместе с кавычками-«ёлочками». Идеал усадки общий с
-    /// `resolvedThemePointSize`, чтобы в repo оставался ОДИН приём «усаживаем, чтобы влезло».
-    static func resolvedActTitlePointSize(text: String, k: Double, maxWidth: Double) -> Double {
-        let minSize = 28.0 * k
-        let cap = max(1.0, maxWidth)
-        let title = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else { return actTitlePointSize(k: k) }
-
-        var pointSize = actTitlePointSize(k: k)
-        for _ in 0..<8 {
-            let font = SubtitleRenderer.resolveFont(
-                name: "RussoOne-Regular",
-                size: CGFloat(pointSize),
-                fallback: .heavy
-            )
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.alignment = .center
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: NSColor.white,
-                .strokeColor: NSColor.black,
-                .strokeWidth: CGFloat(-2.4 * k),
-                .paragraphStyle: paragraph,
-                .kern: CGFloat(3.0 * k)
-            ]
-            let bounding = NSAttributedString(string: title, attributes: attributes).boundingRect(
-                with: CGSize(width: cap, height: .greatestFiniteMagnitude),
-                options: [.usesLineFragmentOrigin, .usesFontLeading]
-            )
-            // NSFont не отдаёт lineHeight (это UIFont-API): высота строки берём из
-            // boundingRectForFont, ровно столько занимает одна строка этим шрифтом
-            let lineHeight = ceil(font.boundingRectForFont.height)
-            if bounding.height <= lineHeight * 2.0 + 1.0 || pointSize <= minSize { break }
-            pointSize = max(minSize, pointSize - 2.0 * k)
-        }
-        return pointSize
-    }
-
     func makeOverlayLayer(
         renderSize: CGSize,
         concept: ThematicConcept,
         timedPhrases: [TimedSubtitlePhrase],
-        acts: [LongformAct] = [],
-        actStartTimes: [Double] = [],
         totalDuration: Double = 0.0,
         layout: LongformOverlayLayout = LongformOverlayLayout(),
         hookText: String? = nil,
@@ -491,18 +408,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         )
         rootLayer.addSublayer(introTaglineLayer)
 
-        // 4. Элегантные экранные карточки смены акта (Act Transition Cards)
-        let actCardsLayer = buildActTransitionCardsLayer(
-            renderSize: renderSize,
-            k: k,
-            concept: concept,
-            acts: acts,
-            actStartTimes: actStartTimes,
-            totalDuration: calculatedTotalDuration
-        )
-        rootLayer.addSublayer(actCardsLayer)
-
-        // 5. Финальный CTA — только когда задан; иначе слой-состав остаётся прежним (4 подслоя)
+        // 4. Финальный CTA — только когда задан; иначе слой-состав остаётся прежним (3 подслоя)
         if let cta = ctaText?.trimmingCharacters(in: .whitespacesAndNewlines), !cta.isEmpty {
             let ctaLayer = buildFinalCTALayer(
                 renderSize: renderSize,
@@ -514,7 +420,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             rootLayer.addSublayer(ctaLayer)
         }
 
-        // 6. Знак канала — ВСЕГДА добавляется последней и только если
+        // 5. Знак канала — ВСЕГДА добавляется последней и только если
         // для неё реально есть место. Раньше вставать в середину нельзя: тесты читают
         // sublayers по позициям, а у слоя-картинки ненулевой `contents`.
         appendChannelLogoBand(to: rootLayer, renderSize: renderSize,
@@ -734,14 +640,6 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
                                           bottomBarHeight: bottomBarHeight, style: style)
     }
 
-    /// Рамка карточки акта в той же системе координат (низ слева): знак канала обязан
-    /// оставлять её свободной — это и проверяет тест коллизии.
-    static func actCardY(renderSize: CGSize) -> CGFloat { renderSize.height * 0.77 }
-
-    static func actCardRect(renderSize: CGSize, contentHeight: CGFloat = 120.0) -> CGRect {
-        CGRect(x: 0, y: actCardY(renderSize: renderSize), width: renderSize.width, height: contentHeight)
-    }
-
     private func buildSynchronizedSubtitlesLayer(
         renderSize: CGSize,
         k: Double,
@@ -926,7 +824,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         return container
     }
 
-    // MARK: - 5. Финальный CTA (последние ~4 секунды)
+    // MARK: - 4. Финальный CTA (последние ~4 секунды)
 
     private func buildFinalCTALayer(
         renderSize: CGSize,
@@ -1001,149 +899,6 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         container.add(anim, forKey: "finalCTAFade")
 
         return container
-    }
-
-    // MARK: - 4. Карточки смены драматургических актов (Act Transition Cards)
-
-    private func buildActTransitionCardsLayer(
-        renderSize: CGSize,
-        k: Double,
-        concept: ThematicConcept,
-        acts: [LongformAct],
-        actStartTimes: [Double] = [],
-        totalDuration: Double
-    ) -> CALayer {
-        let root = CALayer()
-        root.frame = CGRect(origin: .zero, size: renderSize)
-        let t = max(totalDuration, 5.0)
-        let W = renderSize.width
-        let H = renderSize.height
-
-        let accentColor = NSColor(hex: concept.accentColorHex) ?? NSColor(hex: "#FFE45C") ?? .yellow
-        let romanNumerals = ["I", "II", "III", "IV", "V", "VI"]
-
-        var currentTimelineOffset: Double = 2.5 // Синхронизировано с introPadding (Cold Open)
-
-        for (index, act) in acts.enumerated() {
-            let actDuration = act.duration
-            let actStartTimeline = (index < actStartTimes.count && actStartTimes[index] > 0)
-                ? actStartTimes[index]
-                : currentTimelineOffset
-            currentTimelineOffset += actDuration
-
-            // Титры для последующих актов (начиная со второго: Акт II, III, IV), чтобы не перекрывать вступительный интро-слоган.
-            // Пустой акт не получает карточку: объявлять «ЧАСТЬ» над кадром, где играть нечему, — обман зрителя.
-            guard index > 0, !act.segments.isEmpty, actStartTimeline < totalDuration else { continue }
-
-            let roman = (index < romanNumerals.count) ? romanNumerals[index] : "\(index + 1)"
-            let actPartText = "— ЧАСТИНА \(roman) —"
-            let cleanedTitle = act.title.trimmingCharacters(in: CharacterSet(charactersIn: "«»\" ")).uppercased()
-            let actTitleText = "«\(cleanedTitle)»"
-
-            // 1. Надстрочник части (акцентный WCAG-легible, разрядка 5.0·k, Russo One 20pt·k, обводка -2.0·k)
-            let partAttrs = Self.actOverlineAttributes(k: k, accentHex: concept.accentColorHex)
-            let partAttributed = NSAttributedString(string: actPartText, attributes: partAttrs)
-            let partSize = partAttributed.size()
-
-            // 2. Название главы (монументальный белый Russo One 34pt·k, разрядка 3.0·k, глубокая кино-тень)
-            let titleAttrs = Self.actTitleAttributes(k: k)
-            let titleAttributed = NSAttributedString(string: actTitleText, attributes: titleAttrs)
-            let titleBounding = titleAttributed.boundingRect(
-                with: CGSize(width: W * 0.85, height: 200.0),
-                options: [.usesLineFragmentOrigin, .usesFontLeading]
-            )
-            let titleSize = CGSize(
-                width: ceil(titleBounding.width) + CGFloat(16.0 * k),
-                height: ceil(titleBounding.height) + CGFloat(8.0 * k)
-            )
-
-            // Контейнер без рамок и без плашек (чистая кино-типографика)
-            let containerW = max(partSize.width, titleSize.width) + CGFloat(40.0 * k)
-            let lineWidth: CGFloat = 120.0
-            let lineHeight: CGFloat = 2.5
-            let spacingPartToTitle: CGFloat = 6.0 * CGFloat(k)
-            let spacingTitleToLine: CGFloat = 12.0 * CGFloat(k)
-            let totalContentH = partSize.height + spacingPartToTitle + titleSize.height + spacingTitleToLine + lineHeight
-
-            let containerX = (W - containerW) / 2.0
-            let containerY = Self.actCardY(renderSize: renderSize) // В верхней трети экрана
-
-            let containerLayer = CALayer()
-            containerLayer.frame = CGRect(x: containerX, y: containerY, width: containerW, height: totalContentH)
-            containerLayer.opacity = 0.0
-
-            // Слой надстрочника
-            let partLayer = CALayer()
-            partLayer.frame = CGRect(
-                x: (containerW - partSize.width) / 2.0,
-                y: totalContentH - partSize.height,
-                width: partSize.width,
-                height: partSize.height
-            )
-            partLayer.contentsScale = 2.0
-            partLayer.contents = renderAttributedText(partAttributed, size: partSize)
-            containerLayer.addSublayer(partLayer)
-
-            // Слой названия главы
-            let titleLayerY = partLayer.frame.minY - spacingPartToTitle - titleSize.height
-            let titleLayer = CALayer()
-            titleLayer.frame = CGRect(
-                x: (containerW - titleSize.width) / 2.0,
-                y: titleLayerY,
-                width: titleSize.width,
-                height: titleSize.height
-            )
-            titleLayer.contentsScale = 2.0
-            titleLayer.contents = renderAttributedText(titleAttributed, size: titleSize)
-            containerLayer.addSublayer(titleLayer)
-
-            // Золотая акцентная линия под названием главы
-            let lineLayerY = titleLayer.frame.minY - spacingTitleToLine - lineHeight
-            let lineLayer = CALayer()
-            lineLayer.frame = CGRect(
-                x: (containerW - lineWidth) / 2.0,
-                y: lineLayerY,
-                width: lineWidth,
-                height: lineHeight
-            )
-            lineLayer.backgroundColor = accentColor.cgColor
-            lineLayer.cornerRadius = lineHeight / 2.0
-            lineLayer.shadowColor = CGColor(gray: 0, alpha: 0.9)
-            lineLayer.shadowRadius = 6.0
-            lineLayer.shadowOffset = CGSize(width: 0, height: -1.0)
-            containerLayer.addSublayer(lineLayer)
-
-            // Анимация показа: 3.0 секунды (0.4с fade-in, 2.2с hold, 0.4с fade-out)
-            let tStart = actStartTimeline
-            let cardDuration = 3.0
-            let tEnd = min(totalDuration, tStart + cardDuration)
-            guard tEnd > tStart else { continue }
-
-            let k0 = max(0.0, (tStart - 0.01) / t)
-            let k1 = min(1.0, (tStart + 0.40) / t)
-            let k2 = max(k1, (tEnd - 0.40) / t)
-            let k3 = min(1.0, tEnd / t)
-
-            let anim = CAKeyframeAnimation(keyPath: "opacity")
-            anim.values = [0.0, 0.0, 1.0, 1.0, 0.0, 0.0]
-            anim.keyTimes = [
-                NSNumber(value: 0.0),
-                NSNumber(value: k0),
-                NSNumber(value: k1),
-                NSNumber(value: k2),
-                NSNumber(value: k3),
-                NSNumber(value: 1.0)
-            ]
-            anim.duration = t
-            anim.beginTime = AVCoreAnimationBeginTimeAtZero
-            anim.fillMode = .both
-            anim.isRemovedOnCompletion = false
-            containerLayer.add(anim, forKey: "actTypography_\(index)")
-
-            root.addSublayer(containerLayer)
-        }
-
-        return root
     }
 
     // MARK: - 5. Генерация превью в стиле Shortcast Cinema

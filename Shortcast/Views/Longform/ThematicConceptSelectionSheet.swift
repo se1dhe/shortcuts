@@ -21,7 +21,7 @@ struct ThematicConceptSelectionSheet: View {
     @State private var customTitle: String = ""
     @State private var showCustomInput: Bool = false
 
-    // Хук эссе: вариант модели или свой текст (0:00–0:06)
+    // Хук эссе: вариант модели или свой текст (0:00–0:09)
     @State private var selectedHookIndex: Int = 0
     @State private var customHook: String = ""
     @AppStorage("shortcast.longform.essayDurationMinutes") private var essayDurationMinutes: Int = 11
@@ -535,7 +535,7 @@ struct ThematicConceptSelectionSheet: View {
             // Хук эссе: модель предлагает варианты, пользователь выбирает или вписывает свой
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("Хук (0:00–0:06)")
+                    Text("Хук (0:00–0:09)")
                         .font(.subheadline.weight(.semibold))
                     Spacer()
                     Text("Кликните вариант или впишите свой")

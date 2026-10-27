@@ -294,6 +294,31 @@ struct LongformActTitleTests {
                 == ["Реплика на стыке сегментов."])
     }
 
+    @Test("Act dialogue skips Whisper junk and foreign-language lines")
+    func testActDialogueSkipsJunkAndForeignLines() {
+        let transcript = Transcript(
+            segments: [
+                TranscriptSegment(start: 95, end: 105, text: "Реплика на стыке сегментов.", words: []),
+                TranscriptSegment(start: 106, end: 110, text: "Субтитры создавал DimaTorzok", words: []),
+                TranscriptSegment(start: 111, end: 115, text: "♪♪", words: []),
+                TranscriptSegment(start: 116, end: 120, text: "Gå inn i fjellet.", words: []),
+                TranscriptSegment(start: 121, end: 125, text: "Молодий хлопець you know", words: []),
+            ],
+            language: "uk",
+            provenance: .whisper
+        )
+        let act = LongformAct(
+            type: .hook,
+            title: "Заготовка",
+            dramaticBeat: "Заготовка",
+            segments: [TimeSegment(start: 100, end: 140)]
+        )
+        #expect(LongformActTitleService.actDialogue(act: act, transcript: transcript) == [
+            "Реплика на стыке сегментов.",
+            "Молодий хлопець you know",
+        ])
+    }
+
     // MARK: - Парсер
 
     @Test("Parser demands four canonical acts and returns nil otherwise")
@@ -430,5 +455,115 @@ struct LongformActTitleTests {
             from: json, expectedTypes: LongformActType.canonicalAnalyticOrder)
         #expect(parsed?.map(\.type) == LongformActType.canonicalAnalyticOrder)
         #expect(LongformActTitleService.parseActTitleProposals(from: json) == nil)
+    }
+
+    // MARK: - Название обязано быть названием, а не случайной репликой
+
+    /// Один акт с украинским диалогом: проверяем именно выбор строки и гейты названия.
+    private func ukrainianFilm(
+        lines: [String]
+    ) -> (transcript: Transcript, arc: LongformNarrativeArc) {
+        let start = 100.0
+        let segments = lines.enumerated().map { index, text in
+            TranscriptSegment(
+                start: start + Double(index) * 10,
+                end: start + Double(index) * 10 + 9,
+                text: text
+            )
+        }
+        let act = LongformAct(
+            type: .hook,
+            title: "Заготовка",
+            dramaticBeat: "Заготовка",
+            segments: [TimeSegment(start: start, end: start + Double(lines.count) * 10)]
+        )
+        let arc = LongformNarrativeArc(
+            movieTitle: "X", concept: Self.concept(), acts: [act], summary: "x"
+        )
+        return (Transcript(segments: segments, language: "uk", provenance: .whisper), arc)
+    }
+
+    /// В реальной сборке акт II назывался «Закрытое информационное оборудование
+    /// исчеза…» — русская техническая реплика, а живая украинская строка стояла рядом.
+    @Test("Fallback prefers a Ukrainian declarative line over Russian and a question")
+    func testFallbackPrefersUkrainianDeclarativeLine() async throws {
+        let film = ukrainianFilm(lines: [
+            // Русская строка попадает в драматургические ключи акта — по ключам она выигрывает
+            "Закрытое информационное оборудование — это правило.",
+            "Хочеш прогулятись?",
+            // Украинская реплика ключей не содержит, но она и есть название
+            "Ти особливий, і це не комплімент.",
+        ])
+        let outcome = await LongformActTitleService()
+            .applyTitles(to: film.arc, transcript: film.transcript, movieTitle: "X", progress: nil)
+
+        let act = try #require(outcome.arc.acts.first)
+        #expect(act.title == "Ти особливий, і це не комплімент.")
+        #expect(act.effectiveTitleSource == .transcriptLine)
+    }
+
+    /// Обрезка длинной реплики не имеет права рубить слово: «исчеза…» — не название.
+    @Test("A long fallback title is cut at a word boundary, never inside a word")
+    func testFallbackTitleCutsAtWordBoundary() {
+        let line = "Закрытое информационное оборудование исчезает навсегда."
+        let title = LongformActTitleService.truncateToTitleCards(line)
+
+        #expect(title.count <= LongformActTitleService.maxTitleGraphemes)
+        #expect(!title.contains("исчеза…"))
+        #expect(title.hasSuffix("оборудование…"))
+    }
+
+    /// Английское название поверх украинской реплики — это не название этого акта.
+    @Test("A Latin-only LLM title is rejected for Cyrillic material")
+    func testForeignScriptTitleIsRejected() async throws {
+        let json = """
+            {"acts":[\
+            {"type":"hook","title":"The Trap","dramaticBeat":"x","quotedLine":"Ты никогда не знаешь главного правила игры."},\
+            {"type":"downfall","title":"Своя ошибка","dramaticBeat":"x","quotedLine":"Нет, ты проиграл, и это твоя ошибка."},\
+            {"type":"struggle","title":"Смотреть вперед","dramaticBeat":"x","quotedLine":"Держись и смотри только вперед."},\
+            {"type":"catharsis","title":"Цена свободе","dramaticBeat":"x","quotedLine":"Теперь я понимаю цену этой свободе."}]}
+            """
+        let film = fixture()
+        let outcome = await LongformActTitleService(model: StubModel(ready: true, response: json))
+            .applyTitles(to: film.arc, transcript: film.transcript, movieTitle: "X", progress: nil)
+
+        #expect(outcome.arc.acts.map(\.effectiveTitleSource) == [
+            .transcriptLine, .llm, .llm, .llm
+        ])
+        #expect(outcome.arc.acts[0].title != "The Trap")
+    }
+
+    /// Русские буквы (ы/э/ъ/ё) в названии украинского эссе — чужой язык.
+    @Test("A Russian-marked LLM title is rejected over a Ukrainian quote")
+    func testRussianTitleIsRejectedForUkrainianDialogue() async throws {
+        let film = ukrainianFilm(lines: [
+            "Ти не любиш мене?",
+            "Я завжди казала тобі, ти особливий.",
+        ])
+        let json = """
+            {"acts":[{"type":"hook","title":"Обманчивый смысл","dramaticBeat":"x",\
+            "quotedLine":"Я завжди казала тобі, ти особливий."}]}
+            """
+        let outcome = await LongformActTitleService(model: StubModel(ready: true, response: json))
+            .applyTitles(to: film.arc, transcript: film.transcript, movieTitle: "X", progress: nil)
+
+        #expect(outcome.arc.acts[0].effectiveTitleSource == .transcriptLine)
+    }
+
+    /// Технический мусор вместо названия (таймкод, цифры) — это не название акта.
+    @Test("A technical LLM title is rejected")
+    func testTechnicalTitleIsRejected() async throws {
+        let film = ukrainianFilm(lines: [
+            "Ти не любиш мене?",
+            "Я завжди казала тобі, ти особливий.",
+        ])
+        let json = """
+            {"acts":[{"type":"hook","title":"00:12:30","dramaticBeat":"x",\
+            "quotedLine":"Я завжди казала тобі, ти особливий."}]}
+            """
+        let outcome = await LongformActTitleService(model: StubModel(ready: true, response: json))
+            .applyTitles(to: film.arc, transcript: film.transcript, movieTitle: "X", progress: nil)
+
+        #expect(outcome.arc.acts[0].effectiveTitleSource == .transcriptLine)
     }
 }

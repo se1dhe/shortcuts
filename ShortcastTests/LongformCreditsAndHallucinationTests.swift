@@ -85,6 +85,11 @@ struct LongformCreditsAndHallucinationTests {
         // Музыкальные символы без текста
         #expect(LongformSubtitleRenderer.isHallucinationLine("♪♪"))
         #expect(LongformSubtitleRenderer.isHallucinationLine("♪"))
+        // Звуковые описания и повторы декодера
+        #expect(LongformSubtitleRenderer.isHallucinationLine("GONG"))
+        #expect(LongformSubtitleRenderer.isHallucinationLine("*Screams*"))
+        #expect(LongformSubtitleRenderer.isHallucinationLine("Gagaga, gagaga, gagagagaga..."))
+        #expect(LongformSubtitleRenderer.isHallucinationLine("ДОБРА ПІЧА"))
         // Одиночное "you" — артефакт декодера
         #expect(LongformSubtitleRenderer.isHallucinationLine("you"))
         #expect(LongformSubtitleRenderer.isHallucinationLine("You"))

@@ -323,9 +323,28 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             buckets[type] = [candidate]
         }
 
+        // Структурные якоря ставятся ДО добора: они часть бюджета, а не добавка
+        // поверх него. Финал фильма и развязка хука — обещания зрителю, и оба
+        // обязаны попасть в монтаж, даже если Director их не выбрал.
+        let usableSegments = TranscriptQualityGate(segments: transcript.segments)
+            .filtered(transcript.segments)
+        Self.ensureFinaleAnchor(
+            &buckets,
+            segments: usableSegments,
+            filmDuration: totalMovieDuration,
+            creditsCutoff: creditsCutoff
+        )
+        Self.ensureHookRevealAnchor(
+            &buckets,
+            hookText: plan.chosenHook,
+            segments: usableSegments,
+            filmDuration: totalMovieDuration,
+            creditsCutoff: creditsCutoff
+        )
+
         fillToBudget(
             &buckets,
-            segments: transcript.segments,
+            segments: usableSegments,
             target: targetDuration,
             creditsCutoff: creditsCutoff
         )
@@ -384,6 +403,237 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             return next.startTime
         }
         return 0
+    }
+
+    // MARK: - Структурные якоря (финал фильма и развязка хука)
+
+    /// Последние 15% фильма — это финал: место, где тема получает ответ.
+    static let finaleActStartRatio: Double = 0.85
+    /// Вес якоря выше добра (0.35) и ниже сильнейшей сцены модели (0.9+):
+    /// бюджет его не режет, пока есть что резать кроме не-featured добра.
+    static let structuralAnchorWeight: Double = 0.65
+    /// Якорь — сцена, а не кусок фильма: короче — обрывок реплики, длиннее — уже не монтаж.
+    static let maxAnchorDuration: Double = 60.0
+    static let minAnchorDuration: Double = 12.0
+    /// Комфортная длина якоря: до неё растём, дальше не жадничаем.
+    static let anchorTargetDuration: Double = 30.0
+
+    /// Гарантирует, что катарсис доходит до финала фильма. Director видит только
+    /// прореженную выборку реплик и систематически ставит пятый акт на середину;
+    /// без якоря последние минуты фильма не входят в эссе вообще.
+    private static func ensureFinaleAnchor(
+        _ buckets: inout [LongformActType: [SelectedMoment]],
+        segments: [TranscriptSegment],
+        filmDuration: Double,
+        creditsCutoff: Double
+    ) {
+        guard filmDuration > 0 else { return }
+        let finaleStart = filmDuration * finaleActStartRatio
+        let allScenes = buckets.values.flatMap { $0 }
+        guard !allScenes.contains(where: { $0.startTime >= finaleStart }) else { return }
+
+        let sorted = segments.sorted { $0.start < $1.start }
+        let finaleSegments = sorted.filter { $0.start >= finaleStart && $0.end <= creditsCutoff }
+        let seed = finaleSegments.max { lhs, rhs in
+            let lhsScore = ThoughtCompletionScorer
+                .evaluateConcludingPhrase(lhs.text, isFinaleAct: true).scoreModifier
+            let rhsScore = ThoughtCompletionScorer
+                .evaluateConcludingPhrase(rhs.text, isFinaleAct: true).scoreModifier
+            if lhsScore != rhsScore { return lhsScore < rhsScore }
+            return lhs.start < rhs.start
+        }
+        guard let seed,
+              let run = dialogueRun(
+                around: seed,
+                in: sorted,
+                lowerBound: finaleStart,
+                upperBound: creditsCutoff
+              )
+        else { return }
+        guard !allScenes.contains(where: {
+            $0.startTime < run.end && $0.endTime > run.start
+        }) else { return }
+
+        appendAnchor(
+            to: &buckets,
+            run: run,
+            role: .catharsis,
+            reason: "Фінал фільму: катарсис"
+        )
+    }
+
+    /// Гарантирует, что строка, которая «оплачивает» обещание хука, попадёт в монтаж.
+    /// Ищем её по содержательным словам хука, а не по догадке модели: если такой
+    /// реплики нет, якоря тоже нет — ничего не сочиняем.
+    private static func ensureHookRevealAnchor(
+        _ buckets: inout [LongformActType: [SelectedMoment]],
+        hookText: String?,
+        segments: [TranscriptSegment],
+        filmDuration: Double,
+        creditsCutoff: Double
+    ) {
+        guard let hookText, filmDuration > 0 else { return }
+        let stems = contentStems(hookText)
+        guard stems.count >= 2 else { return }
+
+        let sorted = segments.sorted { $0.start < $1.start }
+        let searchable = sorted.filter { $0.start < creditsCutoff }
+        guard let seed = hookRevealAnchor(stems: stems, in: searchable) else { return }
+
+        let allScenes = buckets.values.flatMap { $0 }
+        guard !allScenes.contains(where: {
+            $0.startTime < seed.end && $0.endTime > seed.start
+        }) else { return }
+        guard let run = dialogueRun(
+            around: seed,
+            in: sorted,
+            lowerBound: 0,
+            upperBound: creditsCutoff
+        ) else { return }
+
+        let role = actPositionBand(forStartTime: seed.start, filmDuration: filmDuration)
+        appendAnchor(to: &buckets, run: run, role: role, reason: "Розкриття обіцянки хука")
+    }
+
+    private static func appendAnchor(
+        to buckets: inout [LongformActType: [SelectedMoment]],
+        run: TimeSegment,
+        role: LongformActType,
+        reason: String
+    ) {
+        buckets[role, default: []].append(SelectedMoment(
+            startTime: run.start,
+            endTime: run.end,
+            reason: reason,
+            dramaticWeight: structuralAnchorWeight,
+            actRole: role,
+            supports: nil,
+            featured: false
+        ))
+        buckets[role]?.sort { $0.startTime < $1.startTime }
+    }
+
+    /// Акт по позиции реплики в фильме — та же раскладка, что у аналитических долей.
+    static func actPositionBand(
+        forStartTime start: Double,
+        filmDuration: Double
+    ) -> LongformActType {
+        guard filmDuration > 0 else { return .psychology }
+        let ratio = start / filmDuration
+        if ratio < 0.12 { return .hook }
+        if ratio < 0.36 { return .form }
+        if ratio < 0.62 { return .psychology }
+        if ratio < finaleActStartRatio { return .philosophy }
+        return .catharsis
+    }
+
+    /// Содержательные основы слов: служебные слова и короткие частицы не
+    /// доказывают, что реплика — развязка именно этого хука.
+    static func contentStems(_ text: String) -> [String] {
+        let stopwords: Set<String> = [
+            "цей", "ця", "це", "ці", "той", "та", "те", "ті", "вони", "вона", "він",
+            "мене", "тебе", "його", "її", "наш", "ваш", "свій", "своя", "своє", "свої",
+            "який", "яка", "яке", "які", "коли", "тому", "щоб", "якщо", "щось", "ніщо",
+            "дуже", "також", "тільки", "лише", "але", "потім", "зараз", "бути", "буде",
+            "був", "була", "були", "вже", "ось", "там", "тут", "як", "що", "чи",
+            "это", "этот", "эта", "эти", "тот", "он", "она", "они", "мы", "вы",
+            "его", "её", "их", "что", "как", "когда", "чтобы", "если", "уже", "ещё",
+            "или", "но", "по", "на", "до", "из", "за", "для", "от", "под", "над", "про",
+        ]
+        var seen = Set<String>()
+        var stems: [String] = []
+        for token in text.lowercased().split(whereSeparator: { !$0.isLetter }) {
+            let word = String(token)
+            guard word.count >= 4, !stopwords.contains(word) else { continue }
+            let stem = String(word.prefix(5))
+            if seen.insert(stem).inserted { stems.append(stem) }
+        }
+        return stems
+    }
+
+    /// Позднейшая реплика, покрывающая не меньше половины основ хука (минимум две).
+    private static func hookRevealAnchor(
+        stems: [String],
+        in segments: [TranscriptSegment]
+    ) -> TranscriptSegment? {
+        let required = max(2, Int((Double(stems.count) * 0.5).rounded(.up)))
+        var best: TranscriptSegment?
+        var bestHits = 0
+        for segment in segments {
+            let lower = segment.text.lowercased()
+            let hits = stems.reduce(0) { $0 + (lower.contains($1) ? 1 : 0) }
+            guard hits >= required else { continue }
+            if hits > bestHits || (hits == bestHits && segment.start > (best?.start ?? -Double.infinity)) {
+                best = segment
+                bestHits = hits
+            }
+        }
+        return best
+    }
+
+    /// Непрерывный диалоговый запуск вокруг реплики: пауза не длиннее порога сцены,
+    /// не выходим за границы окна и не растягиваемся сверх `maxAnchorDuration`.
+    static func dialogueRun(
+        around seed: TranscriptSegment,
+        in segments: [TranscriptSegment],
+        lowerBound: Double,
+        upperBound: Double
+    ) -> TimeSegment? {
+        guard let seedIndex = segments.firstIndex(where: {
+            abs($0.start - seed.start) < 0.01 && abs($0.end - seed.end) < 0.01
+        }) else { return nil }
+
+        let gapLimit = 6.0
+        var start = max(seed.start, lowerBound)
+        var end = min(seed.end, upperBound)
+        guard end > start else { return nil }
+
+        var backward = seedIndex - 1
+        var forward = seedIndex + 1
+        var backwardOpen = true
+        var forwardOpen = true
+        var useBackward = true
+
+        while end - start < anchorTargetDuration, backwardOpen || forwardOpen {
+            if useBackward {
+                if backward >= 0, segments[backward].end <= start + 0.01,
+                   start - segments[backward].end <= gapLimit {
+                    let candidateStart = max(
+                        segments[backward].start,
+                        max(lowerBound, end - maxAnchorDuration)
+                    )
+                    if candidateStart < start {
+                        start = candidateStart
+                        backward -= 1
+                    } else {
+                        backwardOpen = false
+                    }
+                } else {
+                    backwardOpen = false
+                }
+                useBackward = false
+            } else {
+                if forward < segments.count, segments[forward].start >= end - 0.01,
+                   segments[forward].start - end <= gapLimit {
+                    let candidateEnd = min(
+                        segments[forward].end,
+                        min(upperBound, start + maxAnchorDuration)
+                    )
+                    if candidateEnd > end {
+                        end = candidateEnd
+                        forward += 1
+                    } else {
+                        forwardOpen = false
+                    }
+                } else {
+                    forwardOpen = false
+                }
+                useBackward = true
+            }
+        }
+
+        guard end - start >= minAnchorDuration else { return nil }
+        return TimeSegment(start: start, end: end)
     }
 
     /// Режет целыми сценами: сначала не-featured с минимальным весом, никогда не
@@ -733,7 +983,8 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         targetDuration: Double
     ) async throws -> LongformNarrativeArc {
         let clampedAsk = min(max(targetDuration, 300.0), 900.0)
-        let segments = transcript.segments
+        let filmSegments = transcript.segments
+        let segments = TranscriptQualityGate(segments: filmSegments).filtered(filmSegments)
 
         guard !segments.isEmpty else {
             // Если транскрипт пуст, возвращаем синтетическую тестовую структуру
@@ -744,7 +995,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             )
         }
 
-        let totalMovieDuration = segments.last?.end ?? clampedAsk
+        let totalMovieDuration = filmSegments.last?.end ?? clampedAsk
         let isFullMovie = totalMovieDuration > 1200.0 // >20 мин
 
         // Запрос имеет смысл только относительно длины фильма: 520с с 62-минутного фильма
@@ -775,6 +1026,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         let act1Segs = selectCohesiveSegments(
             from: segments,
             in: act1Window,
+            filmDuration: totalMovieDuration,
             minStartTime: 0.0,
             usedRanges: usedRanges,
             reservedRanges: reservedTail,
@@ -792,6 +1044,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         let act2Segs = selectCohesiveSegments(
             from: segments,
             in: act2Window,
+            filmDuration: totalMovieDuration,
             minStartTime: lastActEnd + 1.0,
             usedRanges: usedRanges,
             reservedRanges: reservedTail,
@@ -808,6 +1061,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         let act3Segs = selectCohesiveSegments(
             from: segments,
             in: act3Window,
+            filmDuration: totalMovieDuration,
             minStartTime: lastActEnd + 1.0,
             usedRanges: usedRanges,
             reservedRanges: reservedTail,
@@ -824,6 +1078,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         let act4Segs = selectCohesiveSegments(
             from: segments,
             in: act4Window,
+            filmDuration: totalMovieDuration,
             minStartTime: lastActEnd + 1.0,
             usedRanges: usedRanges,
             reservedRanges: [],
@@ -1031,6 +1286,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
     private func selectCohesiveSegments(
         from allSegments: [TranscriptSegment],
         in window: ClosedRange<Double>,
+        filmDuration: Double,
         minStartTime: Double = 0.0,
         usedRanges: [TimeSegment] = [],
         reservedRanges: [TimeSegment] = [],
@@ -1042,7 +1298,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         // Отсечка титров: для фильмов длительностью >20 мин (1200с),
         // где последние 5% приходятся на бегущие титры. Короткие фильмы
         // и тестовые данные не имеют титров — отсечка не применяется.
-        let totalDuration = allSegments.last?.end ?? 0
+        let totalDuration = filmDuration
         let hasCredits = totalDuration > 1200.0
         let creditsCutoff = hasCredits ? totalDuration * 0.95 : totalDuration + 1.0
         let searchStart = max(window.lowerBound, minStartTime)
@@ -1057,8 +1313,8 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                 start: searchStart,
                 targetDuration: targetDuration,
                 window: window,
-                reserved: reservedRanges,
-                allSegments: allSegments
+                filmDuration: filmDuration,
+                reserved: reservedRanges
             )
         }
 
@@ -1280,8 +1536,8 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                 start: searchStart,
                 targetDuration: targetDuration,
                 window: window,
-                reserved: reservedRanges,
-                allSegments: allSegments
+                filmDuration: filmDuration,
+                reserved: reservedRanges
             )
         }
 
@@ -1294,8 +1550,8 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                 start: searchStart,
                 targetDuration: targetDuration,
                 window: window,
-                reserved: reservedRanges,
-                allSegments: allSegments
+                filmDuration: filmDuration,
+                reserved: reservedRanges
             )
         }
 
@@ -1354,6 +1610,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             let nextRuns = selectCohesiveSegments(
                 from: allSegments,
                 in: window,
+                filmDuration: filmDuration,
                 minStartTime: searchFloor,
                 usedRanges: extendedUsed + blocked,
                 reservedRanges: reservedRanges,
@@ -1400,12 +1657,12 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         start: Double,
         targetDuration: Double,
         window: ClosedRange<Double>,
-        reserved: [TimeSegment],
-        allSegments: [TranscriptSegment]
+        filmDuration: Double,
+        reserved: [TimeSegment]
     ) -> [TimeSegment] {
         let lower = max(start, window.lowerBound)
         // Отсечка титров: для фильмов длительностью >20 мин (1200с)
-        let totalDuration = allSegments.last?.end ?? window.upperBound
+        let totalDuration = filmDuration
         let hasCredits = totalDuration > 1200.0
         let creditsCutoff = hasCredits ? totalDuration * 0.95 : totalDuration + 1.0
         let filmCeiling = min(

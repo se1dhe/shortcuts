@@ -213,8 +213,8 @@ struct LongformOverlayTypographyTests {
         #expect(LongformSubtitleRenderer.captionPointSize(k: 1.0) == 32.0)
         #expect(LongformSubtitleRenderer.captionPointSize(k: 2.0) == 64.0)
         #expect(LongformSubtitleRenderer.taglinePointSize(k: 1.0) == 20.0)
-        #expect(LongformSubtitleRenderer.actOverlinePointSize(k: 1.0) == 20.0)
-        #expect(LongformSubtitleRenderer.actTitlePointSize(k: 1.0) == 34.0)
+        #expect(LongformSubtitleRenderer.actOverlinePointSize(k: 1.0) == 24.0)
+        #expect(LongformSubtitleRenderer.actTitlePointSize(k: 1.0) == 40.0)
 
         // кегль из помощника и кегль real шрифта — одно и то же (иначе константы разъехались)
         #expect(LongformSubtitleRenderer.themeFont(k: 1.0).pointSize == CGFloat(LongformSubtitleRenderer.themePointSize(k: 1.0)))
@@ -229,11 +229,75 @@ struct LongformOverlayTypographyTests {
         #expect(abs((attrs[.strokeWidth] as? CGFloat ?? 0.0) + 2.0) < 0.001)
         let scaled = LongformSubtitleRenderer.actOverlineAttributes(k: 2.0, accentHex: "#F5D020")
         #expect(abs((scaled[.strokeWidth] as? CGFloat ?? 0.0) + 4.0) < 0.001)
-        #expect((scaled[.font] as? NSFont)?.pointSize == 40.0)
+        #expect((scaled[.font] as? NSFont)?.pointSize == 48.0)
 
         let title = LongformSubtitleRenderer.actTitleAttributes(k: 1.0)
         #expect(abs((title[.strokeWidth] as? CGFloat ?? 0.0) + 2.4) < 0.001)
-        #expect((title[.font] as? NSFont)?.pointSize == 34.0)
+        #expect((title[.font] as? NSFont)?.pointSize == 40.0)
+    }
+
+    @Test("хук набран крупнее слогана и усаживается до трёх строк, а не в стену текста")
+    func testHookTypographyIsBiggerThanTagline() {
+        let attrs = LongformSubtitleRenderer.hookAttributes(k: 1.0)
+        let pointSize = (attrs[.font] as? NSFont)?.pointSize ?? 0
+        #expect(pointSize >= 28.0)
+        #expect(pointSize > LongformSubtitleRenderer.taglinePointSize(k: 1.0))
+
+        let short = LongformSubtitleRenderer.resolvedHookPointSize(
+            text: "Он верил, что он избранный.", k: 1.0, maxWidth: 1440.0)
+        #expect(short == LongformSubtitleRenderer.hookPointSize(k: 1.0))
+
+        let long = LongformSubtitleRenderer.resolvedHookPointSize(
+            text: String(repeating: "Он верил, что он избранный, но правда оказалась проще. ", count: 4),
+            k: 1.0, maxWidth: 1440.0)
+        #expect(long <= LongformSubtitleRenderer.hookPointSize(k: 1.0))
+        #expect(long >= LongformSubtitleRenderer.hookMinPointSize - 0.001)
+    }
+
+    @Test("хук держится 8–10 секунд — дольше cold open и прежних 6 секунд")
+    func testHookStaysOnScreenLongEnough() async throws {
+        let root = await renderer.makeOverlayLayer(
+            renderSize: productionSize,
+            concept: concept(word: "ТЕРПЕНИЕ"),
+            timedPhrases: [TimedSubtitlePhrase(start: 5.0, end: 8.0, text: "Ты держишь руль")],
+            totalDuration: 60.0,
+            hookText: "Он верил, что он избранный. Но правда оказалась проще."
+        )
+        let taglineContainer = try #require(root.sublayers?[2])
+        let fade = try #require(taglineContainer.animation(forKey: "introTaglineFade") as? CAKeyframeAnimation)
+        let visibleUntil = (fade.keyTimes?[3] ?? NSDecimalNumber.zero).doubleValue * fade.duration
+
+        #expect(visibleUntil >= 8.0)
+        #expect(visibleUntil <= 10.0)
+    }
+
+    @Test("длинная реплика делится на куски не короче трёх слов и 1,2 секунды")
+    func testSubtitleChunksAreReadable() {
+        let phrase = TimedSubtitlePhrase(
+            start: 0,
+            end: 6,
+            text: "Один два три четыре пять шесть семь восемь девять десять одиннадцать двенадцать"
+        )
+        let chunks = LongformSubtitleRenderer.chunkTimedPhrases([phrase])
+
+        #expect(chunks.count >= 2)
+        for chunk in chunks {
+            #expect(chunk.text.split(separator: " ").count >= 3,
+                    "кусок «\(chunk.text)» короче трёх слов")
+            #expect(chunk.end - chunk.start >= 1.2 - 0.001,
+                    "кусок «\(chunk.text)» висит \(chunk.end - chunk.start) с")
+        }
+    }
+
+    @Test("остаток длинной реплики не превращается в карточку из одного-двух слов")
+    func testNoSingleWordLeftoverChunk() {
+        let phrase = TimedSubtitlePhrase(
+            start: 0, end: 6, text: "Раз два три четыре пять шесть"
+        )
+        let chunks = LongformSubtitleRenderer.chunkTimedPhrases([phrase])
+
+        #expect(chunks.count == 2)
+        #expect(chunks.allSatisfy { $0.text.split(separator: " ").count >= 3 })
     }
 
     @Test("якорное слово усаживается, чтобы не занять больше 60% ширины кадра")

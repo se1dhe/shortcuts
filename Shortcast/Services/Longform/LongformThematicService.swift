@@ -131,9 +131,13 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
     /// покрытия сюжета при минимуме символов. `targetSegmentsCount` больше не
     /// используется как квота (оставлен для совместимости сигнатуры).
     static func stratifiedThematicSample(from transcript: Transcript, targetSegmentsCount: Int = 0) -> String {
-        let segments = transcript.segments.filter { seg in
-            !seg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
+        // Director не должен видеть субтитровые подписи, звуковые описания и
+        // чужие языки: иначе он честно выбирает их как «сцены фильма».
+        let segments = TranscriptQualityGate(segments: transcript.segments)
+            .filtered(transcript.segments)
+            .filter { seg in
+                !seg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
         guard !segments.isEmpty else { return "" }
 
         var lines: [String] = []

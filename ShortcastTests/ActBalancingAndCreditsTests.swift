@@ -342,7 +342,7 @@ struct ActBalancingAndCreditsTests {
             planned(500, 600, .form),
             planned(900, 1000, .psychology),
             planned(1400, 1500, .philosophy),
-            planned(1900, 2000, .catharsis, weight: 0.95, featured: true)
+            planned(2100, 2200, .catharsis, weight: 0.95, featured: true)
         ]
         let plan = EssayPlan(targetDuration: 480)
 
@@ -393,6 +393,133 @@ struct ActBalancingAndCreditsTests {
             #expect(next.start >= previous.end - 0.01,
                     "Сцены \(previous) и \(next) пересекаются")
         }
+    }
+
+    /// Добор не имеет права лечить недобор хронометража галлюцинациями Whisper:
+    /// без гейта ближайшие «реплики» — это субтитровые подписи и звуковые описания.
+    @Test func analyticArcNeverFillsWithHallucinatedTranscriptRuns() async throws {
+        let sceneRanges: [(start: Double, end: Double, role: LongformActType)] = [
+            (200, 230, .hook), (500, 530, .form), (900, 930, .psychology),
+            (1400, 1430, .philosophy), (1900, 1930, .catharsis),
+        ]
+        var segments = sceneRanges.map {
+            TranscriptSegment(
+                start: $0.start, end: $0.end,
+                text: "Справжня реплика про вибір, страх і ціну свободи."
+            )
+        }
+        let junkTexts = [
+            "Субтитры создавал DimaTorzok",
+            "ТРЕВОЖНАЯ МУЗЫКА",
+            "ДОБРА ПІЧА",
+        ]
+        var junkRanges: [(start: Double, end: Double)] = []
+        var junkIndex = 0
+        for start in stride(from: 80.0, to: 2_300.0, by: 100.0) {
+            let insideScene = sceneRanges.contains {
+                start < $0.end + 6 && start + 20 > $0.start - 6
+            }
+            guard !insideScene else { continue }
+            segments.append(TranscriptSegment(
+                start: start, end: start + 9,
+                text: junkTexts[junkIndex % junkTexts.count]
+            ))
+            segments.append(TranscriptSegment(
+                start: start + 10, end: start + 19,
+                text: junkTexts[(junkIndex + 1) % junkTexts.count]
+            ))
+            junkRanges.append((start, start + 19))
+            junkIndex += 1
+        }
+
+        let moments = sceneRanges.enumerated().map { index, scene in
+            planned(scene.start, scene.end, scene.role,
+                    weight: index == 0 || index == 4 ? 0.9 : 0.5,
+                    featured: index == 0 || index == 4)
+        }
+        let arc = try await LongformNarrativeDirector().buildArc(
+            from: Transcript(segments: segments, language: "uk"),
+            concept: analyticConcept,
+            selectedMoments: moments,
+            movieTitle: "Test",
+            targetDuration: 480,
+            essayPlan: EssayPlan(targetDuration: 480)
+        )
+
+        let selected = arc.acts.flatMap(\.segments)
+        for scene in selected {
+            for junk in junkRanges {
+                #expect(!(scene.start < junk.end && scene.end > junk.start),
+                        "В эссе попал мусорный запуск [\(junk.start), \(junk.end)]")
+            }
+        }
+        let total = selected.reduce(0.0) { $0 + $1.duration }
+        #expect(total < 300, "Добор набрал \(total) с из мусора вместо честных 150 с")
+    }
+
+    /// Катарсис обязан доходить до финала фильма: в прошлой сборке акт V был
+    /// спором на 11-й минуте, а последние 36 минут фильма не вошли вообще.
+    @Test func analyticArcReachesTheFilmFinale() async throws {
+        let transcript = dialogueTranscript(until: 2400)
+        let moments = [
+            planned(200, 230, .hook, weight: 0.9, featured: true),
+            planned(400, 430, .form),
+            planned(900, 930, .psychology),
+            planned(1400, 1430, .philosophy),
+            planned(1700, 1730, .catharsis, weight: 0.95, featured: true),
+        ]
+        let arc = try await LongformNarrativeDirector().buildArc(
+            from: transcript,
+            concept: analyticConcept,
+            selectedMoments: moments,
+            movieTitle: "Test",
+            targetDuration: 480,
+            essayPlan: EssayPlan(targetDuration: 480)
+        )
+
+        let finaleStart = 2400.0 * 0.85
+        let catharsis = arc.acts.first { $0.type == .catharsis }
+        let reachesFinale = (catharsis?.segments ?? []).contains { $0.start >= finaleStart }
+        #expect(reachesFinale, "Катарсис не начинается в последних 15% фильма: \(catharsis?.segments ?? [])")
+    }
+
+    /// Хук обещает зрителю ответ. Если строка-развязка существует в транскрипте,
+    /// она обязана попасть в монтаж, а не остаться за кадром.
+    @Test func analyticArcCoversTheLineThatPaysOffTheHook() async throws {
+        var segments = stride(from: 0.0, to: 2400.0, by: 10.0).map { start in
+            TranscriptSegment(start: start, end: start + 9.0, text: "Репліка \(Int(start))")
+        }
+        let reveal = TranscriptSegment(
+            start: 2000, end: 2009,
+            text: "Серійне ім'я — це серійний номер. Він народився, щоб служити."
+        )
+        segments.append(reveal)
+        segments.sort { $0.start < $1.start }
+
+        let moments = [
+            planned(200, 230, .hook, weight: 0.9, featured: true),
+            planned(400, 430, .form),
+            planned(900, 930, .psychology),
+            planned(1400, 1430, .philosophy),
+            planned(1700, 1730, .catharsis, weight: 0.95, featured: true),
+        ]
+        let plan = EssayPlan(
+            hookVariants: [.init(text: "Це серійне ім'я. Це серійний номер.")],
+            targetDuration: 480
+        )
+        let arc = try await LongformNarrativeDirector().buildArc(
+            from: Transcript(segments: segments, language: "uk"),
+            concept: analyticConcept,
+            selectedMoments: moments,
+            movieTitle: "Test",
+            targetDuration: 480,
+            essayPlan: plan
+        )
+
+        let covered = arc.acts.flatMap(\.segments).contains {
+            $0.start < reveal.end && $0.end > reveal.start
+        }
+        #expect(covered, "Развязка хука [2000, 2009] не вошла в эссе")
     }
 
     /// Промпт обязан требовать сцены, из которых вообще можно собрать

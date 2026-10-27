@@ -104,6 +104,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         let introPadding: Double = audioSettings.coldOpenEnabled ? 2.5 : 0.0
         var insertTime = CMTime(seconds: introPadding, preferredTimescale: 600)
         var timedPhrases: [TimedSubtitlePhrase] = []
+        let qualityGate = TranscriptQualityGate(segments: transcript.segments)
         var sceneCutPoints: [Double] = [introPadding]
         var cutTransitions: [LongformCutTransition] = []
         var actStartTimes: [Double] = []
@@ -161,7 +162,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
 
                 // Сопоставляем фразы из транскрипта с новым таймлайном
                 let matchingSegments = transcript.segments.filter {
-                    $0.end > segment.start && $0.start < segment.end
+                    $0.end > segment.start && $0.start < segment.end && qualityGate.isUsable($0)
                 }
                 for s in matchingSegments {
                     let phraseStart = max(insertedStart, insertedStart + (s.start - segment.start))

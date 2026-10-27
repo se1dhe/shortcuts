@@ -165,9 +165,11 @@ final class LongformActTitleService: LongformActTitling, Sendable {
     /// вложенность — реплика на стыке двух сегментов не имеет права выпасть из обоих.
     static func actDialogue(act: LongformAct, transcript: Transcript) -> [String] {
         guard !act.segments.isEmpty else { return [] }
+        let gate = TranscriptQualityGate(segments: transcript.segments)
         var lines: [String] = []
         for phrase in transcript.segments {
-            guard act.segments.contains(where: { phrase.end > $0.start && phrase.start < $0.end })
+            guard act.segments.contains(where: { phrase.end > $0.start && phrase.start < $0.end }),
+                  gate.isUsable(phrase)
             else { continue }
             let text = phrase.text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty { lines.append(text) }
@@ -355,11 +357,57 @@ final class LongformActTitleService: LongformActTitling, Sendable {
         actDialogue: [String]
     ) -> String? {
         guard !proposal.title.isEmpty,
-              proposal.title.count <= maxTitleGraphemes
+              proposal.title.count <= maxTitleGraphemes,
+              isTitleInMaterialLanguage(proposal.title, quotedLine: proposal.quotedLine)
         else { return nil }
         let needle = normalizedGrounding(proposal.quotedLine)
         guard !needle.isEmpty else { return nil }
         return actDialogue.first { normalizedGrounding($0).contains(needle) }
+    }
+
+    /// Название акта видит украинский зритель: английское слово поверх украинской
+    /// реплики или русская орфография (ы/э/ъ/ё) — это чужой язык, а не название.
+    static func isTitleInMaterialLanguage(_ title: String, quotedLine: String) -> Bool {
+        let hasLetter = title.contains { $0.isLetter }
+        guard hasLetter else { return false }
+        if title.contains(where: { $0.isNumber }) && title.contains(":") { return false }
+        let lower = title.lowercased()
+        if genericTitleWords.contains(lower.trimmingCharacters(in: .punctuationCharacters)) { return false }
+
+        let quoteIsCyrillic = quotedLine.contains { character in
+            character.unicodeScalars.contains { isCyrillic($0) }
+        }
+        let titleHasCyrillic = title.contains { character in
+            character.unicodeScalars.contains { isCyrillic($0) }
+        }
+        if quoteIsCyrillic, !titleHasCyrillic { return false }
+
+        if isUkrainianFlavored(quotedLine), lower.contains(where: { russianOnlyLetters.contains($0) }) {
+            return false
+        }
+        return true
+    }
+
+    /// Название — это авторская формулировка, а не цитата: доказывает его
+    /// `quotedLine`, а не совпадение слов с названием.
+
+    private static let russianOnlyLetters: Set<Character> = ["ы", "э", "ъ", "ё"]
+
+    private static let genericTitleWords: Set<String> = [
+        "акт", "сцена", "частина", "фрагмент", "уривок", "act", "scene", "part", "clip",
+    ]
+
+    /// Украинская орфография без русских маркеров — только тогда русские буквы в
+    /// названии означают чужой язык; для русского диалога такое название законно.
+    private static func isUkrainianFlavored(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        let hasUkrainian = lower.contains { "іїєґ".contains($0) }
+        let hasRussian = lower.contains(where: { russianOnlyLetters.contains($0) })
+        return hasUkrainian && !hasRussian
+    }
+
+    private static func isCyrillic(_ scalar: Unicode.Scalar) -> Bool {
+        (0x0400...0x052F).contains(scalar.value) || (0x2DE0...0x2DFF).contains(scalar.value)
     }
 
     /// Сравнение: регистр и последовательности пробелов — не изменение реплики;
@@ -396,20 +444,14 @@ final class LongformActTitleService: LongformActTitling, Sendable {
             return (template.title, ActTitleProvenance(source: .template, evidence: nil, modelID: nil))
         }
         let keywords = LongformNarrativeDirector().actDramaticKeywords(for: act.type)
+        let isFinale = act.type == .catharsis
         var bestText: String?
-        var bestHits = -1
-        var bestCompletion = -Double.greatestFiniteMagnitude
+        var bestScore = -Double.greatestFiniteMagnitude
         for line in lines {
-            let lower = line.lowercased()
-            var hits = 0
-            for keyword in keywords where lower.contains(keyword) { hits += 1 }
-            let completion = ThoughtCompletionScorer
-                .evaluateConcludingPhrase(line, isFinaleAct: act.type == .catharsis)
-                .scoreModifier
-            if hits > bestHits || (hits == bestHits && completion > bestCompletion) {
+            let score = fallbackLineScore(line, keywords: keywords, isFinaleAct: isFinale)
+            if score > bestScore {
                 bestText = line
-                bestHits = hits
-                bestCompletion = completion
+                bestScore = score
             }
         }
         guard let winner = bestText else {
@@ -421,12 +463,46 @@ final class LongformActTitleService: LongformActTitling, Sendable {
         )
     }
 
+    /// Реплика как заголовок: законченная мысль, на языке эссе и в размер карточки.
+    /// Ключи акта — только бонус: русская техническая строка с ключом не имеет
+    /// права обойти живую украинскую реплику без ключа.
+    static func fallbackLineScore(
+        _ line: String,
+        keywords: [String],
+        isFinaleAct: Bool
+    ) -> Double {
+        var score = ThoughtCompletionScorer
+            .evaluateConcludingPhrase(line, isFinaleAct: isFinaleAct)
+            .scoreModifier
+        let lower = line.lowercased()
+        for keyword in keywords where lower.contains(keyword) { score += 60 }
+
+        let wordCount = lower.split(whereSeparator: { !$0.isLetter }).count
+        if wordCount < 3 { score -= 80 }
+        if wordCount > 14 { score -= 60 }
+        if line.count <= maxTitleGraphemes { score += 80 }
+
+        let hasUkrainian = lower.contains { "іїєґ".contains($0) }
+        let hasRussian = lower.contains(where: { russianOnlyLetters.contains($0) })
+        if hasUkrainian && !hasRussian { score += 150 }
+        if hasRussian { score -= 250 }
+        return score
+    }
+
     /// Обрезка так, чтобы влезло в карточку акта: \(maxTitleGraphemes) знаков вместе с «…»
+    /// Режется по границе слова: «исчеза…» — это обрубок, а не название.
     static func truncateToTitleCards(_ line: String) -> String {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count > maxTitleGraphemes else { return trimmed }
         let head = String(trimmed.prefix(maxTitleGraphemes - 1))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return head + "…"
+        guard let lastSpace = head.lastIndex(where: { $0.isWhitespace }) else {
+            // Одно длинное слово: другой границы, кроме буквенной, не существует
+            return head + "…"
+        }
+        let cut = String(head[..<lastSpace])
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(
+                CharacterSet(charactersIn: ",;:—–-")))
+        guard !cut.isEmpty else { return head + "…" }
+        return cut + "…"
     }
 }

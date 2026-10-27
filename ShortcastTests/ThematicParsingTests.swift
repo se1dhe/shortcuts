@@ -393,6 +393,28 @@ struct ThematicParsingTests {
             == "[0.0] Он замолчал, потому что говорить было не о чем. Тишина — тоже ответ.")
     }
 
+    @Test("Whisper junk never reaches the Director's transcript sample")
+    func testSampleDropsHallucinationsBeforeTheDirectorSeesThem() {
+        let transcript = Transcript(segments: [
+            TranscriptSegment(start: 0.0, end: 4.0, text: "Tekstet av Nicolai Winther"),
+            TranscriptSegment(start: 10.0, end: 14.0, text: "Так, я тебе слухаю."),
+            TranscriptSegment(start: 20.0, end: 24.0, text: "♪♪"),
+            TranscriptSegment(start: 30.0, end: 34.0, text: "Субтитры создавал DimaTorzok"),
+            TranscriptSegment(start: 40.0, end: 44.0, text: "Хочеш прогулятись?"),
+            TranscriptSegment(start: 50.0, end: 54.0, text: "Gå inn i fjellet."),
+            TranscriptSegment(start: 60.0, end: 64.0, text: "Дитя, виношене в утробі…"),
+        ], language: "uk")
+
+        let sample = LongformThematicService.stratifiedThematicSample(from: transcript)
+
+        #expect(sample.contains("Так, я тебе слухаю."))
+        #expect(sample.contains("Хочеш прогулятись?"))
+        #expect(sample.contains("Дитя, виношене в утробі…"))
+        for junk in ["Tekstet", "♪♪", "Субтитры создавал", "Gå inn"] {
+            #expect(!sample.contains(junk), "В промпт Director'а попал мусор: \(junk)")
+        }
+    }
+
     @Test("an empty transcript yields an empty sample")
     func testEmptyTranscriptYieldsEmptySample() {
         #expect(LongformThematicService.stratifiedThematicSample(

@@ -144,10 +144,11 @@ fileprivate func longformRGB(hue: Double, saturation: Double, brightness: Double
 ///    - Плавное появление (fade-in 0.10с) и мягкое затухание (fade-out 0.10с) по таймкодам реплик
 ///    - Фирменный акцент Shortcast: Russo One 32pt, четкая обводка (-3.6) и кино-тень;
 ///      акцентный цвет принудительно поднимается до WCAG AA 4.5:1 против кадра (плашки запрещены)
-/// 3. Вступительный подзаголовок темы (Intro Hook, 0.0с – 4.5с):
-///    - Золотая линия и философский слоган (20pt) под центральным словом, плавно затухающие к 4.5с
+/// 3. Вступительный подзаголовок темы (Intro Hook, 0.0с – 4.5с / 9.2с с хуком):
+///    - Золотая линия и философский слоган (20pt) под центральным словом, плавно затухающие к 4.5с;
+///      хук эссе — крупнее (30pt, авто-усадка до трёх строк) и держится до 9.2с
 /// 4. Маркеры драматургических актов (Act Chapter Cards):
-///    - Карточки смены актов («— ЧАСТЬ II —» 20pt с обводкой + название 34pt), чистый текст без рамок
+///    - Карточки смены актов («— ЧАСТЬ II —» 24pt с обводкой + название 40pt), чистый текст без рамок
 ///
 /// Все кегли, обводки, трекинги, тени и отступы объявлены один раз в разделе
 /// «Единый источник типографики» и масштабируются множителем k = renderSize.height / 1080.0,
@@ -168,10 +169,18 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
     static let captionBasePointSize: Double = 32.0
     /// Эталонный кегль вступительного слогана
     static let taglineBasePointSize: Double = 20.0
+    /// Эталонный кегль хука: это первая мысль эссе, а не подпись под словом
+    static let hookBasePointSize: Double = 30.0
+    /// Пол авто-усадки хука: длинный хук ужимается до трёх строк, но не исчезает
+    static let hookMinPointSize: Double = 22.0
+    /// Хук держится дольше cold open: 0,8 с проявление и 9,2 с до затухания
+    static let hookFadeInDuration: Double = 0.8
+    static let hookHoldDuration: Double = 8.4
+    static let hookFadeOutDuration: Double = 9.2
     /// Эталонный кегль надстрочника карточки акта («— ЧАСТЬ II —»)
-    static let actOverlineBasePointSize: Double = 20.0
+    static let actOverlineBasePointSize: Double = 24.0
     /// Эталонный кегль названия главы в карточке акта
-    static let actTitleBasePointSize: Double = 34.0
+    static let actTitleBasePointSize: Double = 40.0
     /// Эталонный кегль финального CTA
     static let ctaBasePointSize: Double = 30.0
 
@@ -188,6 +197,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
     static func themePointSize(k: Double) -> Double { themeBasePointSize * k }
     static func captionPointSize(k: Double) -> Double { captionBasePointSize * k }
     static func taglinePointSize(k: Double) -> Double { taglineBasePointSize * k }
+    static func hookPointSize(k: Double) -> Double { hookBasePointSize * k }
     static func actOverlinePointSize(k: Double) -> Double { actOverlineBasePointSize * k }
     static func actTitlePointSize(k: Double) -> Double { actTitleBasePointSize * k }
     static func ctaPointSize(k: Double) -> Double { ctaBasePointSize * k }
@@ -205,6 +215,13 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
 
     static func taglineFont(k: Double) -> NSFont {
         NSFont.systemFont(ofSize: CGFloat(taglinePointSize(k: k)), weight: .medium)
+    }
+
+    static func hookFont(k: Double, pointSize: Double? = nil) -> NSFont {
+        NSFont.systemFont(
+            ofSize: CGFloat(pointSize ?? hookPointSize(k: k)),
+            weight: .semibold
+        )
     }
 
     static func actOverlineFont(k: Double) -> NSFont {
@@ -270,6 +287,42 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             .shadow: cinematicShadow(blur: 10.0 * k, offsetY: -2.0 * k, alpha: 0.90),
             .kern: CGFloat(1.8 * k)
         ]
+    }
+
+    /// Атрибуты хука: крупнее слогана и чуть плотнее, чтобы первая мысль читалась
+    /// как заявление, а не как подпись под словом темы
+    static func hookAttributes(k: Double, pointSize: Double? = nil) -> [NSAttributedString.Key: Any] {
+        [
+            .font: hookFont(k: k, pointSize: pointSize),
+            .foregroundColor: NSColor(hex: "#F2F2F4") ?? .white,
+            .strokeColor: NSColor.black,
+            .strokeWidth: CGFloat(-2.0 * k),
+            .paragraphStyle: centerParagraph(),
+            .shadow: cinematicShadow(blur: 12.0 * k, offsetY: -2.0 * k, alpha: 0.92),
+            .kern: CGFloat(0.6 * k)
+        ]
+    }
+
+    /// Авто-усадка хука: старт `hookPointSize(k)` (30·k), пока текст не уложится
+    /// в три строки; пол `hookMinPointSize·k`. Длинный хук ужимается, но не режется.
+    static func resolvedHookPointSize(text: String, k: Double, maxWidth: Double) -> Double {
+        let hook = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !hook.isEmpty else { return hookPointSize(k: k) }
+        let minSize = hookMinPointSize * k
+        let cap = max(1.0, maxWidth)
+        var pointSize = hookPointSize(k: k)
+        for _ in 0..<6 {
+            let attributes = hookAttributes(k: k, pointSize: pointSize)
+            let bounding = NSAttributedString(string: hook, attributes: attributes).boundingRect(
+                with: CGSize(width: cap, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading]
+            )
+            let font = attributes[.font] as? NSFont
+            let lineHeight = ceil(font?.boundingRectForFont.height ?? CGFloat(pointSize * 1.2))
+            if bounding.height <= lineHeight * 3.0 + 1.0 || pointSize <= minSize { break }
+            pointSize = max(minSize, pointSize - 2.0 * k)
+        }
+        return pointSize
     }
 
     /// Атрибуты надстрочника акта: раньше был единственный текст в app вообще без обводки
@@ -341,14 +394,14 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         (renderSize.height - (textSize.height + CGFloat(20.0 * k))) / 2.0
     }
 
-    /// Авто-усадка названия акта: старт `actTitlePointSize(k)` (34·k), пол 24·k, текст обязан
+    /// Авто-усадка названия акта: старт `actTitlePointSize(k)` (40·k), пол 28·k, текст обязан
     /// влезть в `maxWidth` НЕ БОЛЕЕ ЧЕМ В ДВЕ СТРОКИ — при 34pt вторая строка названия
     /// залезает в верхнюю литербокс-полосу карточки. Измерение — теми же атрибутами, что
     /// рисует карточка (Russo One, трекинг 3.0·k, обводка −2.4·k); передавать ровно тот
     /// текст, что рисуется, вместе с кавычками-«ёлочками». Идеал усадки общий с
     /// `resolvedThemePointSize`, чтобы в repo оставался ОДИН приём «усаживаем, чтобы влезло».
     static func resolvedActTitlePointSize(text: String, k: Double, maxWidth: Double) -> Double {
-        let minSize = 24.0 * k
+        let minSize = 28.0 * k
         let cap = max(1.0, maxWidth)
         let title = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return actTitlePointSize(k: k) }
@@ -404,7 +457,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
 
         let hook = hookText?.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasHook = !(hook ?? "").isEmpty
-        let introEnd = hasHook ? 6.2 : 4.5
+        let introEnd = hasHook ? Self.hookFadeOutDuration : 4.5
 
         // 1. Центральное якорное слово концепта (висит весь фильм, плавно растворяется в финале)
         let (conceptLayer, conceptY, _) = buildCentralConceptLayer(
@@ -598,7 +651,15 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         return resultLines
     }
 
-    private func chunkTimedPhrases(_ phrases: [TimedSubtitlePhrase]) -> [TimedSubtitlePhrase] {
+    /// Минимальная длительность куска субтитра: короче — глаз не успевает прочитать.
+    static let minSubtitleChunkDuration: Double = 1.2
+    /// Минимум слов в куске: «и вот» на экране — не субтитр, а обрывок.
+    static let minSubtitleChunkWords: Int = 3
+
+    /// Делит длинную реплику на читаемые куски. Число кусков ограничено и словами,
+    /// и временем: остаток из одного-двух слов приклеивается к соседу, а не висит
+    /// отдельной карточкой на 0,3 секунды (так в прошлой сборке появлялись «Да.», «Он.»).
+    static func chunkTimedPhrases(_ phrases: [TimedSubtitlePhrase]) -> [TimedSubtitlePhrase] {
         var result: [TimedSubtitlePhrase] = []
         for phrase in phrases {
             let clean = phrase.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -609,38 +670,27 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
                 continue
             }
 
-            // Разбиваем длинную фразу на ритмичные порции по 3-5 слов (кино-ритм)
-            var chunks: [[String]] = []
-            var currentChunk: [String] = []
-            var currentLen = 0
-
-            for word in words {
-                if !currentChunk.isEmpty && (currentChunk.count >= 4 || currentLen + word.count + 1 > 34) {
-                    chunks.append(currentChunk)
-                    currentChunk = [word]
-                    currentLen = word.count
-                } else {
-                    currentChunk.append(word)
-                    currentLen += word.count + 1
-                }
-            }
-            if !currentChunk.isEmpty {
-                chunks.append(currentChunk)
-            }
-
-            let totalChars = max(1, clean.count)
             let totalDur = phrase.end - phrase.start
-            var runningTime = phrase.start
+            let desired = max(1, Int((Double(words.count) / 5.0).rounded(.up)))
+            let byWords = max(1, words.count / minSubtitleChunkWords)
+            let byDuration = max(1, Int(totalDur / minSubtitleChunkDuration))
+            let chunkCount = max(1, min(desired, min(byWords, byDuration)))
+            let chunkDur = totalDur / Double(chunkCount)
 
-            for chunk in chunks {
-                let chunkText = chunk.joined(separator: " ")
-                let chunkFraction = Double(chunkText.count) / Double(totalChars)
-                let chunkDur = max(0.45, totalDur * chunkFraction)
-                let chunkEnd = min(phrase.end, runningTime + chunkDur)
-                if chunkEnd > runningTime {
-                    result.append(TimedSubtitlePhrase(start: runningTime, end: chunkEnd, text: chunkText))
+            var startIndex = 0
+            for chunkIndex in 0..<chunkCount {
+                let remainingChunks = chunkCount - chunkIndex
+                let remainingWords = words.count - startIndex
+                let take = max(1, Int((Double(remainingWords) / Double(remainingChunks)).rounded(.up)))
+                let text = words[startIndex..<(startIndex + take)].joined(separator: " ")
+                let chunkStart = phrase.start + Double(chunkIndex) * chunkDur
+                let chunkEnd = chunkIndex == chunkCount - 1
+                    ? phrase.end
+                    : chunkStart + chunkDur
+                if chunkEnd > chunkStart {
+                    result.append(TimedSubtitlePhrase(start: chunkStart, end: chunkEnd, text: text))
                 }
-                runningTime = chunkEnd
+                startIndex += take
             }
         }
         return result
@@ -712,7 +762,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         let subAttrs = Self.captionAttributes(k: k, accentHex: concept.accentColorHex)
 
         let maxTextWidth = min(W * 0.78, CGFloat(1240.0 * k))
-        let chunked = chunkTimedPhrases(timedPhrases)
+        let chunked = Self.chunkTimedPhrases(timedPhrases)
         // Фактическая нижняя граница самой нижней реплики — знак канала отступает от неё,
         // а не от выдуманного запаса.
         var lowestCaptionY = CGFloat.greatestFiniteMagnitude
@@ -724,7 +774,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             // одиночные «♪» / «you» и прочие артефакты декодера не выжигаются на экран.
             guard !Self.isHallucinationLine(cleanText) else { continue }
             guard !cleanText.isEmpty, phrase.end > phrase.start else { continue }
-            // Не показываем субтитры во время вступительной заставки (4.5с без хука, 6.2с с хуком),
+            // Не показываем субтитры во время вступительной заставки (4.5с без хука, 9.2с с хуком),
             // чтобы не перекрывать тезис
             guard phrase.end > introEnd else { continue }
 
@@ -788,7 +838,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         return (container, max(0, referenceBottom - Self.subtitleLogoClearance * CGFloat(k)))
     }
 
-    // MARK: - 3. Вступительный подзаголовок темы / хук (0.0с – 4.5с / 6.0с)
+    // MARK: - 3. Вступительный подзаголовок темы / хук (0.0с – 4.5с / 9.2с)
 
     private func buildIntroTaglineLayer(
         renderSize: CGSize,
@@ -823,12 +873,20 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         // Подзаголовок / тезис / хук размещается строго ПОД золотой чертой с зазором
         let taglineText = hasHook ? hook! : (concept.tagline.isEmpty ? concept.philosophicalPremise : concept.tagline)
         if !taglineText.isEmpty {
-            let subAttrs = Self.taglineAttributes(k: k)
+            // Хук — первая мысль эссе и набирается крупнее слогана; длинный ужимается
+            // до трёх строк, чтобы не превратиться в стену текста.
+            let maxTaglineW = min(W * 0.75, CGFloat(960.0 * k))
+            let hookSize = hasHook
+                ? Self.resolvedHookPointSize(text: taglineText, k: k, maxWidth: Double(maxTaglineW))
+                : Self.hookPointSize(k: k)
+            let subAttrs = hasHook
+                ? Self.hookAttributes(k: k, pointSize: hookSize)
+                : Self.taglineAttributes(k: k)
 
             let subStr = NSAttributedString(string: taglineText, attributes: subAttrs)
-            // Хук — 1–2 предложения: держим в пределах трёх строк, как и задумано карточкой
-            let maxTaglineW = min(W * 0.75, CGFloat(960.0 * k))
-            let maxTaglineH = hasHook ? CGFloat(3.0 * Self.taglinePointSize(k: k) * 1.6 + 16.0 * k) : CGFloat(160.0)
+            let maxTaglineH = hasHook
+                ? CGFloat(3.0 * hookSize * 1.6 + 16.0 * k)
+                : CGFloat(160.0)
             let boundingRect = subStr.boundingRect(
                 with: CGSize(width: maxTaglineW, height: maxTaglineH),
                 options: [.usesLineFragmentOrigin, .usesFontLeading]
@@ -845,10 +903,10 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             container.addSublayer(subLayer)
         }
 
-        // Анимация: хук держится до 6.0с, прежний слоган — до 4.2с
-        let tFadeIn = 0.8 / t
-        let tHold = (hasHook ? 5.2 : 3.2) / t
-        let tFadeOut = (hasHook ? 6.0 : 4.2) / t
+        // Анимация: хук держится 9,2с (первая мысль эссе), прежний слоган — до 4,2с
+        let tFadeIn = (hasHook ? Self.hookFadeInDuration : 0.8) / t
+        let tHold = (hasHook ? Self.hookHoldDuration : 3.2) / t
+        let tFadeOut = (hasHook ? Self.hookFadeOutDuration : 4.2) / t
 
         let anim = CAKeyframeAnimation(keyPath: "opacity")
         anim.values = [0.0, 1.0, 1.0, 0.0, 0.0]
@@ -1175,30 +1233,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
     ///и которые нельзя выжигать на экран как субтитры. Проверка до рендера:
     ///если фраза совпадает с известным артефактом декодера, она пропускается.
     static func isHallucinationLine(_ text: String) -> Bool {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return true }
-
-        // Канонические галлюцинации подписчиков (французский, норвежский, шведский)
-        let knownHallucinations = [
-            "sous-titres par lavachesquid",
-            "tekstet av nicolai winther",
-            "undertexter av nicolai winther",
-        ]
-        if knownHallucinations.contains(trimmed.lowercased()) {
-            return true
-        }
-
-        // Строки, состоящие только из музыкальных символов (♪) и пробелов
-        let musicOnly = trimmed.unicodeScalars.allSatisfy { scalar in
-            let v: UInt32 = scalar.value
-            return v == 0x266A || v == 0x266B || CharacterSet.whitespaces.contains(scalar)
-        }
-        if musicOnly { return true }
-
-        // Одиночное "you" / "You" — артефакт декодера Whisper на тишине
-        if trimmed.lowercased() == "you" { return true }
-
-        return false
+        TranscriptQualityGate.isJunkLine(text)
     }
 
     // MARK: - Helpers

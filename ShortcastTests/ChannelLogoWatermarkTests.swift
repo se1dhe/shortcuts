@@ -36,7 +36,7 @@ struct ChannelLogoWatermarkTests {
 
     // MARK: - Эссе: номинальный размер и центрирование
 
-    @Test("номинальный знак — 11% высоты кадра, квадрат, по горизонтали центрирован")
+    @Test("номинальный знак — 11% высоты кадра, квадрат, по центру у нижнего края")
     func testNominalSizeIsElevenPercentAndCentered() throws {
         let rect = try #require(ChannelLogoPlacement.essay(
             renderSize: essay, subtitleBottom: 500, bottomBarHeight: 60, style: style
@@ -45,9 +45,9 @@ struct ChannelLogoWatermarkTests {
         #expect(abs(rect.width - nominal) < 0.001)
         #expect(abs(rect.height - nominal) < 0.001)
         #expect(abs(rect.midX - essay.width / 2) < 0.001)
-        // Верх знака отстоит от субтитров ровно на gap (24·k), низ — на edgeInset над летбоксом.
-        #expect(abs(rect.maxY - (500 - style.gapBelowSubtitles)) < 0.001)
-        #expect(rect.minY >= 60 + style.edgeInset - 0.001)
+        // Опирается на верх леттбокса + edgeInset, а до субтитров оставляет запас gap.
+        #expect(abs(rect.minY - (60 + style.edgeInset)) < 0.001)
+        #expect(rect.maxY <= 500 - style.gapBelowSubtitles + 0.001)
     }
 
     @Test("полный размер знака остаётся при одной и при трёх строках субтитров")
@@ -63,42 +63,53 @@ struct ChannelLogoWatermarkTests {
         }
     }
 
-    @Test("четыре строки + летбокс: знак ужимается, но не ниже пола 0.06·H")
-    func testShrinkAtFourLines() throws {
+    @Test("четыре строки + летбокс: знак остаётся номинальным и не трогает субтитры")
+    func testFourLinesKeepNominalLogoAboveLetterbox() throws {
         let y = conceptY("ТЕРПІННЯ", renderSize: essay)
         let bottomBar = 0.135 * essay.height // реальный летбокс 16:9-исходника в 9:16-монтаже
         let rect = try #require(LongformSubtitleRenderer.essayLogoBand(
             renderSize: essay, conceptY: y, lines: 4, bottomBarHeight: bottomBar, style: style
         ))
         let nominal = style.sizeFraction * essay.height
-        #expect(rect.height < nominal, "при нехватке места знак обязан ужаться")
-        #expect(rect.height >= style.minSizeFraction * essay.height - 0.001)
-        // Ужатый знак опирается на полосу летбокса + edgeInset и по-прежнему не трогает субтитры.
+        #expect(abs(rect.height - nominal) < 0.001, "места у нижнего края хватает на полный знак")
         #expect(abs(rect.minY - (bottomBar + style.edgeInset)) < 0.001)
         #expect(!rect.intersects(band(4, renderSize: essay, y: y)))
+    }
+
+    @Test("пять строк + летбокс: знак ужимается, но не ниже пола 0.06·H")
+    func testFiveLinesShrinkLogoToAvailableRoom() throws {
+        let y = conceptY("ТЕРПІННЯ", renderSize: essay)
+        let bottomBar = 0.135 * essay.height
+        let rect = try #require(LongformSubtitleRenderer.essayLogoBand(
+            renderSize: essay, conceptY: y, lines: 5, bottomBarHeight: bottomBar, style: style
+        ))
+        #expect(rect.height < style.sizeFraction * essay.height, "при нехватке места знак обязан ужаться")
+        #expect(rect.height >= style.minSizeFraction * essay.height - 0.001)
+        #expect(abs(rect.minY - (bottomBar + style.edgeInset)) < 0.001)
+        #expect(!rect.intersects(band(5, renderSize: essay, y: y)))
         #expect(abs(rect.width - rect.height) < 0.001, "квадрат обязан остаться квадратом")
     }
 
     @Test("ниже пола 0.06·H знак не рисуется вообще")
     func testDropBelowMinimumSizeFraction() throws {
-        // Капты почти легли на летбокс: доступная полоса меньше minSizeFraction·H.
+        // Субтитры почти легли на низ кадра: свободной полосы меньше minSizeFraction·H.
         #expect(ChannelLogoPlacement.essay(
             renderSize: essay, subtitleBottom: 95, bottomBarHeight: 0, style: style
         ) == nil)
-        let y = conceptY("ТЕРПІННЯ", renderSize: essay)
-        #expect(LongformSubtitleRenderer.essayLogoBand(
-            renderSize: essay, conceptY: y, lines: 5, bottomBarHeight: 0.135 * essay.height, style: style
-        ) == nil, "пять строк + летбокс: места нет — не рисуем ничего")
+        let floor = style.edgeInset + style.gapBelowSubtitles + style.minSizeFraction * essay.height
+        #expect(ChannelLogoPlacement.essay(
+            renderSize: essay, subtitleBottom: floor - 1, bottomBarHeight: 0, style: style
+        ) == nil)
     }
 
     @Test("bottomBarHeight = 0 (16:9 без летбокса): отступ от края и ноль пересечений")
     func testBottomBarZeroKeepsEdgeInsetAndNoOverlap() throws {
         let y = conceptY("СТРАХ", renderSize: essay)
-        for lines in [1, 3, 4] {
+        for lines in [1, 3, 4, 5] {
             let rect = try #require(LongformSubtitleRenderer.essayLogoBand(
                 renderSize: essay, conceptY: y, lines: lines, bottomBarHeight: 0, style: style
             ))
-            #expect(rect.minY >= style.edgeInset - 0.001, "строки \(lines): знак прижат к краю ближе 12·k")
+            #expect(abs(rect.minY - style.edgeInset) < 0.001, "строки \(lines): знак прижат к краю ровно на 12·k")
             #expect(!rect.intersects(band(lines, renderSize: essay, y: y)), "строки \(lines): пересечение с субтитрами")
         }
     }
@@ -190,10 +201,10 @@ struct ChannelLogoWatermarkTests {
 
     // MARK: - Порядок полос в собранном оверлее
 
-    @Test("оверлей эссе: постоянной плашки нет, три стинга едут одним контейнером последним")
-    func testOverlayUsesThreeAnimatedStingsInsteadOfPersistentLogo() async throws {
-        guard ChannelWatermarkCard.isAvailable else {
-            Issue.record("ассет ChannelWatermarkCard не долетел до тестового хоста: стинги проверить нечем")
+    @Test("оверлей эссе: постоянный почти прозрачный знак — последним, по центру у низа")
+    func testOverlayAppendsPersistentChannelLogoLast() async throws {
+        guard ChannelLogo.isAvailable else {
+            Issue.record("ассет ChannelLogo не долетел до тестового хоста: знак проверить нечем")
             return
         }
         let renderer = LongformSubtitleRenderer()
@@ -215,66 +226,49 @@ struct ChannelLogoWatermarkTests {
             layout: LongformOverlayLayout(bottomBarHeight: 0)
         )
         let layers = try #require(root.sublayers)
-        // [0] тема, [1] субтитры, [2] слоган, [3] контейнер стингов — постоянной плашки нет.
+        // [0] тема, [1] субтитры, [2] слоган, [3] постоянный знак канала — последним.
         #expect(layers.count == 4)
-        let stings = try #require(layers.last)
-        let cards = try #require(stings.sublayers)
-        #expect(cards.count == 3)
+        let logo = try #require(layers.last)
+        #expect(logo.contents != nil, "знак — растр логотипа, а не пустая плашка")
+        #expect(logo.opacity > 0.05 && logo.opacity < 0.2, "знак обязан быть почти прозрачным")
+        #expect(logo.animation(forKey: "watermarkStingOpacity") == nil, "никаких стингов: знак постоянный")
 
-        for (card, expected) in zip(cards, [60.0, 300.0, 540.0]) {
-            #expect(card.contents != nil, "стинг — растр карточки, а не пустая плашка")
-            let opacity = try #require(card.animation(forKey: "watermarkStingOpacity") as? CAKeyframeAnimation)
-            #expect(abs(opacity.beginTime - (AVCoreAnimationBeginTimeAtZero + expected)) < 0.001)
-            #expect(opacity.fillMode == .both)
-            #expect(!opacity.isRemovedOnCompletion)
-            #expect(abs(opacity.duration - ChannelWatermarkStingStyle.essay.duration) < 0.001)
+        let style = ChannelLogoStyle.essay
+        #expect(abs(logo.frame.width - style.sizeFraction * essay.height) < 0.001)
+        #expect(abs(logo.frame.width - logo.frame.height) < 0.001)
+        #expect(abs(logo.frame.midX - essay.width / 2) < 0.001, "знак по центру кадра")
+        #expect(logo.frame.minY <= essay.height * 0.05, "знак у самого низа кадра")
+        let captionFrame = try #require(layers[1].sublayers?.first?.frame)
+        #expect(!logo.frame.intersects(captionFrame), "знак не залезает на субтитры")
 
-            let style = ChannelWatermarkStingStyle.essay
-            #expect(abs(card.frame.height - style.sizeFraction * essay.height) < 0.001)
-            #expect(abs(card.frame.width - card.frame.height) < 0.001)
-            #expect(card.frame.maxX <= essay.width + 0.001)
-            #expect(card.frame.maxY <= essay.height + 0.001)
-            // Правый верх: не спорит ни с темой по центру, ни с субтитрами под ней.
-            #expect(card.frame.minX > essay.width * 0.75)
-            #expect(card.frame.minY > essay.height * 0.55)
-            #expect(!card.frame.intersects(layers[1].sublayers![0].frame))
-        }
-
-        // Выключенный вотермарк — ровно три полосы: тема, субтитры, слоган.
-        let noStings = await renderer.makeOverlayLayer(
+        // Выключенный знак — ровно три полосы: тема, субтитры, слоган.
+        let noLogo = await renderer.makeOverlayLayer(
             renderSize: essay, concept: concept, timedPhrases: phrases,
             totalDuration: totalDuration,
-            layout: LongformOverlayLayout(bottomBarHeight: 0, watermarkSting: nil)
+            layout: LongformOverlayLayout(bottomBarHeight: 0, channelLogo: nil)
         )
-        #expect(noStings.sublayers?.count == 3)
+        #expect(noLogo.sublayers?.count == 3)
     }
 
-    @Test("стинги: после минуты, в середине и за минуту до конца; на коротком ролике — без наложений")
-    func testStingTimesFollowTheEssayStructure() {
-        #expect(ChannelWatermarkCard.stingTimes(totalDuration: 600) == [60, 300, 540])
-
-        let short = ChannelWatermarkCard.stingTimes(totalDuration: 120)
-        #expect(short.count == 3)
-        #expect(short[0] < short[1] && short[1] < short[2])
-        #expect(short.allSatisfy {
-            $0 > 0 && $0 + ChannelWatermarkStingStyle.essay.duration < 120
-        })
-
-        // Ролик короче двух стингов не получает их вовсе.
-        #expect(ChannelWatermarkCard.stingTimes(totalDuration: 4).isEmpty)
+    @Test("знак эссе почти прозрачный, шортсы сохраняют свою непрозрачность")
+    func testEssayLogoIsNearlyTransparent() {
+        #expect(ChannelLogoStyle.essay.opacity > 0.05)
+        #expect(ChannelLogoStyle.essay.opacity <= 0.15)
+        #expect(ChannelLogoStyle.shorts.opacity > ChannelLogoStyle.essay.opacity)
     }
 
-    @Test("стинг-карточка — квадрат в правом верхнем углу, размер в долях кадра")
-    func testStingPlacementScalesWithTheFrame() {
-        for size in [essay, CGSize(width: 1280, height: 720)] {
-            let rect = ChannelWatermarkCard.placement(renderSize: size)
-            let style = ChannelWatermarkStingStyle.essay
-            let side = style.sizeFraction * size.height
-            let inset = style.edgeInset * size.height / 1080
-            #expect(abs(rect.width - side) < 0.001)
-            #expect(abs(rect.height - side) < 0.001)
-            #expect(abs(rect.maxX - (size.width - inset)) < 0.001)
-            #expect(abs(rect.maxY - (size.height - inset)) < 0.001)
+    @Test("знак прижат к низу кадра на любом размере")
+    func testLogoAnchorsToBottomEdgeOnEveryFrameSize() throws {
+        for size in [essay, CGSize(width: 1280, height: 720), CGSize(width: 1080, height: 1920), CGSize(width: 3840, height: 2160)] {
+            let style = ChannelLogoStyle.essay
+            let k = size.height / 1080
+            let rect = try #require(ChannelLogoPlacement.essay(
+                renderSize: size, subtitleBottom: size.height * 0.55,
+                bottomBarHeight: 0, style: style
+            ))
+            #expect(abs(rect.minY - style.edgeInset * k) < 0.001)
+            #expect(abs(rect.midX - size.width / 2) < 0.001)
+            #expect(abs(rect.height - style.sizeFraction * size.height) < 0.001)
         }
     }
 
@@ -296,7 +290,7 @@ struct ChannelLogoWatermarkTests {
         let withTexts = await renderer.makeOverlayLayer(
             renderSize: size, concept: concept, timedPhrases: phrases,
             totalDuration: 120,
-            layout: LongformOverlayLayout(watermarkSting: nil),
+            layout: LongformOverlayLayout(channelLogo: nil),
             hookText: "Ти контролюєш усе, крім себе.",
             ctaText: "Напиши, від чого ти не відпустив."
         )
@@ -305,7 +299,7 @@ struct ChannelLogoWatermarkTests {
         let withoutTexts = await renderer.makeOverlayLayer(
             renderSize: size, concept: concept, timedPhrases: phrases,
             totalDuration: 120,
-            layout: LongformOverlayLayout(watermarkSting: nil)
+            layout: LongformOverlayLayout(channelLogo: nil)
         )
         #expect(withoutTexts.sublayers?.count == 3)
     }
@@ -324,7 +318,7 @@ struct ChannelLogoWatermarkTests {
         let root = await renderer.makeOverlayLayer(
             renderSize: CGSize(width: 1920, height: 1080), concept: concept,
             timedPhrases: phrases, totalDuration: 120,
-            layout: LongformOverlayLayout(watermarkSting: nil),
+            layout: LongformOverlayLayout(channelLogo: nil),
             hookText: "Хук", ctaText: nil
         )
         let subtitleBand = try #require(root.sublayers?[1])

@@ -181,11 +181,6 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
     /// Эталонный кегль финального CTA
     static let ctaBasePointSize: Double = 30.0
 
-    /// Запас под самой нижней строкой субтитров (в единицах `k`): там живёт слоган интро
-    /// (20·k кегль + отступы) и нижняя золотая черта. Знак канала отступает на эту величину,
-    /// чтобы не сесть на слоган. Единый источник для оверлея, превью и теста.
-    static let subtitleLogoClearance: CGFloat = 64.0
-
     /// Масштаб всей типографики: k = высота кадра / 1080 (1920x1080 -> k == 1.0)
     static func scaleFactor(renderSize: CGSize) -> Double {
         Double(renderSize.height) / 1080.0
@@ -389,7 +384,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         rootLayer.addSublayer(conceptLayer)
 
         // 2. Плавные синхронные субтитры реплик персонажей прямо под концептом
-        let (subtitlePhrasesLayer, _) = buildSynchronizedSubtitlesLayer(
+        let (subtitlePhrasesLayer, subtitleBottom) = buildSynchronizedSubtitlesLayer(
             renderSize: renderSize,
             k: k,
             concept: concept,
@@ -423,18 +418,49 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             rootLayer.addSublayer(ctaLayer)
         }
 
-        // 5. Вотермарк-карточка канала — три коротких стинга (после минуты,
-        // в середине, за минуту до финала), а не постоянная плашка под субтитрами.
-        if let style = layout.watermarkSting,
-           let stings = ChannelWatermarkCard.makeContainer(
-               renderSize: renderSize,
-               totalDuration: calculatedTotalDuration,
-               style: style
-           ) {
-            rootLayer.addSublayer(stings)
-        }
+        // 5. Знак канала — постоянный, почти прозрачный, по центру у самого низа кадра.
+        // Ставится последним: тесты читают sublayers по позициям, а у слоя-картинки ненулевой `contents`.
+        appendChannelLogoBand(to: rootLayer, renderSize: renderSize,
+                              subtitleBottom: subtitleBottom, layout: layout)
 
         return rootLayer
+    }
+
+    /// Единственная точка, решающая «рисовать ли знак в эссе».
+    /// Места нет — не рисуем ничего (никаких самодельных эмблем) и пишем ОДНО notice на рендер.
+    private func appendChannelLogoBand(
+        to rootLayer: CALayer,
+        renderSize: CGSize,
+        subtitleBottom: CGFloat,
+        layout: LongformOverlayLayout
+    ) {
+        guard let style = layout.channelLogo else { return }
+        let rect = ChannelLogoPlacement.essay(
+            renderSize: renderSize,
+            subtitleBottom: subtitleBottom,
+            bottomBarHeight: layout.bottomBarHeight,
+            style: style
+        )
+        guard let rect else {
+            Self.reportMissingLogoRoom(renderSize: renderSize, subtitleBottom: subtitleBottom,
+                                       bottomBarHeight: layout.bottomBarHeight, style: style)
+            return
+        }
+        guard let logoLayer = ChannelLogo.makeLayer(frame: rect, renderSize: renderSize,
+                                                   opacity: style.opacity) else { return }
+        rootLayer.addSublayer(logoLayer)
+    }
+
+    /// Одна строка на рендер: молча обесбренденное видео — худший из вариантов,
+    /// но и писать по строке на каждый из сотен кадров — шум.
+    static func reportMissingLogoRoom(renderSize: CGSize, subtitleBottom: CGFloat,
+                                      bottomBarHeight: CGFloat, style: ChannelLogoStyle) {
+        let height = renderSize.height
+        let k = height / 1080.0
+        let gap = style.gapBelowSubtitles * k
+        let floorY = bottomBarHeight + style.edgeInset * k
+        let available = subtitleBottom - gap - floorY
+        logger.notice("ChannelLogo skipped in essay: needs \(Int(style.sizeFraction * height))px, free \(Int(available))px (subtitleBottom \(Int(subtitleBottom))px, bottomBar \(Int(bottomBarHeight))px, gap \(Int(gap))px, floor \(Int(floorY))px, min \(Int(style.minSizeFraction * height))px)")
     }
 
     // MARK: - 1. Центральное якорное слово концепта (Shortcast Cinema Typography)
@@ -600,13 +626,11 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
     }
 
     /// Место под знак канала, которое оставляет раскладка субтитров при `lines` строках.
-    /// Ровно та цепочка, что проходит `makeOverlayLayer`: полоса → запас на слоган → placement.
+    /// Ровно та цепочка, что проходит `makeOverlayLayer`: полоса → placement.
     static func essayLogoBand(renderSize: CGSize, conceptY: CGFloat, lines: Int,
                               bottomBarHeight: CGFloat = 0,
                               style: ChannelLogoStyle = .essay) -> CGRect? {
-        let k = scaleFactor(renderSize: renderSize)
-        let subtitleBottom = max(0, essaySubtitleBand(renderSize: renderSize, conceptY: conceptY, lines: lines).minY
-                                    - subtitleLogoClearance * CGFloat(k))
+        let subtitleBottom = max(0, essaySubtitleBand(renderSize: renderSize, conceptY: conceptY, lines: lines).minY)
         return ChannelLogoPlacement.essay(renderSize: renderSize, subtitleBottom: subtitleBottom,
                                           bottomBarHeight: bottomBarHeight, style: style)
     }
@@ -703,8 +727,9 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         } else {
             referenceBottom = lowestCaptionY
         }
-        // Под полосой субтитров живёт слоган интро (шрифт 20·k + отступы): запас 64·k.
-        return (container, max(0, referenceBottom - Self.subtitleLogoClearance * CGFloat(k)))
+        // Знак канала живёт у самого низа кадра, поэтому отталкивается от фактической
+        // нижней границы субтитров, а не от запаса под слоган интро.
+        return (container, max(0, referenceBottom))
     }
 
     // MARK: - 3. Вступительный подзаголовок темы / хук (0.0с – 4.5с / 9.2с)
@@ -934,8 +959,19 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             subStr.draw(at: subOrigin)
         }
 
-        // 3. Вотермарк-стинги в статичном превью не рисуются: это три коротких
-        // момента таймлайна, а не постоянный бренд-элемент кадра.
+        // 3. Знак канала — ровно та же цепочка раскладки, что в видео, иначе превью разойдётся с рендером.
+        if let style = layout.channelLogo {
+            let conceptY = Self.conceptBottomY(renderSize: renderSize, textSize: conceptSize, k: k)
+            let logoRect = Self.essayLogoBand(renderSize: renderSize, conceptY: conceptY, lines: 1,
+                                              bottomBarHeight: layout.bottomBarHeight, style: style)
+            if let logoRect {
+                ChannelLogo.composite(in: context, rect: logoRect, opacity: CGFloat(style.opacity))
+            } else {
+                let subtitleBottom = Self.essaySubtitleBand(renderSize: renderSize, conceptY: conceptY, lines: 1).minY
+                Self.reportMissingLogoRoom(renderSize: renderSize, subtitleBottom: max(0, subtitleBottom),
+                                           bottomBarHeight: layout.bottomBarHeight, style: style)
+            }
+        }
 
         NSGraphicsContext.restoreGraphicsState()
         return context.makeImage()

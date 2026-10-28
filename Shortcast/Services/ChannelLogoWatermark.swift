@@ -59,7 +59,8 @@ enum ChannelLogo {
 struct ChannelLogoStyle: Sendable, Equatable {
     /// Доля высоты кадра: 119 px при 1080 и 211 px при вертикальных 1920.
     var sizeFraction: CGFloat = 0.11
-    var opacity: Double = 0.22
+    /// Почти прозрачный знак: он угадывается, но не перетягивает взгляд с кадра.
+    var opacity: Double = 0.12
     /// Отступ от нижней границы субтитров до верха знака, в единицах `k`.
     var gapBelowSubtitles: CGFloat = 24
     /// Отступ от края кадра / от верхней полосы леттбокса, в единицах `k`.
@@ -67,14 +68,16 @@ struct ChannelLogoStyle: Sendable, Equatable {
     /// Ниже этой доли высоты знак не сжимаем — лучше пропустить, чем делать грязное пятно.
     var minSizeFraction: CGFloat = 0.06
 
-    static let essay = ChannelLogoStyle()
-    static let shorts = ChannelLogoStyle()
+    static let essay = ChannelLogoStyle(opacity: 0.12)
+    static let shorts = ChannelLogoStyle(opacity: 0.22)
 }
 
 /// Чистая геометрия без CoreAnimation — чтобы коллизии с субтитрами и полосами проверялись тестом.
 /// Все координаты bottom-left origin, как у слоёв оверлея (`isGeometryFlipped == false`).
 enum ChannelLogoPlacement {
-    /// Эссе: по центру под субтитрами, над нижней чёрной полосой леттбокса.
+    /// Эссе: по центру у самого низа кадра, над нижней чёрной полосой леттбокса.
+    /// Субтитры живут под словом темы в середине, поэтому знак к ним не поднимается;
+    /// если места до них всё же нет — ужимается, а ниже пола не рисуется вовсе.
     static func essay(renderSize: CGSize, subtitleBottom: CGFloat, bottomBarHeight: CGFloat,
                       style: ChannelLogoStyle = .essay) -> CGRect? {
         let height = renderSize.height
@@ -82,14 +85,12 @@ enum ChannelLogoPlacement {
         let nominal = style.sizeFraction * height
         let gap = style.gapBelowSubtitles * k
         let floorY = bottomBarHeight + style.edgeInset * k
+        let ceilingY = subtitleBottom - gap
+        guard ceilingY > floorY else { return nil }
 
-        let y = subtitleBottom - gap - nominal
-        if y >= floorY {
-            return square(width: nominal, in: renderSize, y: y)
-        }
-        let available = subtitleBottom - gap - floorY
-        guard available >= style.minSizeFraction * height else { return nil }
-        return square(width: available, in: renderSize, y: floorY)
+        let side = min(nominal, ceilingY - floorY)
+        guard side >= style.minSizeFraction * height else { return nil }
+        return square(width: side, in: renderSize, y: floorY)
     }
 
     /// Шортсы: нижний левый угол. Правый угол занят рельсом действий платформы, центр — текстовым вотермарком.

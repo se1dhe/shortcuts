@@ -458,7 +458,7 @@ final class WorkspaceModel {
             }
         )
         let actTitleService = LongformActTitleService(model: gateway)
-        return LongformPipelineCoordinator(actTitling: actTitleService)
+        return LongformPipelineCoordinator(actTitling: actTitleService, modelManager: modelManager)
     }
 
     /// Единственная точка, которая пишет состояние темы в архив: анализ, выбранная

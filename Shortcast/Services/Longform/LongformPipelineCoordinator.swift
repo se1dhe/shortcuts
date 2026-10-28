@@ -15,6 +15,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
     private let audioLooper: any SeamlessAudioLooping
     private let loudnessNormalizer: any LongformLoudnessNormalizing
     private let actTitling: any LongformActTitling
+    private let modelManager: ModelManager?
 
     init(
         director: any LongformNarrativeDirecting = LongformNarrativeDirector(),
@@ -23,7 +24,8 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         thumbnailGenerator: any LongformThumbnailGeneratingProtocol = LongformThumbnailGenerator(),
         audioLooper: any SeamlessAudioLooping = SeamlessAudioLoopService.shared,
         loudnessNormalizer: any LongformLoudnessNormalizing = LongformLoudnessService(),
-        actTitling: any LongformActTitling = LongformActTitleService()
+        actTitling: any LongformActTitling = LongformActTitleService(),
+        modelManager: ModelManager? = nil
     ) {
         self.director = director
         self.audioMastering = audioMastering
@@ -32,6 +34,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         self.audioLooper = audioLooper
         self.loudnessNormalizer = loudnessNormalizer
         self.actTitling = actTitling
+        self.modelManager = modelManager
     }
 
     func buildLongformVideo(
@@ -66,14 +69,19 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             )
             
             // Режиссёрское ревью арки (опциональный второй LLM-проход)
-            let reviewService = DirectorReviewService()
-            let reviewResult = await reviewService.review(
-                arc: built,
-                transcript: transcript,
-                concept: concept,
-                movieTitle: movieTitle
-            )
-            let reviewedArc = reviewResult.arc
+            let reviewedArc: LongformNarrativeArc
+            if let modelManager = modelManager {
+                let reviewService = DirectorReviewService(momentFinder: modelManager.momentFinder)
+                let reviewResult = await reviewService.review(
+                    arc: built,
+                    transcript: transcript,
+                    concept: concept,
+                    movieTitle: movieTitle
+                )
+                reviewedArc = reviewResult.arc
+            } else {
+                reviewedArc = built
+            }
             
             // Второй LLM-проход: названия актов из РЕАЛЬНОГО диалога, вошедшего в каждый акт.
             // Выполняется ровно один раз и до stagedArc, иначе LongformAct.id меняется под

@@ -450,7 +450,7 @@ final class LongformLoudnessService: LongformLoudnessNormalizing, Sendable {
 
     init(
         processRunner: any ProcessRunning = ProcessRunner.shared,
-        ffmpegResolver: @Sendable @escaping (URL?) -> URL? = { LongformLoudnessService.resolveFFmpegBinary(workingDirectory: $0) },
+        ffmpegResolver: @Sendable @escaping (URL?) -> URL? = { BinaryUtilities.resolveFFmpegBinary(workingDirectory: $0) },
         freeSpaceProvider: @Sendable @escaping (URL) -> Int64? = { LongformLoudnessService.availableCapacity(for: $0) }
     ) {
         self.processRunner = processRunner
@@ -759,21 +759,6 @@ final class LongformLoudnessService: LongformLoudnessNormalizing, Sendable {
     }
 
     // MARK: - Soft dependency на ffmpeg
-
-    static func resolveFFmpegBinary(workingDirectory: URL?) -> URL? {
-        if let bin = BinaryDownloadService.resolveBinary("ffmpeg", workingDirectory: workingDirectory) {
-            return bin
-        }
-        let commonPaths = [
-            "/opt/homebrew/bin/ffmpeg",
-            "/usr/local/bin/ffmpeg",
-            "/usr/bin/ffmpeg"
-        ]
-        for path in commonPaths where FileManager.default.isExecutableFile(atPath: path) {
-            return URL(fileURLWithPath: path)
-        }
-        return nil
-    }
 
     /// Свободное место, которое ffmpeg реально получит на томе результата.
     static func availableCapacity(for directoryURL: URL) -> Int64? {

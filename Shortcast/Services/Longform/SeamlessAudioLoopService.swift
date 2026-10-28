@@ -76,7 +76,7 @@ public final class SeamlessAudioLoopService: SeamlessAudioLooping, Sendable {
         }
 
         // Ищем бинарник ffmpeg
-        guard let ffmpegURL = resolveFFmpegBinary() else {
+        guard let ffmpegURL = BinaryUtilities.resolveFFmpegBinary(workingDirectory: nil) else {
             // Если ffmpeg недоступен, возвращаем исходный URL (fallback)
             return sourceURL
         }
@@ -120,22 +120,5 @@ public final class SeamlessAudioLoopService: SeamlessAudioLooping, Sendable {
         }
 
         return sourceURL
-    }
-
-    private func resolveFFmpegBinary() -> URL? {
-        if let bin = BinaryDownloadService.resolveBinary("ffmpeg", workingDirectory: nil) {
-            return bin
-        }
-        let commonPaths = [
-            "/opt/homebrew/bin/ffmpeg",
-            "/usr/local/bin/ffmpeg",
-            "/usr/bin/ffmpeg"
-        ]
-        for path in commonPaths {
-            if FileManager.default.isExecutableFile(atPath: path) {
-                return URL(fileURLWithPath: path)
-            }
-        }
-        return nil
     }
 }

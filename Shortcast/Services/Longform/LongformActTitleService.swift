@@ -375,10 +375,10 @@ final class LongformActTitleService: LongformActTitling, Sendable {
         if genericTitleWords.contains(lower.trimmingCharacters(in: .punctuationCharacters)) { return false }
 
         let quoteIsCyrillic = quotedLine.contains { character in
-            character.unicodeScalars.contains { isCyrillic($0) }
+            character.unicodeScalars.contains { TextUtilities.isCyrillic($0) }
         }
         let titleHasCyrillic = title.contains { character in
-            character.unicodeScalars.contains { isCyrillic($0) }
+            character.unicodeScalars.contains { TextUtilities.isCyrillic($0) }
         }
         if quoteIsCyrillic, !titleHasCyrillic { return false }
 
@@ -404,10 +404,6 @@ final class LongformActTitleService: LongformActTitling, Sendable {
         let hasUkrainian = lower.contains { "іїєґ".contains($0) }
         let hasRussian = lower.contains(where: { russianOnlyLetters.contains($0) })
         return hasUkrainian && !hasRussian
-    }
-
-    private static func isCyrillic(_ scalar: Unicode.Scalar) -> Bool {
-        (0x0400...0x052F).contains(scalar.value) || (0x2DE0...0x2DFF).contains(scalar.value)
     }
 
     /// Сравнение: регистр и последовательности пробелов — не изменение реплики;

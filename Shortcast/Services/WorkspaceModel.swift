@@ -98,12 +98,8 @@ final class WorkspaceModel {
     var thematicReasoning: String? { thematicAnalysis?.aiReasoning }
     /// Выявленные темы для длинного ролика Shortcast Cinema (производное от thematicAnalysis)
     var discoveredConcepts: [ThematicConcept] {
-        if let thematicAnalysis { return thematicAnalysis.allConcepts }
-        return legacyDiscoveredConcepts
+        return thematicAnalysis?.allConcepts ?? []
     }
-    /// Темы из архивов, сохранённых до появления thematicAnalysis. Только чтение
-    /// как запасной вариант: записей в них больше нет.
-    private var legacyDiscoveredConcepts: [ThematicConcept] = []
     /// Промежуточные параметры эссе для редактора субтитров
     var stagedConcept: ThematicConcept?
     var stagedConfirmedMovieTitle: String?
@@ -391,8 +387,8 @@ final class WorkspaceModel {
                     self.selectedConcept = ta.primaryConcept
                 }
             } else if !existingProject.discoveredConcepts.isEmpty {
-                // Архив, сохранённый до появления thematicAnalysis: темы читаем как есть.
-                self.legacyDiscoveredConcepts = existingProject.discoveredConcepts
+                // Старые архивы без thematicAnalysis больше не поддерживаются
+                Self.log("Legacy archive without thematicAnalysis ignored for '\(existingProject.movieTitle)'")
             }
             if let sc = existingProject.selectedConcept {
                 self.selectedConcept = sc
@@ -1073,7 +1069,6 @@ final class WorkspaceModel {
             self.phase = .longformResults
         } else {
             self.thematicAnalysis = nil
-            self.legacyDiscoveredConcepts = []
             self.selectedConcept = nil
             cleanUpTempInput()
             self.phase = .empty
@@ -1083,7 +1078,6 @@ final class WorkspaceModel {
     func resetLongform() {
         self.longformResult = nil
         self.thematicAnalysis = nil
-        self.legacyDiscoveredConcepts = []
         self.selectedConcept = nil
         self.stagedEssayPlan = nil
         self.storedTranscript = nil
@@ -1839,7 +1833,6 @@ final class WorkspaceModel {
         // Состояние эссе чистим обязательно: иначе второй фильм стартует с темой,
         // транскриптом и рендером первого.
         thematicAnalysis = nil
-        legacyDiscoveredConcepts = []
         selectedConcept = nil
         longformResult = nil
         storedTranscript = nil

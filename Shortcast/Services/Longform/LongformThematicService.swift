@@ -187,10 +187,6 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         return String(format: "[%.1f] %@", start, text)
     }
 
-    private static func formatSegmentForPrompt(_ seg: TranscriptSegment) -> String {
-        formatCompressedLine(start: seg.start, text: seg.text.trimmingCharacters(in: .whitespacesAndNewlines))
-    }
-
 
     func discoverThematicAnalysis(
         from transcript: Transcript,

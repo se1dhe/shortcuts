@@ -28,7 +28,7 @@ struct TranscriptQualityGate: Sendable, Equatable {
         var latin = 0
         for segment in segments {
             for scalar in segment.text.unicodeScalars where CharacterSet.letters.contains(scalar) {
-                if isCyrillic(scalar) {
+                if TextUtilities.isCyrillic(scalar) {
                     cyrillic += 1
                 } else if isLatin(scalar) {
                     latin += 1
@@ -163,7 +163,7 @@ struct TranscriptQualityGate: Sendable, Equatable {
         guard let expectedScript else { return true }
         for scalar in text.unicodeScalars where CharacterSet.letters.contains(scalar) {
             switch expectedScript {
-            case .cyrillic where Self.isCyrillic(scalar):
+            case .cyrillic where TextUtilities.isCyrillic(scalar):
                 return true
             case .latin where Self.isLatin(scalar):
                 return true
@@ -172,10 +172,6 @@ struct TranscriptQualityGate: Sendable, Equatable {
             }
         }
         return false
-    }
-
-    private static func isCyrillic(_ scalar: Unicode.Scalar) -> Bool {
-        (0x0400...0x052F).contains(scalar.value) || (0x2DE0...0x2DFF).contains(scalar.value)
     }
 
     private static func isLatin(_ scalar: Unicode.Scalar) -> Bool {

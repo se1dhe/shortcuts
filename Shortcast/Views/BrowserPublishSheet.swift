@@ -18,6 +18,7 @@ struct BrowserPublishSheet: View {
     @State private var platformStatus: [SocialPlatform: UploadState] = [:]
     @State private var telegramStatus: UploadState = .idle
     @State private var overallError: String?
+    @State private var showNodeInstallDialog: Bool = false
 
     private enum UploadState: Equatable {
         case idle
@@ -232,6 +233,16 @@ struct BrowserPublishSheet: View {
         .task {
             await refreshAuth()
         }
+        .alert("Node.js не установлен", isPresented: $showNodeInstallDialog) {
+            Button("Открыть nodejs.org") {
+                if let url = URL(string: "https://nodejs.org") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            Button("Закрыть", role: .cancel) { }
+        } message: {
+            Text("Для автопубликации через браузер требуется Node.js. Установите Node.js с официального сайта и перезапустите приложение.")
+        }
     }
 
     // MARK: - Subviews
@@ -344,6 +355,9 @@ struct BrowserPublishSheet: View {
             if !authed.isEmpty {
                 selectedPlatforms = authed
             }
+        } catch let error as BrowserAutomationError where error.errorDescription?.contains("Node.js") == true {
+            showNodeInstallDialog = true
+            logs.append("Проверка сессии: \(error.localizedDescription)")
         } catch {
             logs.append("Проверка сессии: \(error.localizedDescription)")
         }
@@ -363,6 +377,9 @@ struct BrowserPublishSheet: View {
             if !authed.isEmpty {
                 selectedPlatforms = authed
             }
+        } catch let error as BrowserAutomationError where error.errorDescription?.contains("Node.js") == true {
+            showNodeInstallDialog = true
+            logs.append("Ошибка входа: \(error.localizedDescription)")
         } catch {
             logs.append("Ошибка входа: \(error.localizedDescription)")
         }

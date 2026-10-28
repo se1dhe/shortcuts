@@ -172,6 +172,14 @@ struct SelectedMoment: Codable, Sendable, Equatable, Identifiable {
     /// Сильнейшая сцена акта: не режется бюджетом, пока есть другие кандидаты
     let featured: Bool?
     
+    /// Семантическая уверенность в корректности таймкода (после валидации)
+    /// nil — не валидировался, high/medium/low — результат SemanticTimecodeValidator
+    var semanticConfidence: SemanticConfidence? = nil
+    
+    enum SemanticConfidence: String, Codable, Sendable {
+        case high, medium, low
+    }
+    
     init(
         startTime: Double,
         endTime: Double,

@@ -13,6 +13,14 @@ struct LongformYouTubeMetadata: Codable, Equatable, Sendable {
     
     /// Закрепленный комментарий с призывом к дискуссии
     var pinnedComment: String
+    
+    /// Опрос для Telegram (если CTA содержит вопрос)
+    var telegramPoll: TelegramPoll? = nil
+    
+    struct TelegramPoll: Codable, Equatable, Sendable {
+        let question: String
+        let options: [String]
+    }
 
     init(
         title: String,

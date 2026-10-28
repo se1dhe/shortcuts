@@ -104,6 +104,10 @@ final class ShortClip: Identifiable {
     /// и лежит в `Exports/<ФИЛЬМ>/shorts/`. Поле convenience:.views могут использовать
     /// его напрямую или искать через `ShortCoverStore.existingCoverURL`.
     var coverURL: URL?
+    
+    /// Результат пост-рендер валидации (громкость, длительность, треки)
+    var validationResult: RenderValidationResult?
+    
     // MARK: - Video enhancement (per-clip)
 
     /// Enhancement preset applied before export / publish.

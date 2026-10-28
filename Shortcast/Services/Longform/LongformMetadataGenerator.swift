@@ -34,13 +34,47 @@ enum LongformMetadataGenerator {
         // 5. Провокационный закрепленный комментарий
         let pinnedComment = buildPrrodanPinnedComment(
             movieTitle: displayMovieTitle, concept: concept, cta: arc.ctaText)
+        
+        // 6. Telegram poll из CTA если содержит вопрос
+        let telegramPoll = buildTelegramPoll(from: arc.ctaText, concept: concept)
 
-        return LongformYouTubeMetadata(
+        var metadata = LongformYouTubeMetadata(
             title: title,
             description: desc,
             tags: tags,
             pinnedComment: pinnedComment
         )
+        metadata.telegramPoll = telegramPoll
+        return metadata
+    }
+    
+    /// Генерирует Telegram poll из CTA если он содержит вопрос
+    private static func buildTelegramPoll(from cta: String?, concept: ThematicConcept) -> LongformYouTubeMetadata.TelegramPoll? {
+        guard let cta = cta, !cta.isEmpty else { return nil }
+        
+        // Ищем вопросительное предложение в CTA
+        let sentences = cta.components(separatedBy: CharacterSet(charactersIn: ".!?"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.hasSuffix("?") || $0.contains("?") }
+        
+        guard let question = sentences.first else { return nil }
+        
+        // Генерируем варианты ответа на основе темы
+        let options = generatePollOptions(for: concept)
+        guard options.count >= 2 else { return nil }
+        
+        return LongformYouTubeMetadata.TelegramPoll(question: question, options: options)
+    }
+    
+    /// Генерирует варианты ответа для опроса на основе темы фильма
+    private static func generatePollOptions(for concept: ThematicConcept) -> [String] {
+        let word = concept.word
+        return [
+            "Так, це геніально",
+            "Ні, це помилка",
+            "Не впевнений, потрібен перегляд",
+            "Байдуже, головне — візуал"
+        ]
     }
 
     // MARK: - Вспомогательные генераторы

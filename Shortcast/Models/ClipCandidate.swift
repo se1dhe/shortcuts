@@ -28,6 +28,10 @@ struct ClipCandidate: Codable, Sendable, Identifiable, Equatable {
     /// same pass (Qwen copywriter). Empty when captions are produced separately
     /// (Gemma copywriter, which watches each cut clip).
     var variants: [PostVariant] = []
+    
+    /// Реплики из транскрипта, попадающие в диапазон клипа.
+    /// Извлекаются DialogueExtractor после выбора моментов.
+    var dialogue: [String] = []
 
     var duration: Double { 
         if let segments = segments, !segments.isEmpty {

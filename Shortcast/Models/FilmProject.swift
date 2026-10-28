@@ -15,6 +15,9 @@ struct FilmProject: Identifiable, Codable, Sendable {
     var durationSeconds: Double
     var fileSizeBytes: Int64?
 
+    /// ID выбранной пользователем аудиодорожки (для повторного импорта того же файла)
+    var selectedAudioTrackId: Int?
+
     /// Метаданные TMDB (постер, синопсис, жанры)
     var tmdbMetadata: MovieIdentity?
 
@@ -55,6 +58,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
         movieYear: String? = nil,
         durationSeconds: Double = 0,
         fileSizeBytes: Int64? = nil,
+        selectedAudioTrackId: Int? = nil,
         tmdbMetadata: MovieIdentity? = nil,
         transcript: Transcript? = nil,
         scenes: [DetectedScene] = [],
@@ -73,6 +77,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
         self.movieYear = movieYear
         self.durationSeconds = durationSeconds
         self.fileSizeBytes = fileSizeBytes
+        self.selectedAudioTrackId = selectedAudioTrackId
         self.tmdbMetadata = tmdbMetadata
         self.transcript = transcript
         self.scenes = scenes
@@ -86,7 +91,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, sourceMovieURL, movieFileName, movieTitle, movieYear, durationSeconds, fileSizeBytes
+        case id, sourceMovieURL, movieFileName, movieTitle, movieYear, durationSeconds, fileSizeBytes, selectedAudioTrackId
         case tmdbMetadata, transcript, scenes, discoveredConcepts, thematicAnalysis, selectedConcept
         case longformResult, candidates, createdAt, updatedAt
     }
@@ -100,6 +105,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
         movieYear = try container.decodeIfPresent(String.self, forKey: .movieYear)
         durationSeconds = try container.decode(Double.self, forKey: .durationSeconds)
         fileSizeBytes = try container.decodeIfPresent(Int64.self, forKey: .fileSizeBytes)
+        selectedAudioTrackId = try container.decodeIfPresent(Int.self, forKey: .selectedAudioTrackId)
         tmdbMetadata = try container.decodeIfPresent(MovieIdentity.self, forKey: .tmdbMetadata)
         transcript = try container.decodeIfPresent(Transcript.self, forKey: .transcript)
         // Один битый массив не имеет права «съедать» весь фильм: поле становится
@@ -148,6 +154,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
         try container.encodeIfPresent(movieYear, forKey: .movieYear)
         try container.encode(durationSeconds, forKey: .durationSeconds)
         try container.encodeIfPresent(fileSizeBytes, forKey: .fileSizeBytes)
+        try container.encodeIfPresent(selectedAudioTrackId, forKey: .selectedAudioTrackId)
         try container.encodeIfPresent(tmdbMetadata, forKey: .tmdbMetadata)
         try container.encodeIfPresent(transcript, forKey: .transcript)
         try container.encode(scenes, forKey: .scenes)

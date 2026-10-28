@@ -221,9 +221,10 @@ final class MomentFinderService {
             isComedy: isComedy)
         
         let maxChunkSize = 35000
+        let overlapSize = 5000
         let chunks: [String]
         if transcript.count > maxChunkSize {
-            Self.log("Transcript too long (\(transcript.count) chars), chunking into \(maxChunkSize) character parts")
+            Self.log("Transcript too long (\(transcript.count) chars), chunking into \(maxChunkSize) character parts with \(overlapSize) char overlap")
             var currentChunks: [String] = []
             var currentIndex = transcript.startIndex
             while currentIndex < transcript.endIndex {
@@ -238,7 +239,10 @@ final class MomentFinderService {
                 
                 let chunkText = String(transcript[currentIndex..<chunkEnd])
                 currentChunks.append(chunkText)
-                currentIndex = chunkEnd
+                
+                // Следующий чанк начинается с перекрытием, чтобы сцена на границе не потерялась
+                let overlapStart = transcript.index(chunkEnd, offsetBy: -overlapSize, limitedBy: currentIndex) ?? currentIndex
+                currentIndex = overlapStart
             }
             chunks = currentChunks
         } else {
@@ -286,6 +290,9 @@ final class MomentFinderService {
             allClips.append(contentsOf: clips)
         }
         
+        // Дедупликация: с перекрытием чанков одна сцена может попасть в два чанка
+        allClips = deduplicateClips(allClips)
+        
         allClips.sort { $0.viralScore > $1.viralScore }
         if allClips.count > 6 {
             allClips = Array(allClips.prefix(6))
@@ -293,6 +300,30 @@ final class MomentFinderService {
 
         guard !allClips.isEmpty else { throw MomentFinderError.noClips }
         return allClips
+    }
+    
+    /// Удаляет дубликаты клипов, которые могут появиться из-за перекрытия чанков.
+    /// Два клипа считаются дубликатами если их временные диапазоны пересекаются более чем на 50%.
+    private func deduplicateClips(_ clips: [ClipCandidate]) -> [ClipCandidate] {
+        guard clips.count > 1 else { return clips }
+        
+        var result: [ClipCandidate] = []
+        for clip in clips {
+            let isDuplicate = result.contains { existing in
+                let overlapStart = max(clip.start, existing.start)
+                let overlapEnd = min(clip.end, existing.end)
+                let overlapDuration = max(0, overlapEnd - overlapStart)
+                let clipDuration = clip.end - clip.start
+                let existingDuration = existing.end - existing.start
+                let minDuration = min(clipDuration, existingDuration)
+                // Пересечение более 50% от меньшей длительности
+                return minDuration > 0 && overlapDuration / minDuration > 0.5
+            }
+            if !isDuplicate {
+                result.append(clip)
+            }
+        }
+        return result
     }
 
     nonisolated static func log(_ message: String) {

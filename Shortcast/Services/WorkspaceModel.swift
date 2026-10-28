@@ -359,6 +359,13 @@ final class WorkspaceModel {
         // Загружаем или создаем постоянный проект фильма (SOLID: Single Responsibility)
         if let existingProject = try? await filmProjectService.loadProject(for: sandboxFriendlyURL) {
             self.currentProject = existingProject
+            // Обновляем выбранный аудио-трек если пользователь выбрал другой
+            if let trackId = selectedAudioStreamIndex, existingProject.selectedAudioTrackId != trackId {
+                self.currentProject?.selectedAudioTrackId = trackId
+                if let project = self.currentProject {
+                    try? await filmProjectService.saveProject(project)
+                }
+            }
             if let t = existingProject.transcript { self.storedTranscript = t }
 
             // Проверяем сохраненные метаданные фильма на предмет старых галлюцинаций LLM
@@ -398,7 +405,8 @@ final class WorkspaceModel {
                 movieFileName: originalBaseName,
                 movieTitle: effectiveSourceMetadata?.title ?? originalBaseName,
                 durationSeconds: newJob.durationSeconds,
-                fileSizeBytes: (try? sandboxFriendlyURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) }
+                fileSizeBytes: (try? sandboxFriendlyURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) },
+                selectedAudioTrackId: selectedAudioStreamIndex
             )
             self.currentProject = project
             // Архив на диске есть, но мы его не прочитали: пустой проект стёр бы
@@ -701,14 +709,31 @@ final class WorkspaceModel {
         Task {
             do {
                 let narrativeDirector = LongformNarrativeDirector()
-                let selectedMoments = self.thematicAnalysis?.selectedMoments ?? []
+                var selectedMoments = self.thematicAnalysis?.selectedMoments ?? []
+                
+                // Семантическая валидация таймкодов
+                let validator = SemanticTimecodeValidator()
+                let validations = validator.validateAll(moments: selectedMoments, transcript: transcript)
+                for validation in validations {
+                    if let index = selectedMoments.firstIndex(where: { $0.id == validation.moment.id }) {
+                        var moment = selectedMoments[index]
+                        switch validation.confidence {
+                        case .high: moment.semanticConfidence = .high
+                        case .medium: moment.semanticConfidence = .medium
+                        case .low: moment.semanticConfidence = .low
+                        }
+                        selectedMoments[index] = moment
+                    }
+                }
+                
                 let arc = try await narrativeDirector.buildArc(
                     from: transcript,
                     concept: concept,
                     selectedMoments: selectedMoments,
                     movieTitle: finalMovieTitle,
                     targetDuration: essayPlan?.effectiveTargetDuration ?? 520.0,
-                    essayPlan: essayPlan
+                    essayPlan: essayPlan,
+                    sourceMovieURL: self.currentProject?.sourceMovieURL
                 )
                 self.stagedArc = arc
                 self.phase = .editingLongformSubtitles
@@ -1460,7 +1485,13 @@ final class WorkspaceModel {
                 sceneMap: sceneMap,
                 isComedy: isComedy)
             
-            self.currentProject?.candidates = candidates
+            // Извлечение реплик из транскрипта для каждого клипа
+            let candidatesWithDialogue = DialogueExtractor.extractDialogueForAll(
+                clips: candidates,
+                transcript: transcript
+            )
+            
+            self.currentProject?.candidates = candidatesWithDialogue
             if let project = self.currentProject {
                 try? await filmProjectService.saveProject(project)
             }

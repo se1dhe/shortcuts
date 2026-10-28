@@ -234,6 +234,19 @@ struct ClipRenderingService {
                 }
             }
             
+            // Пост-рендер валидация шортса
+            if let clipURL = clip.clipJob?.url {
+                let validationService = RenderValidationService()
+                let validationResult = await validationService.validateShort(
+                    outputURL: clipURL,
+                    workingDirectory: settings.workingDirectory
+                )
+                clip.validationResult = validationResult
+                if validationResult.hasIssues {
+                    ShortClip.log("WARNING: Short clip validation issues: \(validationResult.issues.map { $0.description }.joined(separator: ", "))")
+                }
+            }
+            
             clip.stage = .ready
         } else {
             clip.stage = .captioning
@@ -259,6 +272,19 @@ struct ClipRenderingService {
                     ShortClip.log("Applied loudness normalization to Short clip: \(clipURL.lastPathComponent)")
                 } catch {
                     ShortClip.log("WARNING: Loudness normalization failed for Short clip: \(error.localizedDescription). Continuing without normalization.")
+                }
+            }
+            
+            // Пост-рендер валидация шортса
+            if let clipURL = clip.clipJob?.url {
+                let validationService = RenderValidationService()
+                let validationResult = await validationService.validateShort(
+                    outputURL: clipURL,
+                    workingDirectory: settings.workingDirectory
+                )
+                clip.validationResult = validationResult
+                if validationResult.hasIssues {
+                    ShortClip.log("WARNING: Short clip validation issues: \(validationResult.issues.map { $0.description }.joined(separator: ", "))")
                 }
             }
             

@@ -180,6 +180,10 @@ struct LongformNarrativeArc: Codable, Identifiable, Equatable, Sendable {
     var ctaText: String? = nil
     /// Главный тезис эссе из плана Director.
     var thesis: String? = nil
+    
+    /// Причина деградации на эвристику. nil — арка собрана штатно через LLM.
+    /// UI показывает баннер если поле не nil.
+    var degradationReason: String? = nil
 
     var segments: [TimeSegment] {
         acts.flatMap(\.segments)

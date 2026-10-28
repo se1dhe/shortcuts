@@ -7,19 +7,22 @@ struct LongformBuildResult: Codable, Equatable, Sendable {
     let metadata: LongformYouTubeMetadata
     let duration: Double
     let thumbnailURL: URL?
+    let validationResult: RenderValidationResult?
 
     init(
         outputURL: URL,
         arc: LongformNarrativeArc,
         metadata: LongformYouTubeMetadata,
         duration: Double,
-        thumbnailURL: URL? = nil
+        thumbnailURL: URL? = nil,
+        validationResult: RenderValidationResult? = nil
     ) {
         self.outputURL = outputURL
         self.arc = arc
         self.metadata = metadata
         self.duration = duration
         self.thumbnailURL = thumbnailURL
+        self.validationResult = validationResult
     }
 }
 

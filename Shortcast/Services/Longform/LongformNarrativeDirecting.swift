@@ -10,12 +10,14 @@ protocol LongformNarrativeDirecting: Sendable {
     ///   - movieTitle: Название фильма
     ///   - targetDuration: Целевая длительность эссе в секундах
     ///   - essayPlan: План эссе от Director (хук, CTA, фокус актов). nil — старая 4-актная арка.
+    ///   - sourceMovieURL: URL исходного фильма для плотностного анализа аудио (credits guard)
     func buildArc(
         from transcript: Transcript,
         concept: ThematicConcept,
         selectedMoments: [SelectedMoment],
         movieTitle: String,
         targetDuration: Double,
-        essayPlan: EssayPlan?
+        essayPlan: EssayPlan?,
+        sourceMovieURL: URL?
     ) async throws -> LongformNarrativeArc
 }

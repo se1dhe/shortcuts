@@ -92,6 +92,30 @@ struct LongformResultsView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 16)
 
+                // Баннер деградации если LLM не справился
+                if let reason = result.arc.degradationReason {
+                    HStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.title3)
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Использована эвристика вместо LLM")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text(reason)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        
+                        Spacer()
+                    }
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.1)))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.orange.opacity(0.3), lineWidth: 1))
+                    .padding(.horizontal, 20)
+                }
+
                 // 16:9 Контейнер плеера
                 ZStack {
                     Color.black

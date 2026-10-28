@@ -61,13 +61,25 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
                 selectedMoments: selectedMoments,
                 movieTitle: movieTitle,
                 targetDuration: essayPlan?.effectiveTargetDuration ?? 520.0,
-                essayPlan: essayPlan
+                essayPlan: essayPlan,
+                sourceMovieURL: sourceURL
             )
+            
+            // Режиссёрское ревью арки (опциональный второй LLM-проход)
+            let reviewService = DirectorReviewService()
+            let reviewResult = await reviewService.review(
+                arc: built,
+                transcript: transcript,
+                concept: concept,
+                movieTitle: movieTitle
+            )
+            let reviewedArc = reviewResult.arc
+            
             // Второй LLM-проход: названия актов из РЕАЛЬНОГО диалога, вошедшего в каждый акт.
             // Выполняется ровно один раз и до stagedArc, иначе LongformAct.id меняется под
             // открытым редактором и правки сцен осиротевают.
             let outcome = await actTitling.applyTitles(
-                to: built,
+                to: reviewedArc,
                 transcript: transcript,
                 movieTitle: movieTitle,
                 progress: { step in progressHandler?(0.15, step) }
@@ -482,6 +494,17 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             }
         }
 
+        // 5.6. Пост-рендер валидация: громкость, длительность, наличие треков
+        progressHandler?(0.93, "Валидация рендера...")
+        let validationService = RenderValidationService()
+        let validationResult = await validationService.validateLongform(
+            outputURL: finalVideoURL,
+            workingDirectory: workingDirectory
+        )
+        if validationResult.hasIssues {
+            Self.logger.warning("Longform validation issues: \(validationResult.issues.map { $0.description }.joined(separator: ", "))")
+        }
+
         // 6. Генерация кинематографической обложки YouTube Thumbnail (1920x1080)
         progressHandler?(0.95, "Создание обложки YouTube 1080p...")
         let thumbOutputURL = ExportLayout.artifact(in: filmDir, kind: .cover, base: concept.word, ext: "jpg")
@@ -508,7 +531,8 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             arc: arc,
             metadata: metadata,
             duration: totalDuration,
-            thumbnailURL: thumbnailURL
+            thumbnailURL: thumbnailURL,
+            validationResult: validationResult
         )
     }
 

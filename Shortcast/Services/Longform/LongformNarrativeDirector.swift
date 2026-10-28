@@ -88,19 +88,37 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         selectedMoments: [SelectedMoment],
         movieTitle: String,
         targetDuration: Double = 520.0,
-        essayPlan: EssayPlan? = nil
+        essayPlan: EssayPlan? = nil,
+        sourceMovieURL: URL? = nil
     ) async throws -> LongformNarrativeArc {
         let requestedDuration = essayPlan?.targetDuration ?? targetDuration
         let clampedAsk = min(max(requestedDuration, 300.0), 900.0)
         let segments = transcript.segments
+        let totalMovieDuration = segments.last?.end ?? clampedAsk
+        
+        // Плотностный credits guard: анализируем аудио чтобы найти конец драматического тела
+        // вместо hardcoded 95%. Это важно для короткометражек где 5% = всего 30 секунд.
+        let creditsCutoffRatio: Double
+        if let sourceURL = sourceMovieURL {
+            let analyzer = AudioDensityAnalyzer()
+            let dramaticEnd = await analyzer.findDramaticBodyEnd(
+                videoURL: sourceURL,
+                totalDuration: totalMovieDuration
+            )
+            creditsCutoffRatio = dramaticEnd / totalMovieDuration
+        } else {
+            creditsCutoffRatio = 0.95
+        }
 
         guard !segments.isEmpty else {
             // Если транскрипт пуст, возвращаем синтетическую тестовую структуру
-            return makeSyntheticArc(
+            var arc = makeSyntheticArc(
                 movieTitle: movieTitle,
                 concept: concept,
                 targetDuration: clampedAsk
             )
+            arc.degradationReason = "Транскрипт пуст, использована синтетическая арка"
+            return arc
         }
 
         // LLM-таймкоды — непроверенный внешний вход: без чистки инвертированные или
@@ -115,16 +133,20 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             // минимум по трём ролям; иначе сохраняем прежнюю 4-актную раскладку.
             if let plan = essayPlan,
                Self.analyticCoverage(of: sanitizedMoments) >= 3 {
-                return try buildAnalyticArc(
+                var arc = try buildAnalyticArc(
                     selectedMoments: sanitizedMoments,
                     transcript: transcript,
                     concept: concept,
                     movieTitle: movieTitle,
                     targetDuration: clampedAsk,
-                    plan: plan
+                    plan: plan,
+                    creditsCutoffRatio: creditsCutoffRatio
                 )
+                // Валидация хука: если хук отсутствует или слишком короткий, фиксируем
+                arc = Self.validateAndFixHook(in: arc, transcript: transcript, concept: concept)
+                return arc
             }
-            return try buildArcFromSelectedMoments(
+            var arc = try buildArcFromSelectedMoments(
                 selectedMoments: sanitizedMoments,
                 transcript: transcript,
                 concept: concept,
@@ -132,17 +154,79 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                 targetDuration: clampedAsk,
                 hookText: essayPlan?.chosenHook,
                 ctaText: essayPlan?.chosenCTA,
-                thesis: essayPlan?.thesis
+                thesis: essayPlan?.thesis,
+                creditsCutoffRatio: creditsCutoffRatio
             )
+            arc = Self.validateAndFixHook(in: arc, transcript: transcript, concept: concept)
+            return arc
         }
 
         // Fallback на эвристику, если selectedMoments пуст
-        return try await buildArcHeuristic(
+        var arc = try await buildArcHeuristic(
             from: transcript,
             concept: concept,
             movieTitle: movieTitle,
             targetDuration: clampedAsk
         )
+        arc.degradationReason = "LLM не выбрал сцены, использована эвристика"
+        return arc
+    }
+    
+    /// Валидирует наличие и длительность хука (20-40 секунд).
+    /// Если хук отсутствует или слишком короткий, пытается исправить.
+    private static func validateAndFixHook(
+        in arc: LongformNarrativeArc,
+        transcript: Transcript,
+        concept: ThematicConcept
+    ) -> LongformNarrativeArc {
+        var arc = arc
+        
+        // Ищем акт с ролью .hook
+        guard let hookIndex = arc.acts.firstIndex(where: { $0.type == .hook }) else {
+            // Хук отсутствует — добавляем fallback из первой сцены
+            let allSegments = arc.acts.flatMap { act in
+                act.segments.map { segment in (actType: act.type, segment: segment) }
+            }
+            if let firstSegment = allSegments.min(by: { abs($0.segment.start) < abs($1.segment.start) }) {
+                let hookSegment = TimeSegment(start: 0, end: min(30, firstSegment.segment.end))
+                let hookAct = LongformAct(
+                    type: .hook,
+                    title: "Хук",
+                    dramaticBeat: "Начало фильма",
+                    segments: [hookSegment]
+                )
+                arc.acts.insert(hookAct, at: 0)
+                arc.degradationReason = "Хук отсутствовал, добавлен fallback из начала фильма"
+            }
+            return arc
+        }
+        
+        // Проверяем длительность хука
+        let hookAct = arc.acts[hookIndex]
+        let hookDuration = hookAct.duration
+        
+        if hookDuration < 20 {
+            // Хук слишком короткий — расширяем до 30 секунд
+            let extendedEnd = min(30, hookAct.segments.last?.end ?? 30)
+            let extendedSegment = TimeSegment(start: 0, end: extendedEnd)
+            arc.acts[hookIndex] = LongformAct(
+                type: .hook,
+                title: hookAct.title,
+                dramaticBeat: hookAct.dramaticBeat,
+                segments: [extendedSegment]
+            )
+        } else if hookDuration > 40 {
+            // Хук слишком длинный — сокращаем до 40 секунд
+            let trimmedSegment = TimeSegment(start: 0, end: 40)
+            arc.acts[hookIndex] = LongformAct(
+                type: .hook,
+                title: hookAct.title,
+                dramaticBeat: hookAct.dramaticBeat,
+                segments: [trimmedSegment]
+            )
+        }
+        
+        return arc
     }
 
     static func analyticCoverage(of moments: [SelectedMoment]) -> Int {
@@ -161,12 +245,13 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         targetDuration: Double,
         hookText: String? = nil,
         ctaText: String? = nil,
-        thesis: String? = nil
+        thesis: String? = nil,
+        creditsCutoffRatio: Double = 0.95
     ) throws -> LongformNarrativeArc {
         let totalMovieDuration = transcript.segments.last?.end ?? targetDuration
         
-        // Пост-фильтрация: исключаем моменты, попадающие в последние 5% фильма (титры)
-        let creditsCutoff = totalMovieDuration * 0.95
+        // Пост-фильтрация: исключаем моменты, попадающие в титры (плотностный анализ)
+        let creditsCutoff = totalMovieDuration * creditsCutoffRatio
         let filteredMoments = selectedMoments.filter { $0.endTime < creditsCutoff }
         
         // Если фильтрация удалила все моменты, используем оригинальные (fallback)
@@ -278,10 +363,11 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         concept: ThematicConcept,
         movieTitle: String,
         targetDuration: Double,
-        plan: EssayPlan
+        plan: EssayPlan,
+        creditsCutoffRatio: Double = 0.95
     ) throws -> LongformNarrativeArc {
         let totalMovieDuration = transcript.segments.last?.end ?? targetDuration
-        let creditsCutoff = totalMovieDuration * 0.95
+        let creditsCutoff = totalMovieDuration * creditsCutoffRatio
         let filtered = selectedMoments.filter { $0.endTime < creditsCutoff }
         let moments = filtered.isEmpty ? selectedMoments : filtered
 

@@ -302,15 +302,51 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
 
     // MARK: - Фильтрация некириллических символов (Задача 2)
 
+    /// Whitelist кино-терминов и имён собственных, которые разрешены в не-кириллических фильмах
+    private static let allowedNonCyrillicTerms = [
+        // Кино-термины
+        "hook", "catharsis", "form", "psychology", "philosophy", "CTA",
+        // Платформы
+        "Telegram", "YouTube", "Shorts", "TikTok", "Instagram", "Facebook", "Twitter", "Netflix", "HBO", "Disney", "Pixar", "Marvel", "DC",
+        // Режиссёры (латиница)
+        "Nolan", "Fincher", "Scorsese", "Coen", "Villeneuve", "Besson", "Darabont", "Chazelle", "Refn", "Tarantino",
+        // Актёры (латиница)
+        "DiCaprio", "Pitt", "Jolie", "Clooney", "Gosling", "Bale", "Ledger",
+        // Кино-термины (кириллица)
+        "хук", "катарсис", "форма", "психологія", "філософія",
+        // Платформы (кириллица)
+        "Телеграм", "Ютуб", "ТікТок", "Інстаграм", "Фейсбук", "Твіттер", "Нетфлікс", "Дісней", "Піксар", "Марвел"
+    ]
+
     /// Удаляет некириллические символы (арабские, латинские и др.), сохраняя кириллицу,
-    /// цифры, пробелы и знаки препинания.
+    /// цифры, пробелы, знаки препинания и whitelist термины.
     static func filterNonCyrillic(_ text: String) -> String {
+        var processedText = text
+        var placeholders: [String: String] = [:]
+        
+        // Заменяем whitelist термины на уникальные кириллические плейсхолдеры
+        for (index, term) in allowedNonCyrillicTerms.enumerated() {
+            let placeholder = "КІНОТЕРМІН\(index)КИНОТЕРМ"
+            if processedText.contains(term) {
+                processedText = processedText.replacingOccurrences(of: term, with: placeholder)
+                placeholders[placeholder] = term
+            }
+        }
+        
+        // Применяем фильтр не-кириллицы
         guard let regex = try? NSRegularExpression(
             pattern: "[^\\p{Cyrillic}\\p{Number}\\s\\p{Punctuation}]",
             options: []
         ) else { return text }
-        let range = NSRange(text.startIndex..., in: text)
-        return regex.stringByReplacingMatches(in: text, range: range, withTemplate: "")
+        let range = NSRange(processedText.startIndex..., in: processedText)
+        processedText = regex.stringByReplacingMatches(in: processedText, range: range, withTemplate: "")
+        
+        // Восстанавливаем whitelist термины из плейсхолдеров
+        for (placeholder, original) in placeholders {
+            processedText = processedText.replacingOccurrences(of: placeholder, with: original)
+        }
+        
+        return processedText
     }
 
     /// Применяет фильтрацию некириллических символов к текстовым полям концепта.

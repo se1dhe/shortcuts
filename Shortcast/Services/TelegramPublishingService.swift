@@ -12,6 +12,12 @@ protocol TelegramPublishingProtocol: Sendable {
         botToken: String,
         channelId: String
     ) async throws -> Int
+    func sendPoll(
+        question: String,
+        options: [String],
+        botToken: String,
+        channelId: String
+    ) async throws -> Int
 }
 
 enum TelegramPublishError: LocalizedError {
@@ -367,6 +373,53 @@ final class TelegramPublishingService: TelegramPublishingProtocol, Sendable {
     private func parseErrorDescription(from data: Data) -> String? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         return json["description"] as? String
+    }
+    
+    /// Отправляет опрос (poll) в Telegram канал.
+    /// - Parameters:
+    ///   - question: Вопрос для опроса
+    ///   - options: Варианты ответов (2-10 вариантов)
+    ///   - botToken: Токен бота
+    ///   - channelId: ID канала
+    /// - Returns: ID сообщения с опросом
+    func sendPoll(
+        question: String,
+        options: [String],
+        botToken: String,
+        channelId: String
+    ) async throws -> Int {
+        let token = botToken.trimmed
+        let channel = channelId.trimmed
+        guard !token.isEmpty, !channel.isEmpty else {
+            throw TelegramPublishError.emptyCredentials
+        }
+        
+        guard options.count >= 2 && options.count <= 10 else {
+            throw TelegramPublishError.apiError("Опрос должен содержать от 2 до 10 вариантов ответа")
+        }
+        
+        let cleanChannel = channel.hasPrefix("@") ? channel : "@\(channel)"
+        
+        // Формируем параметры запроса
+        var params: [String: Any] = [
+            "chat_id": cleanChannel,
+            "question": question,
+            "options": options,
+            "is_anonymous": true,
+            "allows_multiple_answers": false
+        ]
+        
+        guard let url = URL(string: "https://api.telegram.org/bot\(token)/sendPoll") else {
+            throw TelegramPublishError.invalidURL
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: params)
+        
+        let (data, resp) = try await session.data(for: request)
+        return try parseMessageID(from: data, response: resp)
     }
 }
 

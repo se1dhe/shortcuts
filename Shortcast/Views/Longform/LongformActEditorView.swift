@@ -91,6 +91,7 @@ struct LongformActEditorView: View {
 
     @State private var editedActs: [EditableActModel] = []
     @State private var selectedActIndex: Int = 0
+    @State private var selectedSceneID: UUID?
     @State private var sourceDuration: Double = .infinity
     @State private var previewPlayer: AVPlayer?
     @State private var previewStopTask: Task<Void, Never>?
@@ -466,18 +467,26 @@ struct LongformActEditorView: View {
 
                 // Сцены акта
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Сцены и склейки фильма (\(act.scenes.count)):")
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(.primary)
+                    EditorTimelineView(
+                        clips: act.scenes.map { EditorTimelineClip(id: $0.id, start: $0.start, end: $0.end, isAdded: $0.isAdded) },
+                        selectedID: selectedSceneID,
+                        onSelect: { id in
+                            selectedSceneID = id
+                            if let scene = act.scenes.first(where: { $0.id == id }) {
+                                playRange(start: scene.start, end: scene.end)
+                            }
+                        },
+                        onInsertAt: { insertionTarget = SceneInsertionTarget(actIndex: actIndex, index: $0) },
+                        onMoveEarlier: { moveScene($0, in: actIndex, delta: -1) },
+                        onMoveLater: { moveScene($0, in: actIndex, delta: 1) },
+                        onRemove: nil
+                    )
 
-                    insertionButton(actIndex: actIndex, index: 0, title: "Добавить сцену в начало акта")
+                    Text("Выберите блок для точной подрезки. «+» между блоками открывает поиск сцены по транскрипту.")
+                        .font(.caption).foregroundStyle(StudioTheme.muted)
 
                     ForEach(0..<act.scenes.count, id: \.self) { sceneIdx in
                         sceneTrimmerCard(actIndex: actIndex, sceneIndex: sceneIdx)
-                        insertionButton(actIndex: actIndex, index: sceneIdx + 1,
-                                        title: sceneIdx == act.scenes.count - 1
-                                            ? "Добавить сцену в конец акта"
-                                            : "Вставить сцену после сцены \(sceneIdx + 1)")
                     }
                 }
             }
@@ -668,8 +677,10 @@ struct LongformActEditorView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(scene.isEdited ? Color.green.opacity(0.3) : Color.white.opacity(0.05), lineWidth: 1)
+                .strokeBorder(selectedSceneID == scene.id ? StudioTheme.accent : (scene.isEdited ? Color.green.opacity(0.3) : Color.white.opacity(0.05)),
+                              lineWidth: selectedSceneID == scene.id ? 1.5 : 1)
         )
+        .onTapGesture { selectedSceneID = scene.id }
     }
 
     private func trimButton(label: String, delta: Double, action: @escaping () -> Void) -> some View {
@@ -965,6 +976,16 @@ struct LongformActEditorView: View {
         selectedActIndex = target.actIndex
         reviewedArc = nil
         reviewMessage = nil
+    }
+
+    private func moveScene(_ id: UUID, in actIndex: Int, delta: Int) {
+        guard editedActs.indices.contains(actIndex),
+              let source = editedActs[actIndex].scenes.firstIndex(where: { $0.id == id }) else { return }
+        let destination = source + delta
+        guard editedActs[actIndex].scenes.indices.contains(destination) else { return }
+        editedActs[actIndex].scenes.swapAt(source, destination)
+        selectedSceneID = id
+        reviewedArc = nil
     }
 
     private func draftArc() -> LongformNarrativeArc {

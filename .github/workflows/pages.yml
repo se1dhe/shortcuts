@@ -2,7 +2,7 @@ name: Publish studio presentation
 
 on:
   push:
-    branches: [phase-1-critical-fixes, stable, main]
+    branches: [phase-1-critical-fixes, stable, main, RELEASE]
     paths:
       - "site/**"
       - ".github/workflows/pages.yml"

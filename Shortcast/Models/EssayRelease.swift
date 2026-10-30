@@ -97,6 +97,8 @@ struct EssayShort: Codable, Sendable, Equatable, Identifiable {
     var candidateID: String? = nil
     var selectionModelID: String? = nil
     var captionEdits: [LongformCaptionEdit]? = nil
+    /// Source ranges deliberately added from the film transcript rather than copied from the essay.
+    var manuallyAddedSegments: [TimeSegment]? = nil
     var duration: Double { segments.reduce(0) { $0 + $1.duration } + 3 }
 
     func post(platform: SocialPlatform, movieTitle: String, release: EssayRelease, telegramURL: String?) -> PostVariant {

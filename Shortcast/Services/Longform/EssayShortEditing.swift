@@ -11,13 +11,20 @@ enum EssayShortEditing {
               !short.angle.trimmed.isEmpty, !short.question.trimmed.isEmpty else {
             throw EssayReleaseError.invalid("Заполните название, хук, мысль и вопрос шортса.")
         }
+        let manualSegments = short.manuallyAddedSegments ?? []
+        guard manualSegments.allSatisfy({ manual in
+            short.segments.contains { abs($0.start - manual.start) < 0.01 && abs($0.end - manual.end) < 0.01 }
+        }) else {
+            throw EssayReleaseError.invalid("Ручная отметка сцены не совпадает с её границами. Выберите фрагмент повторно.")
+        }
         guard !short.segments.isEmpty, sourceDuration.isFinite, sourceDuration > 0,
               short.segments.allSatisfy({ range in
                   range.start.isFinite && range.end.isFinite && range.start >= 0 &&
                   range.end <= sourceDuration && range.duration >= 3 &&
-                  arc.acts.flatMap(\.segments).contains { $0.start <= range.start + 0.001 && $0.end >= range.end - 0.001 }
+                  (arc.acts.flatMap(\.segments).contains { $0.start <= range.start + 0.001 && $0.end >= range.end - 0.001 }
+                   || manualSegments.contains { abs($0.start - range.start) < 0.01 && abs($0.end - range.end) < 0.01 })
               }) else {
-            throw EssayReleaseError.invalid("Каждая сцена должна длиться от 3 секунд и находиться внутри материала эссе и исходного фильма.")
+            throw EssayReleaseError.invalid("Каждая сцена должна длиться от 3 секунд и находиться в эссе либо быть явно добавлена из исходного фильма.")
         }
         guard (15...60).contains(short.duration) else {
             throw EssayReleaseError.invalid("Длительность шортса вместе с финальной карточкой должна быть от 15 до 60 секунд.")

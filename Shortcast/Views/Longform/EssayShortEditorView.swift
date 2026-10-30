@@ -1,6 +1,11 @@
 import AVKit
 import SwiftUI
 
+private struct ShortSceneInsertionTarget: Identifiable {
+    let id = UUID()
+    let index: Int
+}
+
 struct EssayShortEditorView: View {
     let result: LongformBuildResult
     let transcript: Transcript
@@ -13,12 +18,18 @@ struct EssayShortEditorView: View {
     @State private var sourceDuration: Double = 0
     @State private var busy = false
     @State private var error: String?
+    @State private var selectedSceneID: UUID?
+    @State private var insertionTarget: ShortSceneInsertionTarget?
 
     init(short: EssayShort, result: LongformBuildResult, transcript: Transcript,
          sourceURL: URL, onSave: @escaping (EssayShort) async throws -> Void) {
         _draft = State(initialValue: short)
-        _scenes = State(initialValue: short.segments.enumerated().map {
-            EditableSceneSegment(sceneIndex: $0.offset, start: $0.element.start, end: $0.element.end)
+        _scenes = State(initialValue: short.segments.enumerated().map { item in
+            let isManual = short.manuallyAddedSegments?.contains { range in
+                abs(range.start - item.element.start) < 0.01 && abs(range.end - item.element.end) < 0.01
+            } ?? false
+            return EditableSceneSegment(sceneIndex: item.offset, start: item.element.start, end: item.element.end,
+                                        isAdded: isManual, manualSourceRange: isManual ? item.element : nil)
         })
         self.result = result; self.transcript = transcript
         self.sourceURL = sourceURL; self.onSave = onSave
@@ -27,6 +38,8 @@ struct EssayShortEditorView: View {
     private var editedShort: EssayShort {
         var result = draft
         result.segments = scenes.map { TimeSegment(start: $0.start, end: $0.end) }
+        let manual = scenes.filter(\.isAdded).map { TimeSegment(start: $0.start, end: $0.end) }
+        result.manuallyAddedSegments = manual.isEmpty ? nil : manual
         result.captionEdits = draft.captionEdits?.filter { edit in
             selectedCaptions.contains { $0.start == edit.start && $0.end == edit.end }
         }
@@ -60,7 +73,21 @@ struct EssayShortEditorView: View {
             HStack(alignment: .top, spacing: 20) {
                 VStack(alignment: .leading, spacing: 12) {
                     VideoPlayer(player: player).frame(height: 270)
-                    Text("Предпросмотр исходной сцены. Готовый вертикальный монтаж появится в выпуске после пересборки.")
+                    EditorTimelineView(
+                        clips: scenes.map { EditorTimelineClip(id: $0.id, start: $0.start, end: $0.end, isAdded: $0.isAdded) },
+                        selectedID: selectedSceneID,
+                        onSelect: { id in
+                            selectedSceneID = id
+                            if let scene = scenes.first(where: { $0.id == id }) {
+                                preview(TimeSegment(start: scene.start, end: scene.end))
+                            }
+                        },
+                        onInsertAt: { insertionTarget = ShortSceneInsertionTarget(index: $0) },
+                        onMoveEarlier: { moveScene($0, delta: -1) },
+                        onMoveLater: { moveScene($0, delta: 1) },
+                        onRemove: { id in scenes.removeAll { $0.id == id } }
+                    )
+                    Text("Блоки идут в порядке финального ролика. Нажмите на сцену для просмотра, используйте «+» на склейке для вставки фрагмента из фильма.")
                         .font(.caption).foregroundStyle(.secondary)
                     if busy { ProgressView("Сохраняем монтаж, субтитры и обложку…") }
                     if let message = error ?? validationError { Text(message).font(.callout).foregroundStyle(.red) }
@@ -81,14 +108,8 @@ struct EssayShortEditorView: View {
                                 ForEach($scenes) { scene in
                                     sceneRow(scene)
                                 }
-                                Menu("Добавить сцену из эссе", systemImage: "plus") {
-                                    ForEach(Array(result.arc.acts.enumerated()), id: \.offset) { _, act in
-                                        ForEach(Array(act.segments.enumerated()), id: \.offset) { _, range in
-                                            Button("\(act.title) · \(range.start.formatted(.number.precision(.fractionLength(1))))–\(range.end.formatted(.number.precision(.fractionLength(1)))) с") {
-                                                scenes.append(EditableSceneSegment(sceneIndex: scenes.count, start: range.start, end: range.end))
-                                            }
-                                        }
-                                    }
+                                Button("Добавить сцену из фильма", systemImage: "plus.viewfinder") {
+                                    insertionTarget = ShortSceneInsertionTarget(index: scenes.count)
                                 }
                             }.padding(6)
                         }
@@ -115,6 +136,21 @@ struct EssayShortEditorView: View {
         .background(StudioTheme.background)
         .tint(StudioTheme.accent)
         .interactiveDismissDisabled(busy)
+        .sheet(item: $insertionTarget) { target in
+            LongformSceneInsertSheet(
+                transcriptSegments: transcript.segments,
+                existingRanges: scenes.map { TimeSegment(start: $0.start, end: $0.end) },
+                sourceURL: sourceURL,
+                sourceDuration: sourceDuration,
+                onInsert: { range in
+                    let scene = EditableSceneSegment(sceneIndex: target.index, start: range.start, end: range.end,
+                                                     isAdded: true, manualSourceRange: range)
+                    scenes.insert(scene, at: min(target.index, scenes.count))
+                    selectedSceneID = scene.id
+                }
+            )
+            .frame(minWidth: 760, minHeight: 600)
+        }
         .task {
             player = AVPlayer(url: sourceURL)
             do { sourceDuration = try await AVURLAsset(url: sourceURL).load(.duration).seconds }
@@ -161,6 +197,13 @@ struct EssayShortEditorView: View {
             }
             draft.captionEdits = edits.isEmpty ? nil : edits
         })
+    }
+
+    private func moveScene(_ id: UUID, delta: Int) {
+        guard let source = scenes.firstIndex(where: { $0.id == id }) else { return }
+        let destination = source + delta
+        guard scenes.indices.contains(destination) else { return }
+        scenes.swapAt(source, destination)
     }
 
     private func preview(_ range: TimeSegment) {

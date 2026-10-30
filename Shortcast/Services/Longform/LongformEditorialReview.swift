@@ -153,28 +153,41 @@ struct LongformEditorialReview: Sendable {
         let maxAttempts = 4
 
         for attemptNumber in 1...maxAttempts {
-            progress(attemptNumber == 1
-                ? "Анализирую замечания редактора и фразы рядом со сценами…"
-                : "Перестраиваю вариант по результату проверки · попытка \(attemptNumber) из \(maxAttempts)…")
+            progress("Попытка \(attemptNumber)/\(maxAttempts) · анализирую замечания, реплики рядом и допустимые границы сцен…")
             let basePrompt = Self.prompt(arc: working, transcript: transcript)
             let memory = correctionMemory.promptExamples(for: basePrompt,
                 filmKey: correctionFilmKey, language: correctionLanguage)
             let retry = repairContext.map { "\n\nРЕЗУЛЬТАТ ПРЕДЫДУЩЕЙ ПРОВЕРКИ — ИСПРАВЬ ОТВЕТ, НЕ ПОВТОРЯЙ ОТКЛОНЁННЫЙ ВАРИАНТ:\n\($0)" } ?? ""
-            let prompt = basePrompt + memory + retry
+            let compactRetry = attemptNumber > 1
+                ? "\n\nФОРМАТ ОТВЕТА ПРИ ПОВТОРЕ: верни только JSON с обязательными массивами edits и notes, без title, hook, conclusion и captionSuggestions. Каждый элемент edits должен содержать scene (целое число), option (точный ID из списка именно этой сцены), reason (непустая строка). Не добавляй никакого текста вне JSON."
+                : ""
+            let prompt = basePrompt + (attemptNumber == 1 ? memory : "") + retry + compactRetry
             DirectorRunLog.write("editorial review: attempt=\(attemptNumber) scenes=\(working.segments.count) promptChars=\(prompt.count)")
-            guard let raw = await model.complete(instructions: Self.instructions, prompt: prompt, maxTokens: 2048) else {
+            progress("Попытка \(attemptNumber)/\(maxAttempts) · передаю модели список проблем и доступные варианты монтажа…")
+            guard let raw = await model.complete(instructions: Self.instructions, prompt: prompt, maxTokens: 3072) else {
                 attempts.append(Attempt(id: attemptNumber, message: "Модель не вернула ответ; повторяю запрос с текущими замечаниями.", accepted: false))
                 repairContext = "Вызов не вернул текст. Верни полный JSON в требуемом формате."
+                progress("Попытка \(attemptNumber)/\(maxAttempts) · ответ не получен; отправляю повторный запрос с теми же сценами.")
                 continue
             }
             DirectorRunLog.dumpRaw(raw, stage: "editorial", attempt: attemptNumber)
-            guard let reviewed = Self.apply(raw, to: working, transcript: transcript, coldOpenEnabled: coldOpenEnabled) else {
+            progress("Попытка \(attemptNumber)/\(maxAttempts) · ответ получен; проверяю формат, границы, стыки и хронометраж…")
+            var reviewed = Self.apply(raw, to: working, transcript: transcript, coldOpenEnabled: coldOpenEnabled)
+            if reviewed == nil {
                 let issue = Self.validationFeedback(raw, arc: working, transcript: transcript, coldOpenEnabled: coldOpenEnabled)
-                attempts.append(Attempt(id: attemptNumber, message: issue, accepted: false))
-                repairContext = "Твой ответ не прошёл проверку: \(issue)\nИсправь JSON и выбери только допустимые варианты, перечисленные для каждой сцены. Не меняй номера сцен."
-                progress("Ответ не прошёл проверку: \(issue). Прошу модель исправить решение…")
-                continue
+                progress("Ответ не прошёл проверку: \(issue). Запрашиваю точечное решение по этой сцене…")
+                reviewed = await Self.repairInvalidOption(raw, issue: issue, arc: working, transcript: transcript,
+                    coldOpenEnabled: coldOpenEnabled, model: model, attempt: attemptNumber, progress: progress)
+                if reviewed == nil {
+                    attempts.append(Attempt(id: attemptNumber, message: issue, accepted: false))
+                    repairContext = "ТВОЙ ПРЕДЫДУЩИЙ ОТВЕТ ОТКЛОНЁН: \(issue)\n\(Self.repairDirective(issue: issue, raw: raw, arc: working, transcript: transcript))\nВерни только корректный JSON с массивами edits и notes. У edits обязательны целые scene, точный option из списка этой сцены и непустой reason. Не используй вариант из отклонённого ответа."
+                    progress("Ответ не прошёл проверку: \(issue). Повторю с короткой точечной инструкцией.")
+                    continue
+                }
+                progress("Точечный вариант сцены прошёл проверку; пересчитываю все замечания и стыки…")
             }
+
+            guard let reviewed else { continue }
 
             let notes = reviewed.editorialNotes ?? []
             let fingerprint = reviewed.segments.map { "\(Int($0.start * 100)):\(Int($0.end * 100))" }.joined(separator: ",")
@@ -188,8 +201,10 @@ struct LongformEditorialReview: Sendable {
             attempts.append(Attempt(id: attemptNumber,
                 message: changed ? "Вариант прошёл проверку; замечаний осталось: \(notes.count)." : "Вариант прошёл проверку, границы не изменились; замечаний осталось: \(notes.count).",
                 accepted: true))
+            let adjustedScenes = zip(working.segments, reviewed.segments).filter { $0.0 != $0.1 }.count
             working = reviewed
             didAccept = true
+            progress("Попытка \(attemptNumber)/\(maxAttempts) · вариант прошёл все технические проверки; изменено сцен: \(adjustedScenes), осталось замечаний: \(notes.count).")
 
             if notes.isEmpty {
                 result = reviewed
@@ -258,6 +273,103 @@ struct LongformEditorialReview: Sendable {
             return "Границы прошли техническую проверку, но замечания остаются: \((applied.editorialNotes ?? []).joined(separator: " | ")). Предложи другие допустимые варианты, чтобы устранить их."
         }
         return "Выбранные диапазоны конфликтуют: не допускаются пересечения сцен и итоговая длительность эссе должна быть 4–8 минут. Пересчитай комбинацию вариантов; доступные варианты для каждой сцены перечислены в исходном запросе."
+    }
+
+    private static func repairDirective(issue: String, raw: String, arc: LongformNarrativeArc,
+                                        transcript: Transcript) -> String {
+        guard let json = JSONVariantParser.extractJSONObject(from: raw),
+              let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let edits = object["edits"] as? [[String: Any]],
+              let edit = edits.first(where: { candidate in
+                  guard let scene = candidate["scene"] as? Int, let id = candidate["option"] as? String,
+                        let (ai, si) = placement(scene, in: arc) else { return false }
+                  return !options(for: arc.acts[ai].segments[si], transcript: transcript).contains { $0.id == id }
+              }),
+              let scene = edit["scene"] as? Int,
+              let (ai, si) = placement(scene, in: arc) else {
+            return "Верни строго: {\"edits\":[],\"notes\":[\"конкретное решение\"]}. Не добавляй title, hook и captionSuggestions."
+        }
+        let range = arc.acts[ai].segments[si]
+        let options = Self.options(for: range, transcript: transcript)
+            .map { "\($0.id) = \(String(format: "%.2f", $0.range.start))–\(String(format: "%.2f", $0.range.end))" }
+            .joined(separator: "; ")
+        let nearby = transcript.segments.filter { $0.end > range.start - 8 && $0.start < range.end + 8 }
+            .map { "\(String(format: "%.2f", $0.start))–\(String(format: "%.2f", $0.end)): \($0.text)" }
+            .joined(separator: "\n")
+        return "Проблема: \(issue)\nИСПРАВЬ ТОЛЬКО SCENE \(scene). Допустимые варианты именно этой сцены: \(options). Контекст реплик:\n\(nearby)\nОтклонённый ответ: \(String(json.prefix(1200)))"
+    }
+
+    private static func repairInvalidOption(_ raw: String, issue: String, arc: LongformNarrativeArc,
+                                            transcript: Transcript, coldOpenEnabled: Bool,
+                                            model: any LongformActTitleModeling, attempt: Int,
+                                            progress: @Sendable (String) -> Void) async -> LongformNarrativeArc? {
+        guard issue.contains("выбран вариант") || issue.contains("списке"),
+              let json = JSONVariantParser.extractJSONObject(from: raw),
+              let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let edits = object["edits"] as? [[String: Any]],
+              let invalidEdit = edits.first(where: { edit in
+                  guard let scene = edit["scene"] as? Int, let id = edit["option"] as? String,
+                        let (ai, si) = placement(scene, in: arc) else { return false }
+                  return !options(for: arc.acts[ai].segments[si], transcript: transcript).contains { $0.id == id }
+              }),
+              let scene = invalidEdit["scene"] as? Int,
+              let (ai, si) = placement(scene, in: arc) else { return nil }
+
+        let range = arc.acts[ai].segments[si]
+        let allAvailable = options(for: range, transcript: transcript)
+        // A focused repair exists because the current scene has an active note.
+        // Ask the model for a real alternative; keeping the same broken boundary
+        // would only turn a rejected edit into a silent no-op.
+        let alternatives = allAvailable.filter { $0.id != "keep" }
+        let available = alternatives.isEmpty ? allAvailable : alternatives
+        let rejectedOption = invalidEdit["option"] as? String ?? "неизвестный ID"
+        guard available.count > 1 else { return nil }
+        let optionList = available.map {
+            "{\"option\":\"\($0.id)\",\"start\":\(String(format: "%.2f", $0.range.start)),\"end\":\(String(format: "%.2f", $0.range.end))}"
+        }.joined(separator: ", ")
+        let dialogue = transcript.segments.filter { $0.end > range.start - 8 && $0.start < range.end + 8 }
+            .map { "\(String(format: "%.2f", $0.start))–\(String(format: "%.2f", $0.end)): \($0.text)" }
+            .joined(separator: "\n")
+        let prompt = """
+        Виправ лише одне редакторське рішення для кіноесе.
+        Для сцени \(scene) попередня модель вибрала неіснуючий варіант «\(rejectedOption)». Не повторюй його. Сама оціни контекст реплік і вибери найкращий варіант зі списку. Не використовуй жодного іншого ID і не обирай межу навмання.
+        Зауваження: \(issue)
+        Тема: \(arc.concept.word). Функція акта: \(arc.acts[ai].dramaticBeat)
+        ДОСТУПНІ ВАРІАНТИ: [\(optionList)]
+        РЕПЛІКИ ДОВКОЛА СЦЕНИ:
+        \(dialogue)
+        Поверни тільки JSON виду {"scene":\(scene),"option":"точний ID зі списку","reason":"короткое обоснование"}.
+        """
+        progress("Попытка \(attempt) · отдельный запрос для сцены \(scene): модель сравнивает \(available.count) допустимых вариантов…")
+        let focusedInstructions = "Ты — монтажный редактор киноэссе. Оцени реплики и смысл замечания. Выбери лучший вариант только из переданного списка. Верни строго один JSON-объект {\"scene\":integer,\"option\":string,\"reason\":string}; никакого текста до или после JSON. Не создавай ID, таймкоды или варианты от себя."
+        guard let focusedRaw = await model.complete(instructions: focusedInstructions, prompt: prompt, maxTokens: 512) else { return nil }
+        DirectorRunLog.dumpRaw(focusedRaw, stage: "editorial-focused-repair", attempt: attempt)
+        guard let focusedJSON = JSONVariantParser.extractJSONObject(from: focusedRaw),
+              let focusedData = focusedJSON.data(using: .utf8),
+              let choice = try? JSONSerialization.jsonObject(with: focusedData) as? [String: Any],
+              (choice["scene"] as? Int) == scene,
+              let id = choice["option"] as? String,
+              let reason = choice["reason"] as? String, !reason.trimmed.isEmpty,
+              let selected = available.first(where: { $0.id == id }) else { return nil }
+        var revised = arc
+        revised.acts[ai].segments[si] = selected.range
+        let sorted = revised.segments.sorted { $0.start < $1.start }
+        guard zip(sorted, sorted.dropFirst()).allSatisfy({ $0.end <= $1.start }),
+              EssayDurationPolicy.rendered.contains(LongformTimeline(arc: revised, coldOpenEnabled: coldOpenEnabled).duration)
+        else { return nil }
+        revised = protectingActionTails(in: revised, transcript: transcript, coldOpenEnabled: coldOpenEnabled)
+        revised.sceneEdits = LongformEditorialSupport.recordingEdits(from: arc, acts: revised.acts,
+            reason: String(reason.prefix(200)))
+        revised.editorialNotes = LongformEditorialSupport.notes(for: revised, transcript: transcript)
+        return revised
+    }
+
+    private static func placement(_ number: Int, in arc: LongformNarrativeArc) -> (Int, Int)? {
+        let placements = arc.acts.enumerated().flatMap { ai, act in act.segments.indices.map { (ai, $0) } }
+        guard number > 0, number <= placements.count else { return nil }
+        return placements[number - 1]
     }
 
     static func apply(_ raw: String, to arc: LongformNarrativeArc,

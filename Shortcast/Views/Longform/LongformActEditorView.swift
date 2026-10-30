@@ -157,23 +157,68 @@ struct LongformActEditorView: View {
         editedActs.filter(\.isEdited).count
     }
 
+    private var selectedLocation: (actIndex: Int, sceneIndex: Int, scene: EditableSceneSegment)? {
+        if let selectedSceneID {
+            for (actIndex, act) in editedActs.enumerated() {
+                if let sceneIndex = act.scenes.firstIndex(where: { $0.id == selectedSceneID }) {
+                    return (actIndex, sceneIndex, act.scenes[sceneIndex])
+                }
+            }
+        }
+        for (actIndex, act) in editedActs.enumerated() where !act.scenes.isEmpty {
+            return (actIndex, 0, act.scenes[0])
+        }
+        return nil
+    }
+
+    private var sequenceClips: [EditorTimelineClip] {
+        editedActs.enumerated().flatMap { actIndex, act in
+            act.scenes.enumerated().map { sceneIndex, scene in
+                let dialogue = phrasesFor(start: scene.start, end: scene.end).first?.text
+                return EditorTimelineClip(id: scene.id, start: scene.start, end: scene.end,
+                    isAdded: scene.isAdded, actNumber: actIndex + 1, actTitle: act.title,
+                    sceneNumber: sceneIndex + 1, quote: dialogue)
+            }
+        }
+    }
+
+    private var completedReviewEvents: [String] {
+        isReviewing ? Array(reviewEvents.dropLast()) : reviewEvents
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             headerBar
-
-            Divider()
-
             actTabsBar
-
-            Divider()
-
             if !editedActs.isEmpty && selectedActIndex < editedActs.count {
-                actDetailEditor(actIndex: selectedActIndex)
+                VStack(spacing: 14) {
+                    HStack(alignment: .top, spacing: 16) {
+                        monitorPanel
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        sceneInspectorPanel
+                            .frame(width: 410)
+                    }
+                    .frame(maxHeight: .infinity)
+
+                    EditorTimelineView(
+                        clips: sequenceClips,
+                        selectedID: selectedSceneID,
+                        onSelect: selectScene,
+                        onInsertAt: insertAtSequencePosition,
+                        onMoveEarlier: { moveSceneAcrossSequence($0, delta: -1) },
+                        onMoveLater: { moveSceneAcrossSequence($0, delta: 1) },
+                        onRemove: removeScene,
+                        onTrimStart: trimSceneStart,
+                        onTrimEnd: trimSceneEnd
+                    )
+                    .frame(height: 196)
+                }
+                .padding(18)
             } else {
                 ContentUnavailableView("Нет актов для редактирования", systemImage: "film.stack")
             }
         }
-        .frame(minWidth: 1040, minHeight: 700)
+        .frame(minWidth: 1320, minHeight: 900)
         .background(StudioTheme.background)
         .preferredColorScheme(.dark)
         .tint(StudioTheme.accent)
@@ -214,8 +259,8 @@ struct LongformActEditorView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
-                    Text("Монтажный стол кино-эссе")
-                        .font(.headline)
+                    Text("МОНТАЖНАЯ · КИНО-ЭСЕ")
+                        .font(.system(size: 13, weight: .black)).tracking(1.1)
 
                     Text("«\(concept.word.uppercased())»")
                         .font(.caption.weight(.bold))
@@ -234,7 +279,7 @@ struct LongformActEditorView: View {
                     }
                 }
 
-                Text("Фильм «\(movieTitle)» • Обрезайте начало и конец актов — титры и музыка подстроятся автоматически")
+                Text("\(movieTitle) · границы сцен, склейки, акты и предпросмотр")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -245,11 +290,13 @@ struct LongformActEditorView: View {
             HStack(spacing: 8) {
                 VStack(alignment: .trailing, spacing: 1) {
                     HStack(spacing: 4) {
-                        Text("Хронометраж:")
-                            .font(.caption)
+                        Text("ИТОГОВЫЙ ХРОНОМЕТРАЖ")
+                            .font(.system(size: 8, weight: .bold)).tracking(0.8)
                             .foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 4) {
                         Text(formatDuration(totalDuration))
-                            .font(.callout.monospacedDigit().weight(.bold))
+                            .font(.system(size: 15, weight: .bold, design: .monospaced))
                             .foregroundStyle(.primary)
                     }
 
@@ -275,18 +322,13 @@ struct LongformActEditorView: View {
                 Button {
                     applyChangesAndProceed()
                 } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                        Text("Применить и перерендерить")
-                    }
-                    .font(.headline)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
+                    Label("Сохранить монтаж", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 12, weight: .bold))
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(StudioTheme.accent)
+                .buttonStyle(StudioPrimaryButtonStyle())
                 .keyboardShortcut(.defaultAction)
                 .disabled(editingProblem != nil)
+                .help("Сохранить правки и пересобрать выпуск")
             }
         }
         .padding(.horizontal, 18)
@@ -303,7 +345,7 @@ struct LongformActEditorView: View {
                 let isSelected = selectedActIndex == idx
 
                 Button {
-                    selectedActIndex = idx
+                    selectAct(idx)
                 } label: {
                     HStack(spacing: 6) {
                         Circle()
@@ -359,6 +401,297 @@ struct LongformActEditorView: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 8)
         .background(StudioTheme.panel)
+    }
+
+    private var monitorPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("МОНИТОР ИСХОДНИКА")
+                        .font(.system(size: 10, weight: .black)).tracking(1.1)
+                        .foregroundStyle(StudioTheme.accent)
+                    if let selection = selectedLocation {
+                        Text("АКТ \(selection.actIndex + 1) · СЦЕНА \(selection.sceneIndex + 1)")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(StudioTheme.muted)
+                    }
+                }
+                Spacer()
+                if let selection = selectedLocation {
+                    Text("ФИЛЬМ  \(formatTimecode(selection.scene.start)) → \(formatTimecode(selection.scene.end))")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.primary)
+                }
+            }
+
+            Group {
+                if let previewPlayer {
+                    VideoPlayer(player: previewPlayer)
+                        .aspectRatio(16 / 9, contentMode: .fit)
+                        .frame(maxWidth: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: 11))
+                        .overlay(RoundedRectangle(cornerRadius: 11).stroke(StudioTheme.line, lineWidth: 1))
+                } else {
+                    ContentUnavailableView("Нет исходного видео", systemImage: "film")
+                        .aspectRatio(16 / 9, contentMode: .fit)
+                        .frame(maxWidth: .infinity)
+                        .background(StudioTheme.background, in: RoundedRectangle(cornerRadius: 11))
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    if let scene = selectedLocation?.scene { playRange(start: scene.start, end: scene.end) }
+                } label: {
+                    Label("Сцена", systemImage: "play.fill")
+                }
+                .buttonStyle(.borderedProminent).tint(StudioTheme.accent)
+                .disabled(selectedLocation == nil || previewPlayer == nil)
+
+                Button {
+                    if let scene = selectedLocation?.scene {
+                        playRange(start: scene.start, end: min(scene.start + 4, scene.end))
+                    }
+                } label: { Label("Вход", systemImage: "arrow.right.to.line") }
+                    .buttonStyle(.bordered).disabled(selectedLocation == nil || previewPlayer == nil)
+
+                Button {
+                    if let scene = selectedLocation?.scene {
+                        playRange(start: max(scene.start, scene.end - 4), end: scene.end)
+                    }
+                } label: { Label("Выход", systemImage: "arrow.left.to.line") }
+                    .buttonStyle(.bordered).disabled(selectedLocation == nil || previewPlayer == nil)
+
+                Spacer()
+                Text(selectedLocation.map { formatDurationWithTenths($0.scene.duration) } ?? "—")
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundStyle(StudioTheme.accent)
+            }
+            .controlSize(.small)
+        }
+        .padding(14)
+        .background(StudioTheme.panel, in: RoundedRectangle(cornerRadius: 15))
+        .overlay(RoundedRectangle(cornerRadius: 15).stroke(StudioTheme.line, lineWidth: 1))
+    }
+
+    private var sceneInspectorPanel: some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 12) {
+                if let selection = selectedLocation {
+                    let act = editedActs[selection.actIndex]
+                    let scene = selection.scene
+                    VStack(alignment: .leading, spacing: 9) {
+                        HStack {
+                            Label("ИНСПЕКТОР СЦЕНЫ", systemImage: "slider.horizontal.3")
+                                .font(.system(size: 10, weight: .black)).tracking(1)
+                                .foregroundStyle(StudioTheme.accent)
+                            Spacer()
+                            if scene.isEdited {
+                                Text(scene.isAdded ? "ВСТАВЛЕНА" : "ИЗМЕНЕНА")
+                                    .font(.system(size: 8, weight: .black)).tracking(0.5)
+                                    .foregroundStyle(StudioTheme.success)
+                            }
+                        }
+                        Text("Акт \(selection.actIndex + 1) · Сцена \(selection.sceneIndex + 1)")
+                            .font(.title3.weight(.bold))
+                        Text(act.title).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                        Text(act.dramaticBeat).font(.caption).foregroundStyle(StudioTheme.muted).lineLimit(3)
+                    }
+                    .padding(13)
+                    .background(StudioTheme.raised, in: RoundedRectangle(cornerRadius: 11))
+
+                    boundaryRow(title: "IN · НАЧАЛО", value: scene.start, icon: "arrow.right.to.line",
+                        play: { playRange(start: scene.start, end: min(scene.start + 4, scene.end)) },
+                        decrement: { adjustStart(actIndex: selection.actIndex, sceneIndex: selection.sceneIndex, delta: -0.2) },
+                        increment: { adjustStart(actIndex: selection.actIndex, sceneIndex: selection.sceneIndex, delta: 0.2) })
+                    boundaryRow(title: "OUT · КОНЕЦ", value: scene.end, icon: "arrow.left.to.line",
+                        play: { playRange(start: max(scene.start, scene.end - 4), end: scene.end) },
+                        decrement: { adjustEnd(actIndex: selection.actIndex, sceneIndex: selection.sceneIndex, delta: -0.2) },
+                        increment: { adjustEnd(actIndex: selection.actIndex, sceneIndex: selection.sceneIndex, delta: 0.2) })
+
+                    if let first = phrasesFor(start: scene.start, end: scene.end).first {
+                        dialogueExcerpt(title: "ПЕРВАЯ РЕПЛИКА", phrase: first)
+                    }
+                    if let last = phrasesFor(start: scene.start, end: scene.end).last,
+                       last.start != phrasesFor(start: scene.start, end: scene.end).first?.start {
+                        dialogueExcerpt(title: "ПОСЛЕДНЯЯ РЕПЛИКА", phrase: last)
+                    }
+
+                    DisclosureGroup("Точная подрезка и список реплик") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            sceneRangeSliders(actIndex: selection.actIndex, sceneIndex: selection.sceneIndex)
+                            Divider()
+                            ForEach(phrasesFor(start: scene.start, end: scene.end), id: \.start) { phrase in
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text(formatTimecode(phrase.start)).font(.caption2.monospacedDigit())
+                                        .foregroundStyle(StudioTheme.muted).frame(width: 58, alignment: .leading)
+                                    Text(phrase.text).font(.caption).foregroundStyle(.primary)
+                                }
+                            }
+                        }
+                        .padding(.top, 8)
+                    }
+                    .font(.caption.weight(.semibold))
+                    .padding(11)
+                    .background(StudioTheme.raised.opacity(0.7), in: RoundedRectangle(cornerRadius: 10))
+
+                    HStack(spacing: 7) {
+                        Button { moveScene(scene.id, in: selection.actIndex, delta: -1) } label: {
+                            Label("Раньше", systemImage: "arrow.left")
+                        }.disabled(selection.sceneIndex == 0)
+                        Button { moveScene(scene.id, in: selection.actIndex, delta: 1) } label: {
+                            Label("Позже", systemImage: "arrow.right")
+                        }.disabled(selection.sceneIndex + 1 >= act.scenes.count)
+                        Spacer(minLength: 0)
+                        Button(role: .destructive) { removeScene(scene.id) } label: {
+                            Image(systemName: "trash")
+                        }
+                        .help("Удалить фрагмент из монтажа")
+                        .disabled(act.scenes.count <= 1)
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+                } else {
+                    ContentUnavailableView("Нет выбранной сцены", systemImage: "film")
+                }
+
+                editorialReviewPanel
+                publicationTextPanel
+            }
+            .padding(12)
+        }
+        .background(StudioTheme.panel, in: RoundedRectangle(cornerRadius: 15))
+        .overlay(RoundedRectangle(cornerRadius: 15).stroke(StudioTheme.line, lineWidth: 1))
+    }
+
+    private func boundaryRow(title: String, value: Double, icon: String,
+                             play: @escaping () -> Void, decrement: @escaping () -> Void,
+                             increment: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Label(title, systemImage: icon)
+                    .font(.system(size: 9, weight: .bold)).tracking(0.6).foregroundStyle(StudioTheme.muted)
+                Spacer()
+                Text(formatTimecode(value))
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.primary)
+            }
+            HStack(spacing: 6) {
+                Button(action: play) { Image(systemName: "play.fill") }
+                    .buttonStyle(.bordered).controlSize(.mini)
+                Spacer()
+                Button("−0.2") { decrement() }.buttonStyle(.bordered).controlSize(.mini)
+                Button("+0.2") { increment() }.buttonStyle(.bordered).controlSize(.mini).tint(StudioTheme.accent)
+            }
+        }
+        .padding(11)
+        .background(StudioTheme.raised.opacity(0.75), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func dialogueExcerpt(title: String, phrase: TranscriptSegment) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 8, weight: .black)).tracking(0.8).foregroundStyle(StudioTheme.accent)
+            Text("«\(phrase.text)»").font(.system(size: 11, weight: .medium)).lineLimit(3)
+            Text(formatTimecode(phrase.start)).font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(StudioTheme.muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(StudioTheme.background, in: RoundedRectangle(cornerRadius: 9))
+    }
+
+    private var editorialReviewPanel: some View {
+        let notes = (reviewedArc ?? arc).editorialNotes ?? []
+        return VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Label("РЕДАКТОРСКАЯ ПРОВЕРКА", systemImage: "sparkles")
+                    .font(.system(size: 9, weight: .black)).tracking(0.8).foregroundStyle(StudioTheme.accent)
+                Spacer()
+                Text("\(notes.count) замеч.").font(.system(size: 9, weight: .semibold)).foregroundStyle(StudioTheme.muted)
+            }
+            if !notes.isEmpty {
+                ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
+                    HStack(alignment: .top, spacing: 7) {
+                        Circle().fill(StudioTheme.warning).frame(width: 5, height: 5).padding(.top, 4)
+                        Text(note).font(.system(size: 10)).foregroundStyle(.white.opacity(0.83))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            } else {
+                Text("Замечаний к сценам нет. Можно запустить дополнительную проверку перед сборкой.")
+                    .font(.system(size: 10)).foregroundStyle(StudioTheme.muted)
+            }
+            Button { runEditorialReview() } label: {
+                Label(isReviewing ? "Ищу монтажное решение…" : "Проверить и исправить",
+                      systemImage: isReviewing ? "hourglass" : "wand.and.stars")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(StudioPrimaryButtonStyle()).disabled(isReviewing)
+            if isReviewing || !reviewEvents.isEmpty || reviewMessage != nil {
+                VStack(alignment: .leading, spacing: 7) {
+                    if isReviewing {
+                        HStack(spacing: 7) {
+                            ProgressView().controlSize(.small)
+                            Text(reviewProgress.isEmpty ? "Подготовка контекста…" : reviewProgress)
+                                .font(.system(size: 10, weight: .semibold)).foregroundStyle(.primary)
+                        }
+                    }
+                    ForEach(Array(completedReviewEvents.enumerated()), id: \.offset) { _, event in
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: "arrow.turn.down.right")
+                                .font(.system(size: 8, weight: .bold)).foregroundStyle(StudioTheme.accent)
+                                .padding(.top, 2)
+                            Text(event).font(.system(size: 9)).foregroundStyle(StudioTheme.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    ForEach(reviewAttempts) { attempt in
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: attempt.accepted ? "checkmark.circle.fill" : "arrow.clockwise.circle")
+                                .font(.system(size: 10)).foregroundStyle(attempt.accepted ? StudioTheme.success : StudioTheme.warning)
+                            Text("Попытка \(attempt.id): \(attempt.message)")
+                                .font(.system(size: 9, weight: .medium)).foregroundStyle(.primary.opacity(0.82))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    if let reviewMessage, !isReviewing {
+                        Text(reviewMessage).font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle((reviewedArc?.editorialNotes?.isEmpty ?? false)
+                                ? StudioTheme.success : StudioTheme.warning)
+                    }
+                    ForEach(reviewChanges) { change in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Акт \(change.act) · сцена \(change.scene)  \(formatTimecode(change.oldRange.start))–\(formatTimecode(change.oldRange.end)) → \(formatTimecode(change.newRange.start))–\(formatTimecode(change.newRange.end))")
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            Text(change.reason).font(.system(size: 9)).foregroundStyle(StudioTheme.muted)
+                        }
+                    }
+                }
+                .padding(10)
+                .background(StudioTheme.background, in: RoundedRectangle(cornerRadius: 9))
+            }
+        }
+        .padding(12)
+        .background(StudioTheme.raised.opacity(0.65), in: RoundedRectangle(cornerRadius: 11))
+    }
+
+    private var publicationTextPanel: some View {
+        DisclosureGroup("Текст выпуска и публикации") {
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("Название YouTube", text: $publicationTitle)
+                TextField("Вступительный вопрос", text: $hookText)
+                TextField("Вывод эссе", text: $conclusionText)
+                TextField("Призыв к обсуждению", text: $ctaText)
+                let suspicious = UkrainianTextReview.suspiciousWords(in: publicationTitle)
+                if !suspicious.isEmpty {
+                    Text("Проверьте написание: " + suspicious.joined(separator: ", "))
+                        .font(.caption2).foregroundStyle(StudioTheme.warning)
+                }
+            }
+            .textFieldStyle(.roundedBorder).padding(.top, 8)
+        }
+        .font(.caption.weight(.semibold))
+        .padding(11)
+        .background(StudioTheme.raised.opacity(0.65), in: RoundedRectangle(cornerRadius: 10))
     }
 
     // MARK: - Act Detail Editor
@@ -880,8 +1213,84 @@ struct LongformActEditorView: View {
             let asset = AVURLAsset(url: sourceURL)
             if let duration = try? await asset.load(.duration), duration.seconds.isFinite, duration.seconds > 0 {
                 sourceDuration = duration.seconds
+                if let scene = selectedLocation?.scene {
+                    await previewPlayer?.seek(to: CMTime(seconds: scene.start, preferredTimescale: 600),
+                                              toleranceBefore: .zero, toleranceAfter: .zero)
+                }
             }
         }
+    }
+
+    private func selectAct(_ index: Int) {
+        guard editedActs.indices.contains(index) else { return }
+        selectedActIndex = index
+        if let first = editedActs[index].scenes.first { selectScene(first.id) }
+    }
+
+    private func selectScene(_ id: UUID) {
+        for (actIndex, act) in editedActs.enumerated() {
+            guard let scene = act.scenes.first(where: { $0.id == id }) else { continue }
+            selectedActIndex = actIndex
+            selectedSceneID = id
+            previewStopTask?.cancel()
+            previewPlayer?.pause()
+            previewPlayer?.seek(to: CMTime(seconds: scene.start, preferredTimescale: 600),
+                                toleranceBefore: .zero, toleranceAfter: .zero)
+            return
+        }
+    }
+
+    private func insertAtSequencePosition(_ index: Int) {
+        guard !editedActs.isEmpty else { return }
+        var offset = 0
+        for (actIndex, act) in editedActs.enumerated() {
+            let nextOffset = offset + act.scenes.count
+            if index <= nextOffset {
+                insertionTarget = SceneInsertionTarget(actIndex: actIndex, index: max(0, index - offset))
+                return
+            }
+            offset = nextOffset
+        }
+        let lastAct = editedActs.count - 1
+        insertionTarget = SceneInsertionTarget(actIndex: lastAct, index: editedActs[lastAct].scenes.count)
+    }
+
+    private func sequenceLocation(for id: UUID) -> (actIndex: Int, sceneIndex: Int)? {
+        for (actIndex, act) in editedActs.enumerated() {
+            if let sceneIndex = act.scenes.firstIndex(where: { $0.id == id }) {
+                return (actIndex, sceneIndex)
+            }
+        }
+        return nil
+    }
+
+    private func moveSceneAcrossSequence(_ id: UUID, delta: Int) {
+        guard let location = sequenceLocation(for: id) else { return }
+        moveScene(id, in: location.actIndex, delta: delta)
+    }
+
+    private func trimSceneStart(_ id: UUID, _ value: Double) {
+        guard let location = sequenceLocation(for: id) else { return }
+        setStart(actIndex: location.actIndex, sceneIndex: location.sceneIndex, value: value)
+        reviewedArc = nil
+        reviewMessage = nil
+    }
+
+    private func trimSceneEnd(_ id: UUID, _ value: Double) {
+        guard let location = sequenceLocation(for: id) else { return }
+        setEnd(actIndex: location.actIndex, sceneIndex: location.sceneIndex, value: value)
+        reviewedArc = nil
+        reviewMessage = nil
+    }
+
+    private func removeScene(_ id: UUID) {
+        guard let location = sequenceLocation(for: id), editedActs[location.actIndex].scenes.count > 1 else { return }
+        editedActs[location.actIndex].scenes.remove(at: location.sceneIndex)
+        let remaining = editedActs[location.actIndex].scenes
+        selectedSceneID = remaining[min(location.sceneIndex, remaining.count - 1)].id
+        selectedActIndex = location.actIndex
+        reviewedArc = nil
+        reviewMessage = nil
     }
 
     private func playRange(start: Double, end: Double) {
@@ -926,12 +1335,16 @@ struct LongformActEditorView: View {
         guard actIndex < editedActs.count, sceneIndex < editedActs[actIndex].scenes.count else { return }
         let current = editedActs[actIndex].scenes[sceneIndex]
         setStart(actIndex: actIndex, sceneIndex: sceneIndex, value: current.start + delta)
+        reviewedArc = nil
+        reviewMessage = nil
     }
 
     private func adjustEnd(actIndex: Int, sceneIndex: Int, delta: Double) {
         guard actIndex < editedActs.count, sceneIndex < editedActs[actIndex].scenes.count else { return }
         let current = editedActs[actIndex].scenes[sceneIndex]
         setEnd(actIndex: actIndex, sceneIndex: sceneIndex, value: current.end + delta)
+        reviewedArc = nil
+        reviewMessage = nil
     }
 
     private func resetAct(actIndex: Int) {
@@ -965,6 +1378,7 @@ struct LongformActEditorView: View {
                 scenes: editableScenes(for: act)
             )
         }
+        selectedSceneID = editedActs.first?.scenes.first?.id
     }
 
     private func editableScenes(for act: LongformAct) -> [EditableSceneSegment] {
@@ -1065,6 +1479,10 @@ struct LongformActEditorView: View {
                 }
             }
         }
+        let currentRanges = updatedArc.acts.flatMap(\.segments)
+        sceneEdits.removeAll { edit in
+            !currentRanges.contains(edit.revised)
+        }
         updatedArc.sceneEdits = sceneEdits.isEmpty ? nil : sceneEdits
         updatedArc.publicationTitle = publicationTitle.trimmed
         updatedArc.hookText = hookText.trimmed
@@ -1088,7 +1506,7 @@ struct LongformActEditorView: View {
                 let outcome = try await onReview(draft) { message in
                     Task { @MainActor in
                         reviewProgress = message
-                        reviewEvents.append(message)
+                        if reviewEvents.last != message { reviewEvents.append(message) }
                     }
                 }
                 let result = outcome.arc

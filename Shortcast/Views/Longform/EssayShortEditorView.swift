@@ -135,7 +135,11 @@ struct EssayShortEditorView: View {
             .frame(maxHeight: .infinity)
 
             EditorTimelineView(
-                clips: scenes.map { EditorTimelineClip(id: $0.id, start: $0.start, end: $0.end, isAdded: $0.isAdded) },
+                clips: scenes.enumerated().map { index, scene in
+                    EditorTimelineClip(id: scene.id, start: scene.start, end: scene.end, isAdded: scene.isAdded,
+                                       sceneNumber: index + 1,
+                                       quote: transcript.segments.first(where: { $0.start >= scene.start && $0.end <= scene.end })?.text)
+                },
                 selectedID: selectedSceneID,
                 onSelect: { id in
                     selectedSceneID = id
@@ -146,7 +150,22 @@ struct EssayShortEditorView: View {
                 onInsertAt: { insertionTarget = ShortSceneInsertionTarget(index: $0) },
                 onMoveEarlier: { moveScene($0, delta: -1) },
                 onMoveLater: { moveScene($0, delta: 1) },
-                onRemove: { id in scenes.removeAll { $0.id == id } }
+                onRemove: { id in
+                    guard scenes.count > 1 else { return }
+                    scenes.removeAll { $0.id == id }
+                    if selectedSceneID == id { selectedSceneID = scenes.first?.id }
+                },
+                onTrimStart: { id, value in
+                    guard let index = scenes.firstIndex(where: { $0.id == id }) else { return }
+                    scenes[index].start = min(max(0, value), scenes[index].end - EssayDurationPolicy.sceneLength.lowerBound)
+                    selectedSceneID = id
+                },
+                onTrimEnd: { id, value in
+                    guard let index = scenes.firstIndex(where: { $0.id == id }) else { return }
+                    scenes[index].end = max(scenes[index].start + EssayDurationPolicy.sceneLength.lowerBound,
+                                            min(sourceDuration, value))
+                    selectedSceneID = id
+                }
             )
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
@@ -194,28 +213,71 @@ struct EssayShortEditorView: View {
     private func sceneRow(_ scene: Binding<EditableSceneSegment>) -> some View {
         let id = scene.wrappedValue.id
         let index = scenes.firstIndex { $0.id == id } ?? 0
-        return VStack(alignment: .leading, spacing: 8) {
+        let current = scene.wrappedValue
+        return VStack(alignment: .leading, spacing: 9) {
             HStack {
-                Text("Сцена \(index + 1)").bold()
-                Spacer()
-                Button("Смотреть", systemImage: "play.fill") {
-                    preview(TimeSegment(start: scene.wrappedValue.start, end: scene.wrappedValue.end))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("СЦЕНА \(String(format: "%02d", index + 1))")
+                        .font(.system(size: 10, weight: .black)).tracking(0.7)
+                    Text("\(timecode(current.start)) → \(timecode(current.end))  ·  \(Int(current.duration.rounded())) с")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(StudioTheme.muted)
                 }
+                Spacer()
                 Button {
-                    if let current = scenes.firstIndex(where: { $0.id == id }), current > 0 { scenes.swapAt(current, current - 1) }
-                } label: { Image(systemName: "arrow.up") }.disabled(index == 0)
-                Button {
-                    if let current = scenes.firstIndex(where: { $0.id == id }), current + 1 < scenes.count { scenes.swapAt(current, current + 1) }
-                } label: { Image(systemName: "arrow.down") }.disabled(index + 1 == scenes.count)
-                Button(role: .destructive) { scenes.removeAll { $0.id == id } } label: { Image(systemName: "trash") }
+                    selectedSceneID = id
+                    preview(TimeSegment(start: current.start, end: current.end))
+                } label: {
+                    Image(systemName: "play.fill")
+                }
+                .buttonStyle(.bordered).controlSize(.small).help("Просмотреть сцену")
+                Menu {
+                    Button("Переместить раньше", systemImage: "arrow.up") {
+                        moveScene(id, delta: -1)
+                    }.disabled(index == 0)
+                    Button("Переместить позже", systemImage: "arrow.down") {
+                        moveScene(id, delta: 1)
+                    }.disabled(index + 1 == scenes.count)
+                    Divider()
+                    Button("Удалить сцену", systemImage: "trash", role: .destructive) {
+                        guard scenes.count > 1 else { return }
+                        scenes.removeAll { $0.id == id }
+                    }.disabled(scenes.count <= 1)
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+                .menuStyle(.borderlessButton)
+                .help("Действия со сценой")
             }
-            HStack {
-                Text("Начало, с")
-                TextField("Начало", value: scene.start, format: .number.precision(.fractionLength(2)))
-                Text("Конец, с")
-                TextField("Конец", value: scene.end, format: .number.precision(.fractionLength(2)))
-            }.textFieldStyle(.roundedBorder)
-        }.padding(12).background(StudioTheme.panel, in: RoundedRectangle(cornerRadius: 10))
+            HStack(spacing: 8) {
+                Label("IN", systemImage: "arrow.right.to.line")
+                    .font(.system(size: 8, weight: .black)).foregroundStyle(StudioTheme.muted)
+                Text(timecode(current.start)).font(.system(size: 10, weight: .semibold, design: .monospaced))
+                Spacer()
+                Button("−0.2") { adjustShortBoundary(id, isStart: true, delta: -0.2) }
+                    .buttonStyle(.bordered).controlSize(.mini)
+                Button("+0.2") { adjustShortBoundary(id, isStart: true, delta: 0.2) }
+                    .buttonStyle(.bordered).controlSize(.mini).tint(StudioTheme.accent)
+            }
+            HStack(spacing: 8) {
+                Label("OUT", systemImage: "arrow.left.to.line")
+                    .font(.system(size: 8, weight: .black)).foregroundStyle(StudioTheme.muted)
+                Text(timecode(current.end)).font(.system(size: 10, weight: .semibold, design: .monospaced))
+                Spacer()
+                Button("−0.2") { adjustShortBoundary(id, isStart: false, delta: -0.2) }
+                    .buttonStyle(.bordered).controlSize(.mini)
+                Button("+0.2") { adjustShortBoundary(id, isStart: false, delta: 0.2) }
+                    .buttonStyle(.bordered).controlSize(.mini).tint(StudioTheme.accent)
+            }
+        }
+        .padding(12)
+        .background(selectedSceneID == id ? StudioTheme.accent.opacity(0.1) : StudioTheme.panel,
+                    in: RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11)
+            .stroke(selectedSceneID == id ? StudioTheme.accent.opacity(0.65) : StudioTheme.line,
+                    lineWidth: selectedSceneID == id ? 1.2 : 1))
+        .contentShape(RoundedRectangle(cornerRadius: 11))
+        .onTapGesture { selectedSceneID = id }
     }
 
     private func captionBinding(_ segment: TranscriptSegment) -> Binding<String> {
@@ -236,6 +298,19 @@ struct EssayShortEditorView: View {
         let destination = source + delta
         guard scenes.indices.contains(destination) else { return }
         scenes.swapAt(source, destination)
+    }
+
+    private func adjustShortBoundary(_ id: UUID, isStart: Bool, delta: Double) {
+        guard let index = scenes.firstIndex(where: { $0.id == id }) else { return }
+        let minimum = EssayDurationPolicy.sceneLength.lowerBound
+        if isStart {
+            scenes[index].start = min(scenes[index].end - minimum,
+                                      max(0, scenes[index].start + delta))
+        } else {
+            scenes[index].end = max(scenes[index].start + minimum,
+                                    min(sourceDuration, scenes[index].end + delta))
+        }
+        selectedSceneID = id
     }
 
     private func preview(_ range: TimeSegment) {

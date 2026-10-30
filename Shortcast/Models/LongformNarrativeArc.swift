@@ -16,7 +16,8 @@ enum LongformActType: String, Codable, CaseIterable, Sendable {
         .hook, .form, .psychology, .philosophy, .catharsis
     ]
 
-    /// Название акта для зрителя и промпта: структура эссе из `essays_20_films.md`.
+    /// Название акта для зрителя и промпта: структура эссе из архивного контент-плана
+    /// `docs/archive/essays_20_films-2026-10-27.md` (архив, не источник для пайплайна).
     /// `rawValue` остаётся русским только ради совместимости архивов.
     var displayName: String {
         switch self {
@@ -180,10 +181,26 @@ struct LongformNarrativeArc: Codable, Identifiable, Equatable, Sendable {
     var ctaText: String? = nil
     /// Главный тезис эссе из плана Director.
     var thesis: String? = nil
+
+    /// Пользовательские правки показа не переписывают исходную расшифровку.
+    var captionEdits: [LongformCaptionEdit]? = nil
+    /// Ограниченные изменения границ с указанием исходной сцены и причины.
+    var sceneEdits: [LongformSceneEdit]? = nil
+    var editorialNotes: [String]? = nil
+    var publicationTitle: String? = nil
+    var conclusionText: String? = nil
+    var captionSuggestions: [LongformCaptionSuggestion]? = nil
+    var editorialReviewModelID: String? = nil
+    var discussionURL: String? = nil
     
     /// Причина деградации на эвристику. nil — арка собрана штатно через LLM.
     /// UI показывает баннер если поле не nil.
     var degradationReason: String? = nil
+
+    /// Хронометраж, который просил сохранённый план, если он лежал вне коридора
+    /// 4:00–8:00. Длина эссе больше не запрашивается, но молча подрезать чужой
+    /// заказ нельзя: UI обязан показать, сколько в файле лежало.
+    var legacyAskSeconds: Double? = nil
 
     var segments: [TimeSegment] {
         acts.flatMap(\.segments)

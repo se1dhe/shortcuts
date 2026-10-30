@@ -8,6 +8,9 @@ struct LongformBuildResult: Codable, Equatable, Sendable {
     let duration: Double
     let thumbnailURL: URL?
     let validationResult: RenderValidationResult?
+    let audioSettings: LongformAudioSettings?
+    let thumbnailSubject: ThumbnailSubjectEvidence?
+    let packagingWarning: String?
 
     init(
         outputURL: URL,
@@ -15,7 +18,10 @@ struct LongformBuildResult: Codable, Equatable, Sendable {
         metadata: LongformYouTubeMetadata,
         duration: Double,
         thumbnailURL: URL? = nil,
-        validationResult: RenderValidationResult? = nil
+        validationResult: RenderValidationResult? = nil,
+        audioSettings: LongformAudioSettings? = nil,
+        thumbnailSubject: ThumbnailSubjectEvidence? = nil,
+        packagingWarning: String? = nil
     ) {
         self.outputURL = outputURL
         self.arc = arc
@@ -23,11 +29,14 @@ struct LongformBuildResult: Codable, Equatable, Sendable {
         self.duration = duration
         self.thumbnailURL = thumbnailURL
         self.validationResult = validationResult
+        self.audioSettings = audioSettings
+        self.thumbnailSubject = thumbnailSubject
+        self.packagingWarning = packagingWarning
     }
 }
 
 /// Настройки аудиомастеринга, звукорежиссуры и защиты от Content ID для кино-эссе Shortcast Cinema
-struct LongformAudioSettings: Sendable, Equatable {
+struct LongformAudioSettings: Codable, Sendable, Equatable {
     var backgroundMusicURL: URL? = nil
     var musicVolume: Float = 0.18
     var duckingEnabled: Bool = true

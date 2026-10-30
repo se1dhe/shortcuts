@@ -147,45 +147,4 @@ final class AudioTrackSelectionTests: XCTestCase {
         XCTAssertFalse(AudioTrackInfo(id: 0, audioIndex: 0, title: nil, language: "ru", codec: "ac3", channels: 2, isDefault: false, isForced: false).isUkrainianVoiceover)
     }
 
-    // MARK: - MovieShortsRelevanceFilter
-
-    func testMovieShortsRelevanceFilterUkrainianDub() {
-        let title = "Фільм 2024"
-        let description = "український дубляж, якість 4K"
-        let channel = "Кіно канал"
-        XCTAssertTrue(
-            MovieShortsRelevanceFilter.isRelevant(title: title, description: description, channel: channel),
-            "Ukrainian dub markers should pass the filter"
-        )
-    }
-
-    func testMovieShortsRelevanceFilterRussianDub() {
-        let title = "Фильм 2024"
-        let description = "русский дубляж, качество 4K"
-        let channel = "Кино канал"
-        XCTAssertTrue(
-            MovieShortsRelevanceFilter.isRelevant(title: title, description: description, channel: channel),
-            "Russian dub markers should still pass the filter"
-        )
-    }
-
-    func testMovieShortsRelevanceFilterUndubbed() {
-        let title = "Movie 2024"
-        let description = "original audio, English"
-        let channel = "Cinema Channel"
-        XCTAssertFalse(
-            MovieShortsRelevanceFilter.isRelevant(title: title, description: description, channel: channel),
-            "Undubbed clips should be filtered out"
-        )
-    }
-
-    func testMovieShortsRelevanceFilterRussianOrigin() {
-        let title = "Советский фильм 1985"
-        let description = "Мосфильм, классика"
-        let channel = "Ретро кино"
-        XCTAssertFalse(
-            MovieShortsRelevanceFilter.isRelevant(title: title, description: description, channel: channel),
-            "Russian/Soviet productions should be filtered out"
-        )
-    }
 }

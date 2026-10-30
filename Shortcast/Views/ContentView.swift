@@ -1,249 +1,156 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Main navigation sections in the application sidebar.
-enum AppNavigationTab: String, CaseIterable, Identifiable {
-    case create = "Создание шортсов"
-    case longform = "Кино-эссе (YouTube 16:9)"
-    case clips = "Студия шортсов"
-    case music = "Фоновая музыка"
-    case publish = "Выгрузка в соцсети"
-    case history = "История видео"
-    case settings = "Настройки"
-
-    var id: String { rawValue }
-
-    var symbol: String {
-        switch self {
-        case .create: "scissors"
-        case .longform: "film.fill"
-        case .clips: "film.stack"
-        case .music: "music.note"
-        case .publish: "paperplane.fill"
-        case .history: "clock.arrow.circlepath"
-        case .settings: "gearshape"
-        }
-    }
-}
-
-/// Root view and macOS-native NavigationSplitView layout.
 struct ContentView: View {
-
     @Environment(AppSettings.self) private var settings
     @Environment(ModelManager.self) private var modelManager
     @Environment(WorkspaceModel.self) private var workspace
-
-    @State private var selectedTab: AppNavigationTab = .create
     @State private var isDropTargeted = false
     @State private var showFirstLaunch = false
+    @State private var showSettings = false
+
+    @State private var selectedStage: StudioStage = .film
 
     var body: some View {
         @Bindable var workspace = workspace
-
-        mainLayout
-            .animation(.smooth(duration: 0.32), value: workspace.phase)
-            .frame(minWidth: 1100, minHeight: 740)
-            .dropDestination(for: URL.self) { urls, _ in
-                guard !workspace.isBusy,
-                      let url = urls.first(where: { $0.isFileURL })
-                else { return false }
-            selectedTab = workspace.inputMode == .longform ? .longform : .create
+        VStack(spacing: 0) {
+            studioHeader
+            stageNavigation
+            Rectangle().fill(StudioTheme.line).frame(height: 1)
+            stageContent.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(StudioTheme.background)
+        .preferredColorScheme(.dark)
+        .tint(StudioTheme.accent)
+        .frame(minWidth: 1180, minHeight: 860)
+        .dropDestination(for: URL.self) { urls, _ in
+            guard !workspace.isBusy, let url = urls.first(where: { $0.isFileURL }) else { return false }
             startProcessing(url)
             return true
         } isTargeted: { isDropTargeted = $0 }
-        .sheet(isPresented: $showFirstLaunch) {
-            FirstLaunchSheet(settings: settings)
-        }
+        .sheet(isPresented: $showSettings) { SettingsView() }
+        .sheet(isPresented: $showFirstLaunch) { FirstLaunchSheet(settings: settings) }
         .sheet(item: $workspace.pendingAudioSelection) { _ in
-            AudioTrackSelectionSheet(
-                workspace: workspace,
-                modelManager: modelManager,
-                settings: settings
-            )
+            AudioTrackSelectionSheet(workspace: workspace, modelManager: modelManager, settings: settings)
         }
-        .task {
-            if !settings.hasWorkingDirectory {
-                showFirstLaunch = true
-            }
-        }
-        .onChange(of: workspace.phase) { _, newPhase in
-            if newPhase == .shortsResults || newPhase == .results {
-                selectedTab = .clips
-            }
-        }
-        .onChange(of: selectedTab) { _, newTab in
-            if newTab == .longform {
-                workspace.inputMode = .longform
-            } else if newTab == .create && workspace.inputMode == .longform {
-                workspace.inputMode = .shorts
-            }
-        }
-        .onChange(of: workspace.inputMode) { _, newMode in
-            if newMode == .longform && selectedTab == .create {
-                selectedTab = .longform
-            } else if newMode != .longform && selectedTab == .longform {
-                selectedTab = .create
+        .task { if !settings.hasWorkingDirectory { showFirstLaunch = true } }
+        .onChange(of: workspace.phase) { _, phase in
+            switch phase {
+            case .empty, .processing: selectedStage = .film
+            default: selectedStage = .essay
             }
         }
     }
 
-    // MARK: - Main Layout
-
-    private var mainLayout: some View {
-        NavigationSplitView {
-            sidebarContent
-                .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 280)
-        } detail: {
-            detailContent
-        }
+    private var studioHeader: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "viewfinder")
+                .font(.system(size: 22, weight: .medium)).foregroundStyle(StudioTheme.accent)
+                .frame(width: 42, height: 42)
+                .background(StudioTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+            VStack(alignment: .leading, spacing: 3) {
+                Text("КАДР & СЕНС").font(.system(size: 12, weight: .bold)).tracking(2.4)
+                Text("Монтажная выпуска").font(.system(size: 12)).foregroundStyle(StudioTheme.muted)
+            }
+            Rectangle().fill(StudioTheme.line).frame(width: 1, height: 30).padding(.horizontal, 10)
+            Text(workspace.detectedMovie?.title ?? workspace.currentProject?.movieTitle ?? "Новый проект")
+                .font(.system(size: 14, weight: .medium)).lineLimit(1)
+            if workspace.currentProject != nil {
+                Label("Локальный проект", systemImage: "checkmark.icloud")
+                    .font(.system(size: 11)).foregroundStyle(StudioTheme.muted)
+            }
+            Spacer()
+            if workspace.job != nil {
+                Button("Новый фильм", systemImage: "plus") {
+                    workspace.startOver(); selectedStage = .film
+                }.buttonStyle(.bordered).disabled(workspace.isBusy)
+            }
+            Button { showSettings = true } label: {
+                Image(systemName: "slider.horizontal.3").font(.system(size: 16)).frame(width: 30, height: 30)
+            }.buttonStyle(.plain).help("Настройки студии").disabled(workspace.isBusy)
+        }.padding(.horizontal, 28).padding(.vertical, 18)
     }
 
-    // MARK: - Sidebar
-
-    private var sidebarContent: some View {
-        List(selection: $selectedTab) {
-            Section("Генерация") {
-                NavigationLink(value: AppNavigationTab.create) {
-                    Label(AppNavigationTab.create.rawValue, systemImage: AppNavigationTab.create.symbol)
-                }
-
-                NavigationLink(value: AppNavigationTab.longform) {
-                    Label(AppNavigationTab.longform.rawValue, systemImage: AppNavigationTab.longform.symbol)
-                }
-                
-                NavigationLink(value: AppNavigationTab.clips) {
-                    HStack {
-                        Label(AppNavigationTab.clips.rawValue, systemImage: AppNavigationTab.clips.symbol)
-                        Spacer()
-                        if !workspace.clips.isEmpty {
-                            Text("\(workspace.clips.count)")
-                                .font(.caption2.bold())
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.accentColor.opacity(0.15), in: Capsule())
-                                .foregroundStyle(Color.accentColor)
+    private var stageNavigation: some View {
+        HStack(spacing: 12) {
+            ForEach(StudioStage.allCases) { stage in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { selectedStage = stage }
+                } label: {
+                    HStack(spacing: 12) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(selectedStage == stage ? StudioTheme.accent : Color.white.opacity(0.04))
+                            Image(systemName: stage.symbol)
+                                .foregroundStyle(selectedStage == stage ? StudioTheme.background : StudioTheme.muted)
+                        }.frame(width: 38, height: 38)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 7) {
+                                Text(String(format: "%02d", stage.rawValue + 1))
+                                    .font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundStyle(StudioTheme.muted)
+                                Text(stage.title).font(.system(size: 14, weight: .semibold))
+                            }
+                            Text(stage.detail).font(.system(size: 11)).foregroundStyle(StudioTheme.muted)
+                        }
+                        Spacer(minLength: 0)
+                        if completed(stage) {
+                            Image(systemName: "checkmark.circle.fill").font(.system(size: 13)).foregroundStyle(.green.opacity(0.8))
                         }
                     }
-                }
+                    .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(selectedStage == stage ? StudioTheme.raised : StudioTheme.panel, in: RoundedRectangle(cornerRadius: 14))
+                    .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(selectedStage == stage ? StudioTheme.accent.opacity(0.4) : StudioTheme.line))
+                    .contentShape(RoundedRectangle(cornerRadius: 14))
+                }.buttonStyle(.plain)
+                    .disabled(!available(stage) || workspace.isBusy)
+                    .opacity(available(stage) ? 1 : 0.85)
+                    .help(available(stage) ? stage.detail : "Сначала завершите предыдущий шаг")
             }
+        }.padding(.horizontal, 28).padding(.bottom, 22)
+    }
 
-            Section("Медиа и продакшн") {
-                NavigationLink(value: AppNavigationTab.music) {
-                    Label(AppNavigationTab.music.rawValue, systemImage: AppNavigationTab.music.symbol)
-                }
-
-                NavigationLink(value: AppNavigationTab.publish) {
-                    HStack {
-                        Label(AppNavigationTab.publish.rawValue, systemImage: AppNavigationTab.publish.symbol)
-                        Spacer()
-                        let approved = workspace.approvedReadyCount
-                        if approved > 0 {
-                            Text("\(approved)")
-                                .font(.caption2.bold())
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.green.opacity(0.15), in: Capsule())
-                                .foregroundStyle(.green)
-                        }
-                    }
-                }
-
-                NavigationLink(value: AppNavigationTab.history) {
-                    Label(AppNavigationTab.history.rawValue, systemImage: AppNavigationTab.history.symbol)
-                }
-            }
-
-            Section("Система") {
-                NavigationLink(value: AppNavigationTab.settings) {
-                    Label(AppNavigationTab.settings.rawValue, systemImage: AppNavigationTab.settings.symbol)
-                }
-            }
-        }
-        .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom) {
-            sidebarBottomInfo
+    private func available(_ stage: StudioStage) -> Bool {
+        switch stage {
+        case .film: true
+        case .essay: workspace.job != nil
+        case .shorts: workspace.longformResult != nil
+        case .posting: workspace.currentEssayRelease != nil
         }
     }
 
-    private let versionService: any AppVersionProviding = AppVersionService.shared
-
-    private var sidebarBottomInfo: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Divider()
-            
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(modelManager.isReady ? Color.green : Color.orange)
-                    .frame(width: 8, height: 8)
-                Text(modelManager.isReady ? "MLX Движок готов" : "Инициализация…")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            
-            Text(versionService.displayVersion)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .help(versionService.detailedVersionInfo)
-                .contextMenu {
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(versionService.detailedVersionInfo, forType: .string)
-                    } label: {
-                        Label("Скопировать версию", systemImage: "doc.on.doc")
-                    }
-                }
+    private func completed(_ stage: StudioStage) -> Bool {
+        switch stage {
+        case .film: workspace.job != nil
+        case .essay: workspace.longformResult != nil
+        case .shorts: workspace.currentEssayRelease?.hasReadyShorts == true
+        case .posting: workspace.currentEssayRelease?.isPublished == true
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
     }
 
-    // MARK: - Detail Content
-
-    @ViewBuilder
-    private var detailContent: some View {
-        if workspace.isBusy {
-            busyProgressView
+    @ViewBuilder private var stageContent: some View {
+        if workspace.showsPipelineProgress {
+            createSectionContent
         } else {
-            switch selectedTab {
-            case .create, .longform:
-                createSectionContent
-            case .clips:
-                clipsSectionContent
-            case .music:
-                MusicLibraryView()
-            case .publish:
-                PublishQueueView()
-            case .history:
-                ProcessedVideoHistoryView()
-            case .settings:
-                SettingsView()
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var busyProgressView: some View {
-        switch workspace.phase {
-        case .processing:
-            ProcessingView()
-        case .transcribing, .findingMoments:
-            ShortsProgressView()
-        case .buildingLongform(let fraction, let step):
-            VStack(spacing: 20) {
-                ProgressView(value: fraction) {
-                    Text(step)
-                        .font(.headline)
+            switch selectedStage {
+            case .film:
+                if let job = workspace.job {
+                    FilmSourceOverview(job: job) { selectedStage = .essay }
+                } else {
+                    DropZoneView(isDropTargeted: isDropTargeted) { url, metadata in
+                        startProcessing(url, sourceMetadata: metadata)
+                    }
                 }
-                .progressViewStyle(.linear)
-                .frame(maxWidth: 480)
-
-                Text("Монтаж 4-актного кино-эссе (1920x1080 16:9 Shortcast Cinema)...")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            case .essay:
+                createSectionContent
+            case .shorts:
+                if let result = workspace.longformResult {
+                    EssayShortsStudioView(result: result, onOpenPosting: { selectedStage = .posting })
+                }
+            case .posting:
+                if let result = workspace.longformResult {
+                    EssayPostingView(result: result, onBack: { selectedStage = .shorts })
+                }
             }
-            .padding(40)
-        default:
-            ProgressView()
         }
     }
 
@@ -256,8 +163,8 @@ struct ContentView: View {
             }
         case .processing:
             ProcessingView()
-        case .transcribing, .findingMoments:
-            ShortsProgressView()
+        case .transcribing:
+            FilmAnalysisProgressView()
         case .selectingLongformConcept:
             ThematicConceptSelectionSheet(
                 movieTitle: workspace.detectedMovie?.title ?? workspace.job?.effectiveTitle ?? "Фильм",
@@ -266,6 +173,8 @@ struct ContentView: View {
                 source: workspace.thematicAnalysis?.source ?? .unknown,
                 isRegenerating: workspace.isRegeneratingConcepts,
                 essayPlan: workspace.thematicAnalysis?.essayPlan,
+                planningError: workspace.errorMessage,
+                cancelTitle: workspace.longformResult == nil ? "Отмена" : "Открыть готовое эссе",
                 onSelect: { concept, confirmedTitle, audioSettings, essayPlan in
                     workspace.confirmLongformConcept(
                         concept,
@@ -297,6 +206,9 @@ struct ContentView: View {
                     concept: stagedConcept,
                     movieTitle: workspace.stagedConfirmedMovieTitle ?? workspace.detectedMovie?.title ?? "Фильм",
                     allSegments: transcript.segments,
+                    correctionFilmKey: workspace.subtitleCorrectionFilmKey,
+                    correctionLanguage: workspace.subtitleCorrectionLanguage,
+                    sourceURL: workspace.job?.url,
                     onConfirm: { updatedSegments in
                         workspace.confirmLongformSubtitlesAndBuild(
                             updatedSegments: updatedSegments,
@@ -326,15 +238,11 @@ struct ContentView: View {
                 .progressViewStyle(.linear)
                 .frame(maxWidth: 480)
 
-                Text("Монтаж 4-актного кино-эссе (1920x1080 16:9 Shortcast Cinema)...")
+                Text("Монтаж кино-эссе · 16:9")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .padding(40)
-        case .results:
-            ResultsView()
-        case .shortsResults:
-            ShortsResultsView()
         case .longformResults:
             if let result = workspace.longformResult {
                 LongformResultsView(
@@ -343,38 +251,13 @@ struct ContentView: View {
                     onChooseAnotherTheme: {
                         workspace.chooseAnotherConcept()
                     },
-                    onStartNewMovie: {
-                        workspace.resetLongform()
-                    }
+                    onStartNewMovie: { workspace.startOver() },
+                    onOpenShorts: { selectedStage = .shorts }
+
                 )
             } else {
                 Text("Ролик не найден")
             }
-        }
-    }
-
-    @ViewBuilder
-    private var clipsSectionContent: some View {
-        if workspace.clips.isEmpty && workspace.variants.isEmpty {
-            VStack(spacing: 16) {
-                Image(systemName: "film.stack")
-                    .font(.system(size: 48))
-                    .foregroundStyle(.secondary)
-                Text("Шортсы пока не созданы")
-                    .font(.headline)
-                Text("Перетащите фильм или длинное видео в разделе 'Создание шортсов'")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Button("Перейти к созданию") {
-                    selectedTab = .create
-                }
-                .buttonStyle(.borderedProminent)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if workspace.phase == .results {
-            ResultsView()
-        } else {
-            ShortsResultsView()
         }
     }
 
@@ -405,7 +288,7 @@ private struct FirstLaunchSheet: View {
                 .font(.system(size: 52))
                 .foregroundStyle(.tint)
 
-            Text("Добро пожаловать в Short Generator")
+            Text("Добро пожаловать в КАДР & СЕНС")
                 .font(.title2.weight(.bold))
 
             Text("Выберите рабочую папку. Все загруженные видео, обработанные клипы и кэш будут храниться здесь.\n\nПапка должна находиться на вашем Mac — не на внешнем или сетевом диске.")
@@ -430,6 +313,9 @@ private struct FirstLaunchSheet: View {
         }
         .padding(40)
         .frame(width: 500)
+        .background(StudioTheme.background)
+        .preferredColorScheme(.dark)
+        .tint(StudioTheme.accent)
     }
 
     private func selectFolder() {
@@ -437,7 +323,7 @@ private struct FirstLaunchSheet: View {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
-        panel.message = "Выберите рабочую папку для Short Generator"
+        panel.message = "Выберите рабочую папку для КАДР & СЕНС"
         panel.begin { response in
             if response == .OK, let url = panel.url {
                 settings.workingDirectory = url

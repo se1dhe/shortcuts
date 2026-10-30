@@ -48,11 +48,11 @@ actor RenderValidationService {
     
     private static let logger = Logger(subsystem: "app.shortcast", category: "RenderValidation")
     
-    /// Валидирует готовый рендер эссе (8-15 минут, -14 LUFS)
+    /// Валидирует готовый рендер эссе (4:00–8:00) по общей цели аудиомастеринга.
     func validateLongform(
         outputURL: URL,
-        expectedDurationRange: ClosedRange<Double> = 480...900, // 8-15 минут
-        expectedLoudness: Double = -14.0,
+        expectedDurationRange: ClosedRange<Double> = EssayDurationPolicy.rendered,
+        expectedLoudness: Double = CinemaAudioMasteringService.targetLUFS,
         loudnessTolerance: Double = 1.0,
         workingDirectory: URL?
     ) async -> RenderValidationResult {
@@ -94,12 +94,12 @@ actor RenderValidationService {
         if !audioTracks.isEmpty {
             do {
                 let loudness = try await measureLoudness(url: outputURL, workingDirectory: workingDirectory)
-                if abs(loudness - expectedLoudness) > loudnessTolerance {
-                    issues.append(.loudnessOutOfTolerance(
-                        expected: expectedLoudness,
+                if let issue = Self.loudnessIssue(
                         actual: loudness,
+                        expected: expectedLoudness,
                         tolerance: loudnessTolerance
-                    ))
+                ) {
+                    issues.append(issue)
                 }
             } catch {
                 Self.logger.warning("Loudness measurement failed: \(error.localizedDescription)")
@@ -111,11 +111,11 @@ actor RenderValidationService {
         return RenderValidationResult(isValid: isValid, issues: issues)
     }
     
-    /// Валидирует готовый рендер шортса (38-58 секунд, -16 LUFS)
+    /// Валидирует готовый рендер шортса (38–58 секунд) по общей цели аудиомастеринга.
     func validateShort(
         outputURL: URL,
         expectedDurationRange: ClosedRange<Double> = 38...58,
-        expectedLoudness: Double = -16.0,
+        expectedLoudness: Double = CinemaAudioMasteringService.targetLUFS,
         loudnessTolerance: Double = 1.0,
         workingDirectory: URL?
     ) async -> RenderValidationResult {
@@ -128,6 +128,17 @@ actor RenderValidationService {
         )
     }
     
+    nonisolated static func loudnessIssue(
+        actual: Double,
+        expected: Double = CinemaAudioMasteringService.targetLUFS,
+        tolerance: Double = 1.0
+    ) -> ValidationIssue? {
+        guard actual.isFinite, abs(actual - expected) <= tolerance else {
+            return .loudnessOutOfTolerance(expected: expected, actual: actual, tolerance: tolerance)
+        }
+        return nil
+    }
+
     /// Измеряет integrated loudness через ffmpeg loudnorm
     private func measureLoudness(url: URL, workingDirectory: URL?) async throws -> Double {
         guard let workingDir = workingDirectory else {

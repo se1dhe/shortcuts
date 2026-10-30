@@ -38,9 +38,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
 
     /// Результат сборки 16:9 эссе (файл, таймлайн, метаданные YouTube)
     var longformResult: LongformBuildResult?
-
-    /// Отобранные вирусные кандидаты для коротких видео (Shorts / Reels / TikTok)
-    var candidates: [ClipCandidate]
+    var essayRelease: EssayRelease? = nil
 
     var createdAt: Date
     var updatedAt: Date
@@ -66,7 +64,6 @@ struct FilmProject: Identifiable, Codable, Sendable {
         thematicAnalysis: ThematicAnalysisResult? = nil,
         selectedConcept: ThematicConcept? = nil,
         longformResult: LongformBuildResult? = nil,
-        candidates: [ClipCandidate] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -85,7 +82,6 @@ struct FilmProject: Identifiable, Codable, Sendable {
         self.thematicAnalysis = thematicAnalysis
         self.selectedConcept = selectedConcept
         self.longformResult = longformResult
-        self.candidates = candidates
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -93,7 +89,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id, sourceMovieURL, movieFileName, movieTitle, movieYear, durationSeconds, fileSizeBytes, selectedAudioTrackId
         case tmdbMetadata, transcript, scenes, discoveredConcepts, thematicAnalysis, selectedConcept
-        case longformResult, candidates, createdAt, updatedAt
+        case longformResult, essayRelease, createdAt, updatedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -116,7 +112,8 @@ struct FilmProject: Identifiable, Codable, Sendable {
         thematicAnalysis = try container.decodeIfPresent(ThematicAnalysisResult.self, forKey: .thematicAnalysis)
         selectedConcept = try container.decodeIfPresent(ThematicConcept.self, forKey: .selectedConcept)
         longformResult = Self.read(LongformBuildResult.self, forKey: .longformResult, in: container, damage: &damage)
-        candidates = Self.readArray([ClipCandidate].self, forKey: .candidates, in: container, damage: &damage)
+        essayRelease = Self.read(EssayRelease.self, forKey: .essayRelease, in: container, damage: &damage)
+        essayRelease?.recoverInterruptedPublishing()
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         decodeDamage = damage
@@ -162,7 +159,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
         try container.encodeIfPresent(thematicAnalysis, forKey: .thematicAnalysis)
         try container.encodeIfPresent(selectedConcept, forKey: .selectedConcept)
         try container.encodeIfPresent(longformResult, forKey: .longformResult)
-        try container.encode(candidates, forKey: .candidates)
+        try container.encodeIfPresent(essayRelease, forKey: .essayRelease)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
     }

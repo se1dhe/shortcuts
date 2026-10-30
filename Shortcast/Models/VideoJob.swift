@@ -6,8 +6,7 @@ struct VideoSourceMetadata: Sendable, Equatable {
     var webpageURL: URL?
 }
 
-/// A short video the user dropped onto the window, plus the metadata Shortcast
-/// needs to process and publish it.
+/// Source film and its metadata for the essay pipeline.
 struct VideoJob: Identifiable, Sendable, Equatable {
     let id = UUID()
     let url: URL
@@ -49,7 +48,4 @@ struct VideoJob: Identifiable, Sendable, Equatable {
         return String(format: "%d:%02d", total / 60, total % 60)
     }
 
-    /// Shorts/Reels/TikTok run to ~60s. Longer videos still work, but the audio
-    /// tower only hears the first 30s — surface that to the user.
-    var exceedsRecommendedLength: Bool { durationSeconds > 60.5 }
 }

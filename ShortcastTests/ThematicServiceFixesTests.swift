@@ -252,4 +252,139 @@ struct ThematicServiceFixesTests {
         let filtered = LongformThematicService.filterNonCyrillic(concept.word)
         #expect(filtered.isEmpty)
     }
+
+    // MARK: - Проза: слоты наполняет только текст модели
+
+    private static func productText(_ relativePath: String) throws -> String {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // ShortcastTests/
+            .deletingLastPathComponent()   // корень репозитория
+            .appendingPathComponent("Shortcast", isDirectory: true)
+            .appendingPathComponent(relativePath)
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    @Test("тезис без текста модели остаётся пустым, а не клоном слогана")
+    func missingPremiseStaysEmptyInsteadOfCloningTagline() throws {
+        let json = """
+        {
+          "primaryConcept": {
+            "word": "Ілюзія",
+            "tagline": "Слоган, який бачить екран",
+            "suggestedTitle": "Назва для YouTube"
+          },
+          "aiReasoning": "Розбір від моделі"
+        }
+        """
+        let analysis = try #require(LongformThematicService.parseThematicAnalysis(from: json))
+        let premise = analysis.primaryConcept.philosophicalPremise
+        #expect(premise.isEmpty, "в слот тезиса подставили чужий текст: «\(premise)»")
+        #expect(premise != analysis.primaryConcept.tagline)
+        #expect(analysis.aiReasoning == "Розбір від моделі")
+    }
+
+    @Test("пробельный тезис не превращается в слоган")
+    func blankPremiseStaysEmptyToo() throws {
+        let json = """
+        {
+          "primaryConcept": {
+            "word": "Ілюзія",
+            "tagline": "Слоган, який бачить екран",
+            "philosophicalPremise": "   ",
+            "suggestedTitle": "Назва для YouTube"
+          },
+          "aiReasoning": "Розбір від моделі"
+        }
+        """
+        let analysis = try #require(LongformThematicService.parseThematicAnalysis(from: json))
+        #expect(analysis.primaryConcept.philosophicalPremise.isEmpty)
+    }
+
+    @Test("тезис, написанный моделью, остаётся её текстом")
+    func premiseFromModelIsPreserved() throws {
+        let json = """
+        {
+          "primaryConcept": {
+            "word": "Ілюзія",
+            "tagline": "Слоган, який бачить екран",
+            "philosophicalPremise": "Тез, який написала модель",
+            "suggestedTitle": "Назва для YouTube"
+          },
+          "aiReasoning": "Розбір від моделі"
+        }
+        """
+        let analysis = try #require(LongformThematicService.parseThematicAnalysis(from: json))
+        #expect(analysis.primaryConcept.philosophicalPremise == "Тез, який написала модель")
+        #expect(analysis.primaryConcept.tagline == "Слоган, який бачить екран")
+    }
+
+    @Test("legacy-массив без тезиса и без reasoning — nil, а не слоган в обосновании")
+    func legacyArrayWithoutReasoningOrPremiseIsNil() {
+        let array = """
+        [
+          {
+            "word": "Ілюзія",
+            "tagline": "Слоган, який бачить екран",
+            "suggestedTitle": "Назва для YouTube"
+          }
+        ]
+        """
+        #expect(LongformThematicService.parseThematicAnalysis(from: array) == nil)
+    }
+
+    @Test("legacy-массив берёт обоснование из своих ключей, а не из слогана")
+    func legacyArrayUsesItsOwnReasoning() throws {
+        let array = """
+        [
+          {
+            "word": "Ілюзія",
+            "tagline": "Слоган, який бачить екран",
+            "suggestedTitle": "Назва для YouTube",
+            "reasoning": "Обґрунтування, яке модель дописала сама"
+          }
+        ]
+        """
+        let analysis = try #require(LongformThematicService.parseThematicAnalysis(from: array))
+        #expect(analysis.aiReasoning == "Обґрунтування, яке модель дописала сама")
+        #expect(analysis.aiReasoning != analysis.primaryConcept.tagline)
+        #expect(analysis.primaryConcept.philosophicalPremise.isEmpty)
+    }
+
+    /// Переливка чужого поля в слот прозы — это подделка авторства, поэтому ловим
+    /// её механически по исходнику парсера, а не только на фикстурах выше.
+    @Test("парсер темы не переливает чужие поля в слоты прозы")
+    func parserNeverPoursAnotherFieldIntoAProseSlot() throws {
+        let text = try Self.productText("Services/Longform/LongformThematicService.swift")
+        let code = text.components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+
+        for forbidden in ["tagline", "suggestedTitle"] {
+            for line in code where line.contains("??") {
+                #expect(
+                    !line.contains(forbidden),
+                    "вернулась переливка «\(forbidden)»: \(line.trimmingCharacters(in: .whitespaces))")
+            }
+        }
+    }
+
+    // MARK: - Бейдж провенанса: источник ровно того текста, что под ним
+
+    @Test("бейдж названия акта читает источник самого акта")
+    func actTitleBadgeReadsTheActsOwnSource() throws {
+        let editor = try Self.productText("Views/Longform/LongformActEditorView.swift")
+        let results = try Self.productText("Views/Longform/LongformResultsView.swift")
+
+        // Редактор больше не выводит метку «из провенанса с дефолтом»: у него
+        // то же правило, что у экрана результата, — nil это `.unknown`.
+        #expect(editor.contains("var effectiveTitleSource: ActTitleSource"))
+        for file in [(editor, "LongformActEditorView"), (results, "LongformResultsView")] {
+            #expect(file.0.contains("effectiveTitleSource.isTrustworthy"), "\(file.1): бейдж не из источника акта")
+            #expect(!file.0.contains("titleProvenance?.source.isTrustworthy"), "\(file.1): метка выведена из значения по умолчанию")
+        }
+        // Провенанс анализа/темы целиком не имеет права подписывать название акта.
+        for file in [(editor, "LongformActEditorView"), (results, "LongformResultsView")] {
+            #expect(!file.0.contains("concept.source"), "\(file.1): бейдж акта берёт источник темы")
+            #expect(!file.0.contains("analysis?.source"), "\(file.1): бейдж акта берёт источник анализа")
+        }
+    }
 }

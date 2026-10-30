@@ -1,4 +1,5 @@
 import SwiftUI
+import AVKit
 
 /// Модель редактируемой фразы субтитров для кино-эссе
 struct EditableSubtitlePhrase: Identifiable, Sendable, Equatable {
@@ -44,6 +45,9 @@ struct LongformSubtitleEditorView: View {
     let concept: ThematicConcept
     let movieTitle: String
     let allSegments: [TranscriptSegment]
+    let correctionFilmKey: String
+    let correctionLanguage: String
+    let sourceURL: URL?
     let confirmButtonTitle: String
     let backButtonTitle: String
     let onConfirm: ([TranscriptSegment]) -> Void
@@ -53,12 +57,22 @@ struct LongformSubtitleEditorView: View {
     @State private var selectedPhraseId: UUID? = nil
     @State private var selectedActFilter: Int? = nil // nil = Все акты
     @State private var searchText: String = ""
+    @State private var sourcePlayer: AVPlayer?
+    @State private var stopPlayback: Task<Void, Never>?
+    @State private var sourceStill: CGImage?
+    @State private var correctionMemory = SubtitleCorrectionMemory()
+    @State private var rememberedCount = 0
+    @State private var memoryWarning: String?
+    @State private var pendingWithoutMemory: [TranscriptSegment]?
 
     init(
         arc: LongformNarrativeArc,
         concept: ThematicConcept,
         movieTitle: String,
         allSegments: [TranscriptSegment],
+        correctionFilmKey: String? = nil,
+        correctionLanguage: String = "uk",
+        sourceURL: URL? = nil,
         confirmButtonTitle: String = "Перерендерить кино-эссе",
         backButtonTitle: String = "Отмена",
         onConfirm: @escaping ([TranscriptSegment]) -> Void,
@@ -68,6 +82,9 @@ struct LongformSubtitleEditorView: View {
         self.concept = concept
         self.movieTitle = movieTitle
         self.allSegments = allSegments
+        self.correctionFilmKey = correctionFilmKey ?? "title:" + SubtitleCorrectionMemory.key(movieTitle).lowercased()
+        self.correctionLanguage = correctionLanguage
+        self.sourceURL = sourceURL
         self.confirmButtonTitle = confirmButtonTitle
         self.backButtonTitle = backButtonTitle
         self.onConfirm = onConfirm
@@ -101,6 +118,16 @@ struct LongformSubtitleEditorView: View {
             // Верхняя панель управления
             headerBar
 
+            HStack {
+                Text("Память правок: \(correctionMemory.examples.filter { $0.original != $0.replacement }.count) • применено к этому эссе: \(rememberedCount)")
+                Spacer()
+                Text("Подтверждённые правки запоминаются при пересборке")
+            }
+            .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 18).padding(.bottom, 8)
+            if let memoryWarning {
+                Text(memoryWarning).font(.caption).foregroundStyle(.orange).padding(.horizontal, 18)
+            }
+
             Divider()
 
             // Панель фильтров по актам и поиска
@@ -113,14 +140,38 @@ struct LongformSubtitleEditorView: View {
                 phraseListPanel
                     .frame(minWidth: 460, idealWidth: 540)
 
-                cinemaMonitorPanel
+                ScrollView { cinemaMonitorPanel }
                     .frame(minWidth: 380, idealWidth: 460)
             }
         }
         .frame(minWidth: 960, minHeight: 640)
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(StudioTheme.background)
+        .preferredColorScheme(.dark)
+        .tint(StudioTheme.accent)
         .onAppear {
             initializePhrases()
+            if let sourceURL { sourcePlayer = AVPlayer(url: sourceURL) }
+        }
+        .onDisappear { stopPlayback?.cancel(); sourcePlayer?.pause() }
+        .alert("Не удалось сохранить память правок", isPresented: Binding(
+            get: { pendingWithoutMemory != nil }, set: { if !$0 { pendingWithoutMemory = nil } })) {
+                Button("Продолжить без памяти") {
+                    if let updated = pendingWithoutMemory { onConfirm(updated) }
+                    pendingWithoutMemory = nil
+                }
+                Button("Назад", role: .cancel) { pendingWithoutMemory = nil }
+            } message: { Text(memoryWarning ?? "Правки останутся в проекте, но не попадут в общую память.") }
+        .task(id: selectedPhrase?.id) {
+            sourceStill = nil
+            guard let sourceURL, let phrase = selectedPhrase else { return }
+            let generator = AVAssetImageGenerator(asset: AVURLAsset(url: sourceURL))
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 1920, height: 1080)
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = .zero
+            let frame = try? await generator.image(at: CMTime(seconds: phrase.start + 0.1, preferredTimescale: 600))
+            guard !Task.isCancelled else { return }
+            sourceStill = frame?.image
         }
     }
 
@@ -148,8 +199,8 @@ struct LongformSubtitleEditorView: View {
                         .font(.caption.weight(.bold))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color.accentColor.opacity(0.18), in: Capsule())
-                        .foregroundStyle(Color.accentColor)
+                        .background(StudioTheme.accent.opacity(0.18), in: Capsule())
+                        .foregroundStyle(StudioTheme.accent)
 
                     if editedCount > 0 {
                         Text("Изменено: \(editedCount)")
@@ -180,11 +231,12 @@ struct LongformSubtitleEditorView: View {
                 .padding(.vertical, 6)
             }
             .buttonStyle(.borderedProminent)
-            .tint(.yellow)
+            .tint(StudioTheme.accent)
             .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
+        .background(StudioTheme.panel)
     }
 
     // MARK: - Filter Toolbar
@@ -245,12 +297,12 @@ struct LongformSubtitleEditorView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+            .background(StudioTheme.raised, in: RoundedRectangle(cornerRadius: 6))
             .frame(width: 180)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 8)
-        .background(Color.secondary.opacity(0.04))
+        .background(StudioTheme.panel)
     }
 
     private func actFilterButton(title: String, actIndex: Int?) -> some View {
@@ -262,10 +314,10 @@ struct LongformSubtitleEditorView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(
-                    selectedActFilter == actIndex ? Color.accentColor.opacity(0.2) : Color.clear,
+                    selectedActFilter == actIndex ? StudioTheme.accent.opacity(0.2) : Color.clear,
                     in: RoundedRectangle(cornerRadius: 6)
                 )
-                .foregroundStyle(selectedActFilter == actIndex ? Color.accentColor : Color.primary)
+                .foregroundStyle(selectedActFilter == actIndex ? StudioTheme.accent : Color.primary)
         }
         .buttonStyle(.plain)
     }
@@ -339,6 +391,11 @@ struct LongformSubtitleEditorView: View {
             }
 
             // Поле редактирования
+            let suspicious = UkrainianTextReview.suspiciousWords(in: phrase.text)
+            if !suspicious.isEmpty {
+                Text("Сверьте с дубляжом: " + suspicious.joined(separator: ", "))
+                    .font(.caption2).foregroundStyle(.orange)
+            }
             if let idx = phrases.firstIndex(where: { $0.id == phrase.id }) {
                 TextField("Реплика", text: $phrases[idx].text, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
@@ -361,7 +418,7 @@ struct LongformSubtitleEditorView: View {
                         ForEach(lines, id: \.self) { line in
                             Text("«\(line)»")
                                 .font(.system(size: 11, weight: .bold, design: .rounded))
-                                .foregroundStyle(Color(hex: concept.accentColorHex) ?? Color.yellow)
+                                .foregroundStyle(Color(hex: concept.accentColorHex) ?? StudioTheme.accent)
                         }
                     }
                     Spacer()
@@ -376,11 +433,11 @@ struct LongformSubtitleEditorView: View {
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(isSelected ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.05))
+                .fill(isSelected ? StudioTheme.accent.opacity(0.08) : StudioTheme.panel)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.15), lineWidth: isSelected ? 1.5 : 1)
+                .stroke(isSelected ? StudioTheme.accent : StudioTheme.line, lineWidth: isSelected ? 1.5 : 1)
         )
         .contentShape(Rectangle())
         .onTapGesture {
@@ -392,6 +449,42 @@ struct LongformSubtitleEditorView: View {
 
     private var cinemaMonitorPanel: some View {
         VStack(spacing: 16) {
+            if let current = selectedPhrase {
+                ForEach(Array(correctionMemory.suggestions(for: current.text, filmKey: correctionFilmKey,
+                    language: correctionLanguage).enumerated()), id: \.offset) { _, suggestion in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Похожая правка из памяти — сверьте с дубляжом").font(.caption.bold())
+                        Text(suggestion.text).font(.subheadline)
+                        Text("Ранее: «\(suggestion.example.original)» → «\(suggestion.example.replacement)»")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("Применить к этой реплике") {
+                            if let index = phrases.firstIndex(where: { $0.id == current.id }) {
+                                phrases[index].text = suggestion.text
+                            }
+                        }
+                    }.padding(12).background(.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                }
+                if let suggestion = arc.captionSuggestions?.first(where: {
+                    $0.start == current.start && $0.end == current.end && $0.original == current.text
+                }) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Предложение модели — сверьте с дубляжом").font(.caption.bold())
+                        Text(suggestion.replacement).font(.subheadline)
+                        Text(suggestion.reason).font(.caption).foregroundStyle(.secondary)
+                        Button("Применить к этой реплике") {
+                            if let index = phrases.firstIndex(where: { $0.id == current.id }) {
+                                phrases[index].text = suggestion.replacement
+                            }
+                        }
+                    }.padding(12).background(StudioTheme.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+                }
+                if let sourcePlayer {
+                    VideoPlayer(player: sourcePlayer).frame(height: 150)
+                    Button("Прослушать выбранную реплику", systemImage: "speaker.wave.2") {
+                        playSourcePhrase(current)
+                    }
+                }
+            }
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Image(systemName: "tv.fill")
@@ -403,75 +496,23 @@ struct LongformSubtitleEditorView: View {
                         .font(.caption2.monospaced())
                         .foregroundStyle(.secondary)
                 }
-                Text("Живой предпросмотр расположения, кегля и переносов прямо в кадре фильма")
+                Text(sourceStill == nil ? "Раскладка титров; исходный кадр — в проигрывателе выше." : "Раскладка титров на исходном кадре выбранной реплики.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
 
-            // Монитор 16:9
-            ZStack {
-                // Черный кино-фон
-                Color.black
-                    .aspectRatio(16/9, contentMode: .fit)
+            // Та же геометрия и тот же шрифт, что у экспортного оверлея.
+            if let preview = LongformSubtitleRenderer().renderPreviewImage(
+                renderSize: CGSize(width: 1920, height: 1080), concept: concept,
+                currentPhrase: previewText, backgroundImage: sourceStill) {
+                Image(decorative: preview, scale: 1)
+                    .resizable().aspectRatio(16 / 9, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                // Кинематографический каше (Letterbox 2.35:1)
-                VStack(spacing: 0) {
-                    Color.black.opacity(0.85)
-                        .frame(height: 22)
-                    Spacer()
-                    Color.black.opacity(0.85)
-                        .frame(height: 22)
-                }
-
-                // Визуализация титров в кадре
-                VStack {
-                    // Верхний левый угол: бейдж текущего акта
-                    HStack {
-                        if let curr = selectedPhrase {
-                            Text(curr.actTitle.uppercased())
-                                .font(.system(size: 9, weight: .bold, design: .rounded))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 3)
-                                .background(Color.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 3))
-                                .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.white.opacity(0.2), lineWidth: 0.5))
-                                .foregroundStyle(.white)
-                        }
-                        Spacer()
-                    }
-                    .padding(14)
-
-                    Spacer()
-
-                    // Центральное слово концепта (в стиле Cold Open)
-                    Text(concept.word.uppercased())
-                        .font(.system(size: 19, weight: .heavy, design: .rounded))
-                        .tracking(3.5)
-                        .foregroundStyle(Color(white: 0.96))
-                        .shadow(color: .black, radius: 5)
-                        .padding(.bottom, 6)
-
-                    // Нижняя треть: живой предпросмотр экранных строк субтитров
-                    if let curr = selectedPhrase {
-                        VStack(spacing: 3) {
-                            ForEach(curr.screenLines, id: \.self) { line in
-                                Text(line)
-                                    .font(.system(size: 13, weight: .heavy, design: .rounded))
-                                    .foregroundStyle(Color(hex: concept.accentColorHex) ?? Color.yellow)
-                                    .shadow(color: .black, radius: 4, x: 0, y: 1)
-                                    .multilineTextAlignment(.center)
-                            }
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 28)
-                    }
-                }
+                    .padding(.horizontal, 14)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 14)
-            .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
+
 
             // Информация о текущей реплике
             if let curr = selectedPhrase {
@@ -492,7 +533,7 @@ struct LongformSubtitleEditorView: View {
                         statPill(label: "Строк в кадре", value: "\(curr.screenLines.count)")
                     }
 
-                    Text("💡 Субтитры располагаются строго в нижней трети экрана над каше, ритмично меняясь по 3–5 слов.")
+                    Text("Субтитры располагаются под главной мыслью с постоянным зазором; длинные реплики растут вниз.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .padding(.top, 4)
@@ -525,6 +566,16 @@ struct LongformSubtitleEditorView: View {
     private func initializePhrases() {
         var items: [EditableSubtitlePhrase] = []
         var seenSegmentIndices = Set<Int>()
+        do {
+            try SubtitleCorrectionStore.shared.update {
+                $0.importEdits(arc.captionEdits ?? [], filmKey: correctionFilmKey, language: correctionLanguage)
+            }
+            correctionMemory = try SubtitleCorrectionStore.shared.load()
+        } catch { memoryWarning = "Память правок недоступна: \(error.localizedDescription)" }
+        let rememberedEdits = correctionMemory.edits(for: allSegments, filmKey: correctionFilmKey, language: correctionLanguage)
+        // Явная правка текущего проекта всегда важнее общей памяти.
+        let combined = (arc.captionEdits ?? []) + rememberedEdits
+        let displaySegments = LongformEditorialSupport.captions(allSegments, edits: combined)
 
         for (actIdx, act) in arc.acts.enumerated() {
             for sceneRange in act.segments {
@@ -540,7 +591,7 @@ struct LongformSubtitleEditorView: View {
                                 actType: act.type,
                                 start: seg.start,
                                 end: seg.end,
-                                text: seg.text,
+                                text: displaySegments[origIdx].text,
                                 originalText: seg.text
                             ))
                         }
@@ -550,6 +601,9 @@ struct LongformSubtitleEditorView: View {
         }
 
         self.phrases = items.sorted { $0.start < $1.start }
+        self.rememberedCount = items.filter { phrase in
+            rememberedEdits.contains { $0.start == phrase.start && $0.end == phrase.end && $0.replacement == phrase.text }
+        }.count
         self.selectedPhraseId = self.phrases.first?.id
     }
 
@@ -580,8 +634,15 @@ struct LongformSubtitleEditorView: View {
         }
     }
 
+    private var previewText: String {
+        guard let phrase = selectedPhrase else { return "" }
+        return LongformSubtitleRenderer.chunkTimedPhrases([
+            TimedSubtitlePhrase(start: 0, end: max(1, phrase.duration), text: phrase.text)
+        ]).first?.text ?? ""
+    }
+
     private func confirmAndProceed() {
-        var updated = allSegments
+        var updated = LongformEditorialSupport.captions(allSegments, edits: arc.captionEdits)
         for phrase in phrases {
             guard phrase.originalSegmentIndex >= 0 && phrase.originalSegmentIndex < updated.count else { continue }
             let orig = updated[phrase.originalSegmentIndex]
@@ -592,7 +653,32 @@ struct LongformSubtitleEditorView: View {
                 words: orig.words
             )
         }
-        onConfirm(updated)
+        do {
+            let shown = phrases.map { TranscriptSegment(start: $0.start, end: $0.end, text: $0.originalText) }
+            try SubtitleCorrectionStore.shared.update {
+                $0.record(original: shown, updated: updated, filmKey: correctionFilmKey, language: correctionLanguage)
+            }
+            onConfirm(updated)
+        } catch {
+            memoryWarning = error.localizedDescription
+            pendingWithoutMemory = updated
+        }
+    }
+
+    private func playSourcePhrase(_ phrase: EditableSubtitlePhrase) {
+        guard let sourcePlayer else { return }
+        stopPlayback?.cancel()
+        sourcePlayer.pause()
+        stopPlayback = Task { @MainActor in
+            let start = max(0, phrase.start - 0.3)
+            await sourcePlayer.seek(to: CMTime(seconds: start, preferredTimescale: 600),
+                                    toleranceBefore: .zero, toleranceAfter: .zero)
+            guard !Task.isCancelled else { return }
+            sourcePlayer.play()
+            try? await Task.sleep(for: .seconds(phrase.end - start + 0.5))
+            guard !Task.isCancelled else { return }
+            sourcePlayer.pause()
+        }
     }
 
     /// Номер акта по позиции: у аналитической арки пять актов и пропуски пустых,

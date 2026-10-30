@@ -3,9 +3,22 @@
 import { launchBrowser } from './browser.js';
 import { openInteractiveLogin, checkAuthStatus } from './login.js';
 import { uploadToTikTok } from './tiktok.js';
-import { uploadToInstagram } from './instagram.js';
 import { uploadToYouTube } from './youtube.js';
+import { publishPinnedYouTubeComment } from './youtube-comment.js';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { waitForBrowserClose } from './manual-review.js';
+
+// Save structured progress, never cookies, tokens or a raw browser profile.
+const logDirectory = path.join(os.homedir(), 'Library', 'Logs', 'Shortcast', 'browser-publisher');
+fs.mkdirSync(logDirectory, { recursive: true, mode: 0o700 });
+const runLog = path.join(logDirectory, 'run-' + Date.now() + '-' + process.pid + '.log');
+const stdoutLog = console.log.bind(console);
+console.log = (...args) => {
+  try { fs.appendFileSync(runLog, args.map(String).join(' ') + '\n', { mode: 0o600 }); } catch {}
+  stdoutLog(...args);
+};
 
 async function main() {
   const args = process.argv.slice(2);
@@ -44,7 +57,7 @@ async function main() {
       jobData = {
         videoPath: getArg('--video'),
         thumbnailPath: getArg('--thumbnail'),
-        platforms: (getArg('--platforms') || 'tiktok,instagram,youtube').split(',').map((s) => s.trim().toLowerCase()),
+        platforms: (getArg('--platforms') || 'tiktok,youtube').split(',').map((s) => s.trim().toLowerCase()),
         title: getArg('--title') || 'Shorts',
         caption: getArg('--caption') || '',
         hashtags: (getArg('--hashtags') || '').split(',').map((s) => s.trim()).filter(Boolean),
@@ -53,12 +66,13 @@ async function main() {
       };
     }
 
-    if (!jobData.videoPath || !fs.existsSync(jobData.videoPath)) {
+    if (jobData.action !== 'youtube-comment' && (!jobData.videoPath || !fs.existsSync(jobData.videoPath))) {
       console.error(JSON.stringify({ type: 'error', message: `Видеофайл не найден: ${jobData.videoPath}` }));
       process.exit(1);
     }
 
     const { context, page } = await launchBrowser({ headless: jobData.headless !== false });
+    console.log(JSON.stringify({ type: 'progress', message: 'Лог загрузки: ' + runLog }));
 
     const results = {};
 
@@ -79,15 +93,10 @@ async function main() {
             isDraft: !jobData.isPublic,
           });
           results.tiktok = { status: 'success' };
-        } else if (platform === 'instagram') {
-          await uploadToInstagram(page, {
-            videoPath: jobData.videoPath,
-            caption: content.caption,
-            hashtags: content.hashtags,
-          });
-          results.instagram = { status: 'success' };
         } else if (platform === 'youtube') {
-          await uploadToYouTube(page, {
+          if (jobData.action === 'youtube-comment') {
+            await publishPinnedYouTubeComment(page, jobData);
+          } else await uploadToYouTube(page, {
             videoPath: jobData.videoPath,
             thumbnailPath: content.thumbnailPath || jobData.thumbnailPath,
             title: content.title || jobData.title,
@@ -99,12 +108,21 @@ async function main() {
           results.youtube = { status: 'success' };
         }
       } catch (err) {
+        if (err.keepBrowserOpen) {
+          console.log(JSON.stringify({
+            type: 'progress', platform,
+            message: 'Требуется проверка в браузере: ' + err.message
+              + ' Окно оставлено открытым. Проверьте текущую загрузку в Studio; после проверки закройте это окно Chrome. Повторная загрузка автоматически не начнётся.',
+          }));
+          await waitForBrowserClose(context);
+        }
         console.log(JSON.stringify({
           type: 'error',
           platform,
           message: err.message,
         }));
         results[platform] = { status: 'error', message: err.message };
+        break; // A failed prerequisite must never fall through to another platform.
       }
     }
 

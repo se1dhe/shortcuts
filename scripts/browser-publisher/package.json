@@ -1,7 +1,7 @@
 {
   "name": "shortcast-browser-publisher",
   "version": "1.0.0",
-  "description": "Zero-API browser automation publisher for TikTok, Instagram Reels, and YouTube Shorts",
+  "description": "Zero-API browser automation publisher for TikTok and YouTube essay releases",
   "main": "src/cli.js",
   "type": "module",
   "scripts": {

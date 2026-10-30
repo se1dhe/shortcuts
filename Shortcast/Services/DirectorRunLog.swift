@@ -7,7 +7,9 @@ import Foundation
 enum DirectorRunLog {
 
     private static let lock = NSLock()
-    private static let maxRawDumps = 3
+    /// Дампы двух этапов + ретраи: два прогона по 2 попытки на стадию уже дают 4
+    /// файла, а стадия 1 не имеет права затираться стадией 2 — разбор идёт по обоим.
+    private static let maxRawDumps = 8
 
     static var directory: URL {
         FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
@@ -27,12 +29,19 @@ enum DirectorRunLog {
                in: directory)
     }
 
-    static func dumpRaw(_ raw: String, attempt: Int, directory: URL = DirectorRunLog.directory) {
+    /// `stage` попадает в имя файла, чтобы дамп стадии 1 было видно рядом с
+    /// дампом стадии 2: без метки они различимы только микростемп'ом.
+    static func dumpRaw(
+        _ raw: String,
+        stage: String = "director",
+        attempt: Int,
+        directory: URL = DirectorRunLog.directory
+    ) {
         lock.lock()
         defer { lock.unlock() }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let stamp = String(Int64(Date().timeIntervalSince1970 * 1_000_000))
-        let url = directory.appendingPathComponent("director-raw-\(stamp)-attempt\(attempt).txt")
+        let url = directory.appendingPathComponent("director-raw-\(stamp)-\(stage)-attempt\(attempt).txt")
         try? Data(raw.utf8).write(to: url, options: .atomic)
         pruneRawDumps(in: directory)
     }
@@ -60,18 +69,18 @@ enum DirectorRunLog {
 
     /// Оставляет только последние ответы модели: полный поток за неделю
     /// разросся бы до гигабайт, а для разбора нужен лишь последний прогон.
+    ///
+    /// Порядок — по имени, а не по дате изменения: штамп в имени это микросекунды
+    /// эпохи фиксированной ширины, поэтому лексикографически он сравнивается как
+    /// число. `contentModificationDate` для двух дампов внутри одной секунды
+    /// одинаков, и «какие восемь оставить» превращалось бы в лотерею.
     private static func pruneRawDumps(in directory: URL) {
         let fm = FileManager.default
-        let keys: [URLResourceKey] = [.contentModificationDateKey]
         guard let urls = try? fm.contentsOfDirectory(
-            at: directory, includingPropertiesForKeys: keys) else { return }
+            at: directory, includingPropertiesForKeys: nil) else { return }
         let raws = urls
             .filter { $0.lastPathComponent.hasPrefix("director-raw-") }
-            .sorted { lhs, rhs in
-                let l = (try? lhs.resourceValues(forKeys: Set(keys)).contentModificationDate) ?? .distantPast
-                let r = (try? rhs.resourceValues(forKeys: Set(keys)).contentModificationDate) ?? .distantPast
-                return l > r
-            }
+            .sorted { $0.lastPathComponent > $1.lastPathComponent }
         for url in raws.dropFirst(maxRawDumps) {
             try? fm.removeItem(at: url)
         }

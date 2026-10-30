@@ -23,20 +23,39 @@ struct DirectorRunLogTests {
         #expect(text.contains("attempt 1: 31488 chars"))
     }
 
-    @Test("raw model replies are kept, but only the last three")
-    func testKeepsOnlyTheLastThreeRawDumps() throws {
+    @Test("raw model replies are kept, but only the last eight")
+    func testKeepsOnlyTheLastRawDumps() throws {
         let dir = makeDirectory()
-        for attempt in 1...5 {
+        for attempt in 1...10 {
             DirectorRunLog.dumpRaw("raw reply \(attempt)", attempt: attempt, directory: dir)
-            // Разные секунды: обрезка идёт по дате изменения файла.
+            // Пауза не нужна (обрезка идёт по имени с микросекундным штампом),
+            // но оставляем её как доказательство: порядок не зависит от даты файла.
             Thread.sleep(forTimeInterval: 0.02)
         }
         let files = try FileManager.default
             .contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
             .filter { $0.lastPathComponent.hasPrefix("director-raw-") }
-        #expect(files.count == 3)
-        let kept = try files.map { try String(contentsOf: $0, encoding: .utf8) }.joined()
-        #expect(kept.contains("raw reply 5"))
-        #expect(!kept.contains("raw reply 1"))
+        #expect(files.count == 8)
+        // Точное содержимое, а не `contains`: «raw reply 1» входит в «raw reply 10».
+        let kept = Set(try files.map { try String(contentsOf: $0, encoding: .utf8) })
+        #expect(kept == Set((3...10).map { "raw reply \($0)" }))
+    }
+
+    /// Двухэтапный Director обязан оставлять сырые дампы обеих стадий: иначе
+    /// стадия 2 затирает доказательство того, какие темы предлагала модель.
+    @Test("stage dumps are labelled and both stages survive one run")
+    func testStageDumpsCoexist() throws {
+        let dir = makeDirectory()
+        DirectorRunLog.dumpRaw("stage 1 candidates", stage: "stage1", attempt: 1, directory: dir)
+        Thread.sleep(forTimeInterval: 0.02)
+        DirectorRunLog.dumpRaw("stage 2 essay plan", stage: "stage2", attempt: 1, directory: dir)
+
+        let files = try FileManager.default
+            .contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("director-raw-") }
+        #expect(files.count == 2)
+        let names = Set(files.map(\.lastPathComponent))
+        #expect(names.contains { $0.contains("-stage1-") })
+        #expect(names.contains { $0.contains("-stage2-") })
     }
 }

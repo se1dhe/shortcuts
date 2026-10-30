@@ -1,10 +1,9 @@
 import Foundation
 import SwiftUI
 
-/// The three social networks Shortcast publishes to.
+/// Publication destinations for an essay release.
 enum SocialPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
     case tiktok
-    case instagram
     case youtube
     case telegram
 
@@ -13,20 +12,15 @@ enum SocialPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
     var displayName: LocalizedStringKey {
         switch self {
         case .tiktok:    "TikTok"
-        case .instagram: "Instagram Reels"
         case .youtube:   "YouTube Shorts"
         case .telegram:  "Telegram"
         }
     }
 
-    /// Value expected by the Upload-Post `platform[]` form field.
-    var uploadPostID: String { rawValue }
-
     /// SF Symbol used on the result card header.
     var symbolName: String {
         switch self {
         case .tiktok:    "music.note"
-        case .instagram: "camera"
         case .youtube:   "play.rectangle.fill"
         case .telegram:  "paperplane.fill"
         }
@@ -36,7 +30,6 @@ enum SocialPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
     var tintHex: String {
         switch self {
         case .tiktok:    "FF2D55"
-        case .instagram: "C13584"
         case .youtube:   "FF0000"
         case .telegram:  "2AABEE"
         }
@@ -53,8 +46,7 @@ struct PostVariant: Identifiable, Codable, Sendable, Equatable {
     /// Hashtags WITHOUT the leading `#` (normalized on parse).
     var hashtags: [String]
 
-    /// Pinned comment for this platform (1win promo, generated from a template
-    /// with the user's promo code). Editable before publishing.
+    /// Comment linking viewers to the full essay and discussion.
     var pinnedComment: String
 
     var id: SocialPlatform { platform }
@@ -64,16 +56,5 @@ struct PostVariant: Identifiable, Codable, Sendable, Equatable {
         hashtags
             .map { $0.hasPrefix("#") ? $0 : "#\($0)" }
             .joined(separator: " ")
-    }
-}
-
-/// Full result of one on-device generation pass.
-struct GenerationResult: Sendable, Equatable {
-    var variants: [PostVariant]
-    /// Language the model wrote in (BCP-47-ish, e.g. "es", "en"). Informational.
-    var detectedLanguage: String?
-
-    func variant(for platform: SocialPlatform) -> PostVariant? {
-        variants.first { $0.platform == platform }
     }
 }

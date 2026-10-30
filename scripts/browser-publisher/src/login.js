@@ -1,10 +1,10 @@
 import { launchBrowser } from './browser.js';
 
 /**
- * Checks authentication status for TikTok, Instagram, and YouTube based on cookies.
+ * Checks authentication status for TikTok and YouTube based on cookies.
  *
  * @param {import('playwright-core').BrowserContext} context
- * @returns {Promise<{ tiktok: boolean, instagram: boolean, youtube: boolean }>}
+ * @returns {Promise<{ tiktok: boolean, youtube: boolean }>}
  */
 export async function checkAuthStatus(context) {
   const cookies = await context.cookies();
@@ -13,20 +13,16 @@ export async function checkAuthStatus(context) {
     (c) => c.domain.includes('tiktok.com') && (c.name === 'sessionid' || c.name === 'sid_guard')
   );
 
-  const instagram = cookies.some(
-    (c) => c.domain.includes('instagram.com') && (c.name === 'sessionid' || c.name === 'ds_user_id')
-  );
-
   const youtube = cookies.some(
     (c) => (c.domain.includes('youtube.com') || c.domain.includes('google.com')) &&
            (c.name === 'SID' || c.name === 'SAPISID' || c.name === 'LOGIN_INFO')
   );
 
-  return { tiktok, instagram, youtube };
+  return { tiktok, youtube };
 }
 
 /**
- * Opens a visible browser window with tabs for TikTok, Instagram, and YouTube Studio
+ * Opens a visible browser window with tabs for TikTok and YouTube Studio
  * allowing the user to log in naturally. Waits until the user closes the window.
  */
 export async function openInteractiveLogin() {
@@ -34,17 +30,14 @@ export async function openInteractiveLogin() {
 
   console.log(JSON.stringify({
     type: 'status',
-    message: 'Окно Chrome открыто. Войдите в ваши аккаунты TikTok, Instagram и YouTube Studio. Закройте браузер после завершения.',
+    message: 'Окно Chrome открыто. Войдите в ваши аккаунты TikTok и YouTube Studio. Закройте браузер после завершения.',
   }));
 
   // Tab 1: TikTok Creator Center
   await page.goto('https://www.tiktok.com/creator-center/upload', { waitUntil: 'domcontentloaded' }).catch(() => {});
 
-  // Tab 2: Instagram
-  const igPage = await context.newPage();
-  await igPage.goto('https://www.instagram.com', { waitUntil: 'domcontentloaded' }).catch(() => {});
 
-  // Tab 3: YouTube Studio
+  // Tab 2: YouTube Studio
   const ytPage = await context.newPage();
   await ytPage.goto('https://studio.youtube.com', { waitUntil: 'domcontentloaded' }).catch(() => {});
 

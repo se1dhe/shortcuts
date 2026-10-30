@@ -247,10 +247,19 @@ struct ThematicConceptTests {
         )
         let decoded = try JSONDecoder().decode(EssayPlan.self, from: JSONEncoder().encode(plan))
         #expect(decoded == plan)
-        #expect(decoded.chosenHook == "Ти контролюєш усе, крім себе.")
-        #expect(decoded.chosenCTA == "Напиши, від чого ти досі не відпустив.")
-        #expect(decoded.effectiveTargetDuration == 600)
+        #expect(decoded.chosenHookVariant == nil)
+        #expect(decoded.chosenCTAVariant?.text == "Напиши, від чого ти досі не відпустив.")
+        // Провенанс не выдумывается: вариант, созданный в коде, не «выбор ИИ».
+        #expect(decoded.hookVariants.first?.source == .unknown)
+        // Старая просьба про 10 минут больше не цель: клампим в коридор 4:00–8:00.
+        #expect(decoded.effectiveTargetDuration == EssayDurationPolicy.rendered.upperBound)
         #expect(decoded.focus(for: .form) == "ритм")
+
+        // Подтверждение выбирает хук и сбрасывает хронометраж: его не спрашивают.
+        let confirmed = plan.confirming(hookText: "Свій хук.", ctaText: nil)
+        #expect(confirmed.selectedHook?.text == "Свій хук.")
+        #expect(confirmed.selectedHook?.source == .manual)
+        #expect(confirmed.targetDuration == nil)
     }
 
     @Test("legacy analysis decodes without essay plan or scene roles")

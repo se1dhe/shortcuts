@@ -35,10 +35,11 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         _ moments: [SelectedMoment],
         totalMovieDuration: Double
     ) -> [SelectedMoment] {
-        guard totalMovieDuration > 0 else { return [] }
+        guard totalMovieDuration.isFinite, totalMovieDuration > 0 else { return [] }
 
         var clean: [SelectedMoment] = []
         for raw in moments.sorted(by: { $0.startTime < $1.startTime }) {
+            guard raw.startTime.isFinite, raw.endTime.isFinite else { continue }
             let start = max(0, raw.startTime)
             var end = min(raw.endTime, totalMovieDuration)
             let rawDuration = end - start
@@ -54,7 +55,8 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                 end = expandedEnd
             }
 
-            if let last = clean.last, start <= last.endTime {
+            if let last = clean.last,
+               start < last.endTime || (start == last.endTime && raw.evidenceQuote == nil && last.evidenceQuote == nil) {
                 let primary = raw.dramaticWeight >= last.dramaticWeight ? raw : last
                 clean[clean.count - 1] = SelectedMoment(
                     startTime: last.startTime,
@@ -63,8 +65,11 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                     dramaticWeight: max(last.dramaticWeight, raw.dramaticWeight),
                     actRole: primary.actRole,
                     supports: primary.supports,
-                    featured: (last.featured ?? false) || (raw.featured ?? false)
+                    featured: (last.featured ?? false) || (raw.featured ?? false),
+                    structuralAnchor: primary.structuralAnchor,
+                    evidenceQuote: primary.evidenceQuote
                 )
+                clean[clean.count - 1].semanticConfidence = primary.semanticConfidence
             } else {
                 clean.append(
                     SelectedMoment(
@@ -74,12 +79,143 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                         dramaticWeight: raw.dramaticWeight,
                         actRole: raw.actRole,
                         supports: raw.supports,
-                        featured: raw.featured
+                        featured: raw.featured,
+                        structuralAnchor: raw.structuralAnchor,
+                        evidenceQuote: raw.evidenceQuote
                     )
                 )
+                clean[clean.count - 1].semanticConfidence = raw.semanticConfidence
             }
         }
         return clean
+    }
+
+    /// Правило длины сцены (18–40 с) проверяем здесь, а не только в промпте: на
+    /// таймлайн обязаны попадать целые эпизоды фильма, а не одна реплика и не
+    /// половина картины. Длиннее — режем хвост, короче — дотягиваем вперёд, но
+    /// только туда, где ещё идёт фильм и где не началась следующая сцена. То, что
+    /// дотянуть нечем, в монтаж не выходит — и это пишется в причину деградации,
+    /// а не происходит молча.
+    static func enforceScenePolicy(
+        on moments: [SelectedMoment],
+        totalMovieDuration: Double
+    ) -> ([SelectedMoment], [String]) {
+        guard totalMovieDuration > 0 else { return ([], []) }
+        let minScene = EssayDurationPolicy.sceneLength.lowerBound
+        let maxScene = EssayDurationPolicy.sceneLength.upperBound
+        let sorted = moments.sorted { $0.startTime < $1.startTime }
+
+        var kept: [SelectedMoment] = []
+        var cropped = 0
+        var extended = 0
+        var dropped = 0
+
+        for (index, moment) in sorted.enumerated() {
+            let duration = moment.endTime - moment.startTime
+            let ceiling: Double
+            if index + 1 < sorted.count {
+                ceiling = min(totalMovieDuration, sorted[index + 1].startTime - 0.5)
+            } else {
+                ceiling = totalMovieDuration
+            }
+
+            if duration > maxScene {
+                // Начало — воля модели, её не двигаем: зритель обязан увидеть тот
+                // же кадр, который выбрала модель, а не его середину.
+                let end = min(moment.startTime + maxScene, ceiling)
+                guard end - moment.startTime >= minScene else { dropped += 1; continue }
+                kept.append(rescaled(moment, endTime: end))
+                cropped += 1
+            } else if duration < minScene {
+                let end = min(moment.startTime + minScene, ceiling)
+                guard end - moment.startTime >= minScene else { dropped += 1; continue }
+                kept.append(rescaled(moment, endTime: end))
+                extended += 1
+            } else {
+                kept.append(moment)
+            }
+        }
+
+        var notes: [String] = []
+        if cropped > 0 {
+            notes.append("\(cropped) сцен длиннее \(Int(maxScene)) с обрезаны до правила сцены")
+        }
+        if extended > 0 {
+            notes.append("\(extended) сцен дотянуто до \(Int(minScene)) с целым кадром фильма")
+        }
+        if dropped > 0 {
+            notes.append("\(dropped) сцен короче \(Int(minScene)) с дотянуть было нечем — они не вышли в монтаж")
+        }
+        return (kept, notes)
+    }
+
+    /// Крой меняется только по границе: вес, роль, поля provenance и обоснование
+    /// остаются модельными — монтаж не имеет права переписывать, зачем сцена в эссе.
+    private static func rescaled(_ moment: SelectedMoment, endTime: Double) -> SelectedMoment {
+        var copy = SelectedMoment(
+            startTime: moment.startTime,
+            endTime: endTime,
+            reason: moment.reason,
+            dramaticWeight: moment.dramaticWeight,
+            actRole: moment.actRole,
+            supports: moment.supports,
+            featured: moment.featured,
+            structuralAnchor: moment.structuralAnchor,
+            evidenceQuote: moment.evidenceQuote
+        )
+        copy.semanticConfidence = moment.semanticConfidence
+        return copy
+    }
+
+    /// Единственная точка выхода: проверяет длительность и фиксирует причину,
+    /// сохраняя выбранные моделью сцены без удаления.
+    private func finalized(
+        _ arc: LongformNarrativeArc,
+        notes: [String],
+        legacyAsk: Double?
+    ) -> LongformNarrativeArc {
+        var arc = arc
+        var notes = notes
+        let estimate = EssayDurationPolicy.estimatedRendered(of: arc)
+        if let violation = EssayDurationPolicy.corridorViolation(estimate: estimate) {
+            notes.append(violation)
+            Self.logger.warning(
+                "Essay duration \(String(format: "%.1f", estimate))s outside corridor \(EssayDurationPolicy.format(EssayDurationPolicy.rendered.lowerBound))–\(EssayDurationPolicy.format(EssayDurationPolicy.rendered.upperBound)): \(violation, privacy: .public)"
+            )
+        }
+        for note in notes {
+            recordDegradation(on: &arc, note)
+        }
+        arc.legacyAskSeconds = legacyAsk
+        return arc
+    }
+
+    /// Потолок коридора снимается целыми сценами с хвоста самого длинного акта:
+    /// акт не имеет права опустеть, а мысль — оборваться на середине.
+    private func fitArcToCorridor(
+        _ arc: inout LongformNarrativeArc,
+        notes: inout [String]
+    ) {
+        var removed = 0
+        while EssayDurationPolicy.estimatedRendered(of: arc) > EssayDurationPolicy.rendered.upperBound {
+            guard let index = arc.acts.indices.max(by: {
+                (arc.acts[$0].segments.count, arc.acts[$0].duration)
+                    < (arc.acts[$1].segments.count, arc.acts[$1].duration)
+            }), arc.acts[index].segments.count > 1 else { break }
+            arc.acts[index].segments.removeLast()
+            removed += 1
+        }
+        if removed > 0 {
+            notes.append("эссе не влезало в \(EssayDurationPolicy.format(EssayDurationPolicy.rendered.upperBound)) — снято целых сцен: \(removed)")
+        }
+    }
+
+    /// Причина деградации складывается из всех честных пометок без дублей: UI
+    /// показывает её одним баннером, и «недописанная» причина была бы неправдой.
+    private func recordDegradation(on arc: inout LongformNarrativeArc, _ note: String) {
+        guard !note.isEmpty else { return }
+        if arc.degradationReason?.contains(note) == true { return }
+        arc.degradationReason = arc.degradationReason.map { "\($0); \(note)" } ?? note
     }
 
     func buildArc(
@@ -87,14 +223,50 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         concept: ThematicConcept,
         selectedMoments: [SelectedMoment],
         movieTitle: String,
-        targetDuration: Double = 520.0,
+        targetDuration: Double = EssayDurationPolicy.defaultRenderedTarget,
         essayPlan: EssayPlan? = nil,
         sourceMovieURL: URL? = nil
     ) async throws -> LongformNarrativeArc {
-        let requestedDuration = essayPlan?.targetDuration ?? targetDuration
-        let clampedAsk = min(max(requestedDuration, 300.0), 900.0)
+        // Единственная конвенция хронометража: сюда приходит ЗАПРОС НА РЕНДЕР
+        // (клампится в коридор здесь и больше нигде), а во все построители арок
+        // уходит БЮДЖЕТ КОНТЕНТА. Рендер = контент + fixedPadding + (сцены−1)*intraActGap.
+        // Считать склейки дважды — ровно тот дефект, который ронял валидацию уже
+        // после восьмиминутного экспорта.
+        // Легаси-проект мог просить 11 минут: коридор не обсуждается, но и молча
+        // подрезать чужой заказ нельзя — сколько лежало в файле, столько и показываем.
+        let rawAsk = essayPlan?.targetDuration ?? targetDuration
+        let requestedDuration = EssayDurationPolicy.clamp(rawAsk)
+        let legacyAsk: Double? = EssayDurationPolicy.rendered.contains(rawAsk) ? nil : rawAsk
+        // На экран выходит только текст с записанным авторством. Молчаливый
+        // «первый вариант» — это наше решение, а не выбор модели, поэтому без
+        // подтверждённого source или выбора человека его в эссе не будет.
+        func approvedScreenText(
+            _ variant: EssayPlan.TextVariant?,
+            chosenByUser: Bool,
+            label: String
+        ) -> String? {
+            switch DirectorArtifactGate.screenText(variant, chosenByUser: chosenByUser, label: label) {
+            case .accepted(let passed), .repaired(let passed, _):
+                return passed?.text
+            case .rejected(let reason, let code):
+                Self.logger.info("\(label, privacy: .public) rejected by gate (\(code.rawValue, privacy: .public)): \(reason, privacy: .public)")
+                return nil
+            }
+        }
+        let approvedHookText: String? = essayPlan.flatMap { plan in
+            approvedScreenText(
+                plan.chosenHookVariant,
+                chosenByUser: plan.selectedHook?.source == .manual,
+                label: "хук")
+        }
+        let approvedCTAText: String? = essayPlan.flatMap { plan in
+            approvedScreenText(
+                plan.chosenCTAVariant,
+                chosenByUser: plan.selectedCTA != nil,
+                label: "призыв")
+        }
         let segments = transcript.segments
-        let totalMovieDuration = segments.last?.end ?? clampedAsk
+        let totalMovieDuration = segments.last?.end ?? requestedDuration
         
         // Плотностный credits guard: анализируем аудио чтобы найти конец драматического тела
         // вместо hardcoded 95%. Это важно для короткометражек где 5% = всего 30 секунд.
@@ -111,121 +283,175 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         }
 
         guard !segments.isEmpty else {
-            // Если транскрипт пуст, возвращаем синтетическую тестовую структуру
-            var arc = makeSyntheticArc(
-                movieTitle: movieTitle,
-                concept: concept,
-                targetDuration: clampedAsk
-            )
-            arc.degradationReason = "Транскрипт пуст, использована синтетическая арка"
-            return arc
+            throw EssaySceneEvidence.InvalidSelection(issues: ["транскрипт пуст: модель не может выбрать подтверждённые сцены"])
         }
 
-        // LLM-таймкоды — непроверенный внешний вход: без чистки инвертированные или
-        // вырожденные диапазоны доводят AVFoundation до неуловимого ObjC-исключения.
-        // Если после чистки материала не осталось — честный откат на эвристику.
-        let sanitizedMoments = Self.sanitizeSelectedMoments(
-            selectedMoments,
-            totalMovieDuration: segments.last?.end ?? 0
+        guard let essayPlan else {
+            throw EssaySceneEvidence.InvalidSelection(issues: ["от модели не получен план тезиса и пяти актов"])
+        }
+        let poolMoments = selectedMoments
+        guard EssayDurationPolicy.pool.contains(poolMoments.count) else {
+            throw EssaySceneEvidence.InvalidSelection(issues: ["модель должна выбрать 14–22 сцены, получено \(poolMoments.count)"])
+        }
+        let roleCounts = Dictionary(grouping: poolMoments.compactMap(\.actRole), by: { $0 }).mapValues(\.count)
+        guard roleCounts.values.reduce(0, +) == poolMoments.count,
+              roleCounts[.hook, default: 0] == 1 else {
+            throw EssaySceneEvidence.InvalidSelection(issues: ["у каждой сцены должна быть роль; hook должен быть назначен ровно один раз"])
+        }
+        let missingRoles = LongformActType.canonicalAnalyticOrder.compactMap { role -> String? in
+            let minimum = role == .hook ? 1 : 3
+            let count = roleCounts[role, default: 0]
+            return count < minimum ? "\(role.promptKey): \(count)/\(minimum)" : nil
+        }
+        guard missingRoles.isEmpty else {
+            throw EssaySceneEvidence.InvalidSelection(issues: ["модель не наполнила актовые роли: " + missingRoles.joined(separator: ", ")])
+        }
+        let invalidScenes = poolMoments.enumerated().compactMap { index, moment -> String? in
+            guard moment.startTime.isFinite, moment.endTime.isFinite,
+                  moment.startTime >= 0, moment.endTime <= totalMovieDuration,
+                  EssayDurationPolicy.sceneLength.contains(moment.endTime - moment.startTime) else {
+                return "сцена \(index + 1) имеет недопустимый диапазон; монтаж не будет менять таймкод модели"
+            }
+            return nil
+        }
+        guard invalidScenes.isEmpty else { throw EssaySceneEvidence.InvalidSelection(issues: invalidScenes) }
+        for (index, moment) in poolMoments.enumerated() where poolMoments[..<index].contains(where: {
+            $0.startTime < moment.endTime && moment.startTime < $0.endTime
+        }) {
+            throw EssaySceneEvidence.InvalidSelection(issues: ["сцена \(index + 1) пересекается с другой выбранной сценой"])
+        }
+        let poolSeconds = poolMoments.reduce(0) { $0 + max(0, $1.endTime - $1.startTime) }
+        let sceneBudget = poolMoments.count
+        let renderedWindow = EssayDurationPolicy.renderedTarget(poolSeconds: poolSeconds, scenes: sceneBudget)
+        if let violation = EssayDurationPolicy.corridorViolation(estimate: renderedWindow) {
+            throw EssaySceneEvidence.InvalidSelection(issues: [violation + "; модель должна пересобрать план"])
+        }
+        let contentTarget = EssayDurationPolicy.contentBudget(
+            renderedTarget: renderedWindow,
+            scenes: sceneBudget
         )
-        if !sanitizedMoments.isEmpty {
-            // Аналитическая 5-актная арка только когда модель реально разметила сцены
-            // минимум по трём ролям; иначе сохраняем прежнюю 4-актную раскладку.
-            if let plan = essayPlan,
-               Self.analyticCoverage(of: sanitizedMoments) >= 3 {
-                var arc = try buildAnalyticArc(
-                    selectedMoments: sanitizedMoments,
+        let notes: [String] = []
+        Self.logger.notice(
+            "Duration plan ask=\(String(format: "%.1f", rawAsk), privacy: .public) window=\(String(format: "%.1f", renderedWindow), privacy: .public) content=\(String(format: "%.1f", contentTarget), privacy: .public) scenes=\(sceneBudget, privacy: .public) pool=\(String(format: "%.1f", poolSeconds), privacy: .public)"
+        )
+        do {
+                let arc = try buildAnalyticArc(
+                    selectedMoments: poolMoments,
                     transcript: transcript,
                     concept: concept,
                     movieTitle: movieTitle,
-                    targetDuration: clampedAsk,
-                    plan: plan,
+                    targetDuration: contentTarget,
+                    plan: essayPlan,
+                    approvedHookText: approvedHookText,
+                    approvedCTAText: approvedCTAText,
                     creditsCutoffRatio: creditsCutoffRatio
                 )
-                // Валидация хука: если хук отсутствует или слишком короткий, фиксируем
-                arc = Self.validateAndFixHook(in: arc, transcript: transcript, concept: concept)
-                return arc
-            }
-            var arc = try buildArcFromSelectedMoments(
-                selectedMoments: sanitizedMoments,
-                transcript: transcript,
-                concept: concept,
-                movieTitle: movieTitle,
-                targetDuration: clampedAsk,
-                hookText: essayPlan?.chosenHook,
-                ctaText: essayPlan?.chosenCTA,
-                thesis: essayPlan?.thesis,
-                creditsCutoffRatio: creditsCutoffRatio
-            )
-            arc = Self.validateAndFixHook(in: arc, transcript: transcript, concept: concept)
-            return arc
+                return finalized(arc, notes: notes, legacyAsk: legacyAsk)
         }
-
-        // Fallback на эвристику, если selectedMoments пуст
-        var arc = try await buildArcHeuristic(
-            from: transcript,
-            concept: concept,
-            movieTitle: movieTitle,
-            targetDuration: clampedAsk
-        )
-        arc.degradationReason = "LLM не выбрал сцены, использована эвристика"
-        return arc
     }
     
-    /// Валидирует наличие и длительность хука (20-40 секунд).
-    /// Если хук отсутствует или слишком короткий, пытается исправить.
+    /// Валидирует хук: 18–40 с реальной сцены фильма в начале эссе.
+    /// Таймкоды модели на 0 не сдвигаются: обнулить хук — значит показать другой
+    /// кадр и выдать его за выбор модели. Поэтому хук либо дотягиваем вперёд до
+    /// границы реальной реплики, либо обрезаем с хвоста, и каждое такое решение
+    /// пишется в причину деградации. Молча «исправленный» хук был бы подделкой.
     private static func validateAndFixHook(
         in arc: LongformNarrativeArc,
         transcript: Transcript,
-        concept: ThematicConcept
+        concept: ThematicConcept,
+        filmEnd: Double,
+        notes: inout [String]
     ) -> LongformNarrativeArc {
         var arc = arc
-        
+        let minHook = minHookDuration
+        let maxHook = maxHookDuration
+        let lineEnds = transcript.segments.sorted { $0.start < $1.start }.map(\.end)
+
         // Ищем акт с ролью .hook
         guard let hookIndex = arc.acts.firstIndex(where: { $0.type == .hook }) else {
-            // Хук отсутствует — добавляем fallback из первой сцены
-            let allSegments = arc.acts.flatMap { act in
-                act.segments.map { segment in (actType: act.type, segment: segment) }
+            // Хук отсутствует — берём раннюю сцену ЭТОГО монтажа: в нуле отсчёта
+            // обычно заставка и бегущие титры, которых модель не касалась вовсе.
+            guard let earliest = arc.acts.flatMap(\.segments).min(by: { $0.start < $1.start })
+            else { return arc }
+            var hookSegment = earliest
+            if hookSegment.duration > maxHook {
+                hookSegment = TimeSegment(start: earliest.start, end: earliest.start + maxHook)
             }
-            if let firstSegment = allSegments.min(by: { abs($0.segment.start) < abs($1.segment.start) }) {
-                let hookSegment = TimeSegment(start: 0, end: min(30, firstSegment.segment.end))
-                let hookAct = LongformAct(
+            // Сцену забираем из её акта, а не копируем: повтор того же кадра
+            // зритель читает как брак монтажа. Пустой акт при этом не делается.
+            if let donor = arc.acts.firstIndex(where: { $0.segments.contains(earliest) }) {
+                if arc.acts[donor].segments.count > 1 {
+                    arc.acts[donor].segments.removeAll { $0 == earliest }
+                } else {
+                    notes.append("хук повторяет сцену акта «\(arc.acts[donor].type.displayName)» — убрать её было нечем")
+                }
+            }
+            arc.acts.insert(
+                LongformAct(
                     type: .hook,
                     title: "Хук",
                     dramaticBeat: "Начало фильма",
                     segments: [hookSegment]
-                )
-                arc.acts.insert(hookAct, at: 0)
-                arc.degradationReason = "Хук отсутствовал, добавлен fallback из начала фильма"
-            }
+                ),
+                at: 0
+            )
+            notes.append("Хук отсутствовал, добавлен fallback из начала фильма")
             return arc
         }
-        
-        // Проверяем длительность хука
+
         let hookAct = arc.acts[hookIndex]
         let hookDuration = hookAct.duration
-        
-        if hookDuration < 20 {
-            // Хук слишком короткий — расширяем до 30 секунд
-            let extendedEnd = min(30, hookAct.segments.last?.end ?? 30)
-            let extendedSegment = TimeSegment(start: 0, end: extendedEnd)
+
+        if hookDuration > maxHook {
+            // Режем с хвоста: целые сцены до лимита, последний крой — по границе.
+            // Начало остаётся тем кадром, который выбрала модель.
+            var budget = maxHook
+            var kept: [TimeSegment] = []
+            for segment in hookAct.segments {
+                guard budget > 0.5 else { break }
+                if segment.duration <= budget {
+                    kept.append(segment)
+                    budget -= segment.duration
+                } else {
+                    kept.append(TimeSegment(start: segment.start, end: segment.start + budget))
+                    budget = 0
+                }
+            }
             arc.acts[hookIndex] = LongformAct(
-                type: .hook,
+                type: hookAct.type,
                 title: hookAct.title,
                 dramaticBeat: hookAct.dramaticBeat,
-                segments: [extendedSegment]
+                segments: kept
             )
-        } else if hookDuration > 40 {
-            // Хук слишком длинный — сокращаем до 40 секунд
-            let trimmedSegment = TimeSegment(start: 0, end: 40)
+            notes.append("хук \(EssayDurationPolicy.format(hookDuration)) не влезал в правило сцены — обрезан до \(Int(maxHook)) с")
+        } else if hookDuration < minHook {
+            guard var last = hookAct.segments.last else {
+                notes.append("хук пустой — заполнять его было нечем")
+                return arc
+            }
+            let ceiling = min(filmEnd, last.start + maxHook)
+            var newEnd = min(last.end + (minHook - hookDuration), ceiling)
+            // Слово рубить нельзя: если рядом конец реальной реплики, встаём на него.
+            if let snapped = lineEnds.first(where: { $0 >= newEnd && $0 <= ceiling }) {
+                newEnd = snapped
+            }
+            guard newEnd > last.end else {
+                notes.append("хук \(EssayDurationPolicy.format(hookDuration)) короче \(Int(minHook)) с — дальше фильм не позволил")
+                return arc
+            }
+            last = TimeSegment(start: last.start, end: newEnd)
+            var segments = hookAct.segments
+            segments[segments.count - 1] = last
             arc.acts[hookIndex] = LongformAct(
-                type: .hook,
+                type: hookAct.type,
                 title: hookAct.title,
                 dramaticBeat: hookAct.dramaticBeat,
-                segments: [trimmedSegment]
+                segments: segments
             )
+            let grown = segments.reduce(0.0) { $0 + $1.duration }
+            notes.append("хук дотянут до \(EssayDurationPolicy.format(grown)) целым кадром фильма")
         }
-        
+
         return arc
     }
 
@@ -354,9 +580,8 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
 
     // MARK: - Аналитическая 5-актная арка по ролям сцен
 
-    /// Раскладывает сцены по ролям, назначенным Director'ом, и укладывает сумму
-    /// в бюджет. Сцены без роли идут в самый «голодный» акт, а не в четверть фильма:
-    /// роль важнее хронологической позиции.
+    /// Переносит выбранные Director'ом сцены в акты без добора, удаления,
+    /// перестановки между ролями или изменения таймкодов.
     private func buildAnalyticArc(
         selectedMoments: [SelectedMoment],
         transcript: Transcript,
@@ -364,78 +589,26 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         movieTitle: String,
         targetDuration: Double,
         plan: EssayPlan,
+        approvedHookText: String?,
+        approvedCTAText: String?,
         creditsCutoffRatio: Double = 0.95
     ) throws -> LongformNarrativeArc {
-        let totalMovieDuration = transcript.segments.last?.end ?? targetDuration
-        let creditsCutoff = totalMovieDuration * creditsCutoffRatio
-        let filtered = selectedMoments.filter { $0.endTime < creditsCutoff }
-        let moments = filtered.isEmpty ? selectedMoments : filtered
-
         var buckets: [LongformActType: [SelectedMoment]] = [:]
         for type in LongformActType.canonicalAnalyticOrder {
             buckets[type] = []
         }
-        for moment in moments {
-            if let role = moment.actRole, buckets[role] != nil {
-                buckets[role]?.append(moment)
+        for moment in selectedMoments {
+            guard let role = moment.actRole, buckets[role] != nil else {
+                throw EssaySceneEvidence.InvalidSelection(issues: ["у выбранной модели сцены нет роли одного из пяти актов"])
             }
+            buckets[role, default: []].append(moment)
         }
-        // Сцены без валидной роли — в акт с наименьшим накопленным хронометражем.
-        for moment in moments where moment.actRole == nil || buckets[moment.actRole!] == nil {
-            let target = LongformActType.canonicalAnalyticOrder.min {
-                bucketDuration(buckets[$0] ?? []) < bucketDuration(buckets[$1] ?? [])
-            } ?? .psychology
-            buckets[target]?.append(moment)
-        }
-        for type in LongformActType.canonicalAnalyticOrder {
-            buckets[type]?.sort { $0.startTime < $1.startTime }
-        }
-
-        // Каждый акт получает хотя бы одну сцену, если у соседа их больше одной:
-        // пустой акт — это дыра в драматургии, а не экономия бюджета.
-        for type in LongformActType.canonicalAnalyticOrder where (buckets[type] ?? []).isEmpty {
-            guard let donor = LongformActType.canonicalAnalyticOrder
-                .filter({ $0 != type && (buckets[$0]?.count ?? 0) > 1 })
-                .max(by: { bucketDuration(buckets[$0] ?? []) < bucketDuration(buckets[$1] ?? []) })
-            else { continue }
-            let boundary = nearestBoundary(type, buckets: buckets)
-            let candidate = (buckets[donor] ?? []).min {
-                min(abs($0.startTime - boundary), abs($0.endTime - boundary))
-                    < min(abs($1.startTime - boundary), abs($1.endTime - boundary))
-            }
-            guard let candidate,
-                  let index = buckets[donor]?.firstIndex(of: candidate) else { continue }
-            buckets[donor]?.remove(at: index)
-            buckets[type] = [candidate]
-        }
-
-        // Хук эссе — одна зацепка в начале, а не набор сцен: essays_20_films.md
-        // отводит ему 0:00–0:40. Развязка хука — обещание зрителю, поэтому якорь
-        // ставится ДО добора: он часть бюджета, а не добавка поверх него.
-        Self.consolidateHook(&buckets)
-        let usableSegments = TranscriptQualityGate(segments: transcript.segments)
-            .filtered(transcript.segments)
-        Self.ensureHookRevealAnchor(
-            &buckets,
-            hookText: plan.chosenHook,
-            segments: usableSegments,
-            creditsCutoff: creditsCutoff
-        )
-
-        fillToBudget(
-            &buckets,
-            segments: usableSegments,
-            target: targetDuration,
-            creditsCutoff: creditsCutoff
-        )
-        trimToBudget(&buckets, target: targetDuration * 1.10)
-        // Финальный кадр эссе — не хронологический хвост и не экспозиция, а
-        // сильнейшая сцена Director: она и есть катарсис/развязка для зрителя.
-        Self.promoteStrongestSceneToCatharsis(&buckets)
         var acts: [LongformAct] = []
         for type in LongformActType.canonicalAnalyticOrder {
             let scenes = buckets[type] ?? []
-            guard !scenes.isEmpty else { continue }
+            guard !scenes.isEmpty else {
+                throw EssaySceneEvidence.InvalidSelection(issues: ["модель не дала сцен для акта \(type.promptKey)"])
+            }
             acts.append(LongformAct(
                 type: type,
                 title: "",
@@ -444,27 +617,14 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             ))
         }
 
-        guard !acts.isEmpty else {
-            return try buildArcFromSelectedMoments(
-                selectedMoments: moments,
-                transcript: transcript,
-                concept: concept,
-                movieTitle: movieTitle,
-                targetDuration: targetDuration,
-                hookText: plan.chosenHook,
-                ctaText: plan.chosenCTA,
-                thesis: plan.thesis
-            )
-        }
-
         return LongformNarrativeArc(
             movieTitle: movieTitle,
             concept: concept,
             acts: acts,
-            summary: "Analytic plan: \(moments.count) moments across \(acts.count) acts",
+            summary: "Model plan: \(selectedMoments.count) moments across \(acts.count) acts",
             mood: "dramatic",
-            hookText: plan.chosenHook,
-            ctaText: plan.chosenCTA,
+            hookText: approvedHookText,
+            ctaText: approvedCTAText,
             thesis: plan.thesis
         )
     }
@@ -504,13 +664,19 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
 
     // MARK: - Структурные якоря (хук и его развязка)
 
-    /// Хук эссе в `essays_20_films.md` занимает 0:00–0:40: это зацепка, а не акт анализа.
-    static let maxHookDuration: Double = 40.0
+    /// Хук эссе по архивному контент-плану
+    /// `docs/archive/essays_20_films-2026-10-27.md` занимает 0:00–0:40:
+    /// это зацепка, а не акт анализа. 40 с — она же верхняя граница сцены,
+    /// поэтому хук никогда не бывает вне правила длины сцены.
+    static let maxHookDuration: Double = EssayDurationPolicy.sceneLength.upperBound
+    /// Нижняя граница хука: короче — обрывок реплики вместо зацепки.
+    static let minHookDuration: Double = EssayDurationPolicy.sceneLength.lowerBound
     /// Вес якоря выше добра (0.35) и ниже сильнейшей сцены модели (0.9+):
     /// бюджет его не режет, пока есть что резать кроме не-featured добра.
     static let structuralAnchorWeight: Double = 0.65
     /// Якорь — сцена, а не кусок фильма: короче — обрывок реплики, длиннее — уже не монтаж.
-    static let maxAnchorDuration: Double = 60.0
+    /// 60 с были бы вне правила сцены, а на таймлайн попадает именно якорь.
+    static let maxAnchorDuration: Double = EssayDurationPolicy.sceneLength.upperBound
     static let minAnchorDuration: Double = 12.0
     /// Комфортная длина якоря: до неё растём, дальше не жадничаем.
     static let anchorTargetDuration: Double = 30.0
@@ -530,15 +696,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
 
         let end = min(strongest.endTime, strongest.startTime + maxHookDuration)
         guard end > strongest.startTime else { return }
-        buckets[.hook] = [SelectedMoment(
-            startTime: strongest.startTime,
-            endTime: end,
-            reason: strongest.reason,
-            dramaticWeight: strongest.dramaticWeight,
-            actRole: .hook,
-            supports: strongest.supports,
-            featured: strongest.featured
-        )]
+        buckets[.hook] = [rescaled(strongest, endTime: end)]
     }
 
     /// Гарантирует, что строка, которая «оплачивает» обещание хука, попадёт в монтаж.
@@ -591,7 +749,8 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             dramaticWeight: structuralAnchorWeight,
             actRole: role,
             supports: nil,
-            featured: false
+            featured: false,
+            structuralAnchor: true
         ))
         buckets[role]?.sort { $0.startTime < $1.startTime }
     }
@@ -705,6 +864,22 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         return TimeSegment(start: start, end: end)
     }
 
+    /// Обрезка идёт по потолку коридора, а не по «цель + 10%»: именно эти 10%
+    /// превращали восьмиминутное эссе в девятиминутный файл, который валидация
+    /// ловила уже после экспорта. Потолок пересчитывается после каждого снятого
+    /// кадра — минус одна сцена означает минус одна пауза.
+    private func trimToCorridor(_ buckets: inout [LongformActType: [SelectedMoment]]) {
+        while true {
+            let scenes = buckets.values.reduce(0) { $0 + $1.count }
+            let ceiling = EssayDurationPolicy.contentCeiling(scenes: scenes)
+            let before = buckets.values.reduce(0.0) { $0 + bucketDuration($1) }
+            guard before > ceiling else { return }
+            trimToBudget(&buckets, target: ceiling)
+            let after = buckets.values.reduce(0.0) { $0 + bucketDuration($1) }
+            guard after < before else { return }   // резать больше нечем: дальше только падающий цикл
+        }
+    }
+
     /// Режет целыми сценами: сначала не-featured с минимальным весом, никогда не
     /// оставляя акт пустым. Крой посередине мысли запрещён.
     private func trimToBudget(
@@ -718,7 +893,11 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             let removable = LongformActType.canonicalAnalyticOrder.compactMap { type
                 -> (type: LongformActType, index: Int, weight: Double)? in
                 guard let scenes = buckets[type], scenes.count > 1 else { return nil }
-                let candidates = scenes.enumerated().filter { !($0.element.featured ?? false) }
+                // Якорь структуры (развязка обещания хука) защищён наравне с featured:
+                // сильная сцена модели и обещание зрителю — не чем его заменить.
+                let candidates = scenes.enumerated().filter {
+                    !($0.element.featured ?? false) && !($0.element.structuralAnchor ?? false)
+                }
                 guard let weakest = candidates.min(by: { $0.element.dramaticWeight < $1.element.dramaticWeight })
                 else { return nil }
                 return (type, weakest.offset, weakest.element.dramaticWeight)
@@ -738,8 +917,10 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
     static func promoteStrongestSceneToCatharsis(
         _ buckets: inout [LongformActType: [SelectedMoment]]
     ) {
+        let scenes = buckets.values.flatMap { $0 }
+        let evidenceBacked = !scenes.isEmpty && scenes.allSatisfy { $0.evidenceQuote != nil }
         let movable = LongformActType.canonicalAnalyticOrder
-            .filter { $0 != .hook }
+            .filter { evidenceBacked ? $0 == .catharsis : $0 != .hook }
             .flatMap { type in
                 (buckets[type] ?? []).map { (type: type, moment: $0) }
             }
@@ -748,7 +929,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             isStronger(rhs.moment, than: lhs.moment)
         }) else { return }
 
-        var catharsis = buckets[.catharsis] ?? []
+        let catharsis = buckets[.catharsis] ?? []
         // Слабее текущего финала не двигаем: перенос ради переноса только
         // отодвинул бы сильную сцену модели.
         if let last = catharsis.last, !isStronger(strongest.moment, than: last) {
@@ -758,8 +939,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             $0.startTime == strongest.moment.startTime && $0.endTime == strongest.moment.endTime
         }) else { return }
         buckets[strongest.type]?.remove(at: index)
-        catharsis.append(strongest.moment)
-        buckets[.catharsis] = catharsis
+        buckets[.catharsis, default: []].append(strongest.moment)
     }
 
     /// Сила сцены для финала: featured от Director важнее веса, при равенстве
@@ -774,8 +954,8 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         return lhs.startTime > rhs.startTime
     }
 
-    /// Доливает акты до их доли заказанного хронометража, когда модель вернула
-    /// меньше материала, чем нужно («9 реплик на 2,5 минуты» при выбранных 12).
+    /// Доливает акты до их доли БЮДЖЕТА КОНТЕНТА, когда модель вернула меньше
+    /// материала, чем нужно («9 реплик на 2,5 минуты» при выбранных 12).
     /// Новые сцены код не придумывает: расширяет уже выбранные соседним
     /// непрерывным диалогом, чтобы монтаж досказал ту же мысль до конца.
     private func fillToBudget(
@@ -872,17 +1052,34 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
                     .min { distance($0, to: anchors) < distance($1, to: anchors) }
                 guard let candidate,
                       distance(candidate, to: anchors) <= 600.0 else { break }
+                // Доложенная сцена обязана быть сценой, а не обрывком реплики:
+                // нижняя граница правила действует и для материала добора.
+                var range = candidate
+                if range.duration < EssayDurationPolicy.sceneLength.lowerBound {
+                    range = TimeSegment(
+                        start: candidate.start,
+                        end: min(
+                            candidate.start + EssayDurationPolicy.sceneLength.lowerBound,
+                            creditsCutoff
+                        )
+                    )
+                }
+                guard range.duration >= EssayDurationPolicy.sceneLength.lowerBound,
+                      !overlapsAny(range: range, in: used, safetyBuffer: 0.5) else {
+                    used.append(range)  // помечаем взятым, чтобы не выбирать его снова
+                    continue
+                }
                 scenes.append(SelectedMoment(
-                    startTime: candidate.start,
-                    endTime: candidate.end,
+                    startTime: range.start,
+                    endTime: range.end,
                     reason: "Сцена поруч із вибраним моментом",
                     dramaticWeight: 0.35,
                     actRole: type,
                     supports: nil,
                     featured: false
                 ))
-                used.append(candidate)
-                deficit -= candidate.duration
+                used.append(range)
+                deficit -= range.duration
             }
             buckets[type] = scenes
         }
@@ -994,7 +1191,8 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             dramaticWeight: scene.dramaticWeight,
             actRole: scene.actRole,
             supports: scene.supports,
-            featured: scene.featured
+            featured: scene.featured,
+            structuralAnchor: scene.structuralAnchor
         )
     }
 
@@ -1089,14 +1287,23 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         }
     }
 
-    /// Эвристический построитель арки (fallback, когда LLM не предоставила moments)
+    /// Эвристический построитель арки (fallback, когда LLM не предоставила moments).
+    /// - Parameters:
+    ///   - targetDuration: БЮДЖЕТ КОНТЕНТА в секундах, а не хронометраж рендера.
+    ///   - askedDuration: сырой запрос проекта — он идёт только в отчёт, где обязан
+    ///     показать легаси-просьбу («11 минут»), а не то, до чего мы её подрезали.
     func buildArcHeuristic(
         from transcript: Transcript,
         concept: ThematicConcept,
         movieTitle: String,
-        targetDuration: Double
+        targetDuration: Double,
+        askedDuration: Double? = nil
     ) async throws -> LongformNarrativeArc {
-        let clampedAsk = min(max(targetDuration, 300.0), 900.0)
+        // Прямые вызовы со старыми числами («520 секунд») здесь тоже бывают: потолок
+        // контента ставит коридор, а пересчёт идемпотентен — настоящий бюджет
+        // меньше потолка проходит unchanged.
+        let ceiling = EssayDurationPolicy.contentCeiling(scenes: EssayDurationPolicy.pool.lowerBound)
+        let contentBudget = min(max(0, targetDuration), ceiling)
         let filmSegments = transcript.segments
         let segments = TranscriptQualityGate(segments: filmSegments).filtered(filmSegments)
 
@@ -1105,17 +1312,17 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             return makeSyntheticArc(
                 movieTitle: movieTitle,
                 concept: concept,
-                targetDuration: clampedAsk
+                targetDuration: min(contentBudget, EssayDurationPolicy.contentCeiling(scenes: 4))
             )
         }
 
-        let totalMovieDuration = filmSegments.last?.end ?? clampedAsk
+        let totalMovieDuration = filmSegments.last?.end ?? contentBudget
         let isFullMovie = totalMovieDuration > 1200.0 // >20 мин
 
         // Запрос имеет смысл только относительно длины фильма: 520с с 62-минутного фильма
         // физически недостижим, поэтому эффективная цель выводится из хронометража источника.
         // Потолок из доступного материала лишь документируется в отчёте — gates не ослабляются.
-        let effectiveTarget = min(clampedAsk, max(300.0, totalMovieDuration * Self.runtimeTargetRatio))
+        let effectiveTarget = min(contentBudget, max(300.0, totalMovieDuration * Self.runtimeTargetRatio))
 
         // Бюджет длительности по актам
         let durAct1 = effectiveTarget * LongformActType.hook.targetDurationRatio
@@ -1247,7 +1454,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         let achieved = acts.reduce(0) { $0 + $1.duration }
         let report = LongformNarrativeArc.DurationReport(
             filmDuration: totalMovieDuration,
-            ask: targetDuration,
+            ask: askedDuration ?? targetDuration,
             effectiveTarget: effectiveTarget,
             admissibleCeiling: admissibleCeiling,
             achieved: achieved,
@@ -1818,28 +2025,10 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
 
         // Ядро темы выводится из самого слова: «субъективность» → «субъектив»,
         // поэтому падежные формы («субъективна», «субъективном») совпадают с темой
-        // в любом фильме и с любой темой — вместо этого сверяться с таблицей нельзя.
+        // в любом фильме и с любой темой. Таблиц соответствий «тема → набор слов»
+        // здесь быть не может: они решали бы, какие сцены попадут в эссе, вместо модели.
         for stem in themeStems(for: concept.word) {
             keywords.insert(stem)
-        }
-
-        let semanticThematicMap: [String: [String]] = [
-            "его": ["его", "гордіст", "голов", "ворог", "всередин", "я сам", "мене", "себе", "розум", "мисл", "контрол", "перемож", "слаб", "біль", "визнай", "правд", "голос"],
-            "обман": ["обман", "розводк", "брехн", "правд", "гра", "шах", "суперник", "розумн", "правил", "угод", "грош", "довір", "жадібн", "маніпул", "вірит", "карт"],
-            "страх": ["страх", "боїт", "боїшся", "більно", "смерт", "вбит", "панік", "пістолет", "постріл", "кров", "втрат", "кінець", "тряс", "жах", "слабк"],
-            "ілюзія": ["ілюзі", "здаєт", "реальн", "бачит", "сліп", "оч", "сон", "правд", "прихов", "ховає", "розуміє", "здається", "дзеркал", "марев"],
-            "жадібність": ["жадібн", "грош", "багат", "алчіст", "мільйон", "борг", "заплат", "цін", "купит", "золот", "казино", "виграш", "мало"],
-            "терпіння": ["терпін", "чекат", "час", "поспіх", "тиш", "витрим", "спокій", "холоднокров", "секунд"],
-            "характер": ["характер", "воля", "сил", "зламати", "вистоя", "удар", "пада", "вставати", "терпіти", "до кінця"],
-            "самотність": ["один", "самотніст", "порожнеч", "нікого", "один на один", "тиш", "кинув", "сам"],
-            "зрада": ["зрад", "ніж у спину", "вірніст", "зрадник", "зрад", "вірив", "підставив", "щур"],
-            "сім'я": ["сім'", "брат", "батько", "син", "доньк", "рідн", "дім", "діти", "матір", "захист", "крів"]
-        ]
-
-        for (key, list) in semanticThematicMap {
-            if wordLower.contains(key) || key.contains(wordLower) {
-                for item in list { keywords.insert(item) }
-            }
         }
 
         let fullContext = "\(concept.tagline) \(concept.philosophicalPremise) \(concept.suggestedTitle)"

@@ -17,19 +17,28 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         1. Драматургічну арку фільму (зав'язка, кульмінація, розв'язка)
         2. Ключові конфлікти та екзистенційні питання, які піднімає фільм
         3. Психологічну еволюцію головного героя
-        4. 3-5 найсильніших сцен, які найкраще розкривають головну тему
+        4. Найсильніші сцени фільму — саме з них у КРОЦІ 2 складеться пул для монтажу.
 
         КРОК 2: ВИБІР ТЕМИ ТА МОМЕНТІВ
-        1. Вияви ОДНЕ потужне якірне слово теми (word) з великої літери (наприклад: «ЕГО», «ОБМАН», «СТРАХ», «ТЕРПІННЯ», «ГЕНІАЛЬНІСТЬ», «ВЛАДА»).
+        1. Вияви ОДНЕ якірне слово теми (word) — слово, яке САМЕ цей фільм робить видимим.
+           Формальні вимоги (без них відповідь відхиляється):
+           - одне слово з великої літери, називний відмінок;
+           - іменник або дієслово в інфінітиві — НЕ займенник, НЕ прийменник, НЕ сполучник,
+             НЕ частка і НЕ числівник («він», «його», «що», «в», «і», «не» темою не є);
+           - щонайменше 4 літери;
+           - сугубо українське літературне слово, без русизмів;
+           - слово прямо називає конфлікт фільму; воно не зобов’язане звучати в діалозі.
+           Ми НЕ даємо тобі списку тем: перелік прикладів був би підстановкою, а не знахідкою,
+           і ти обирав би слово зі словника замість слова з фільму. Теми не буває в ім'ї героя,
+           в жанровій бирці й у службових словах — тема є висновок з аналізу КРОКУ 1.
         2. Сформулюй драматургічний розбір (aiReasoning) — не більше 600 символів: чому саме ця тема є прихованим двигуном сюжету.
         3. Запропонуй гострий слоган (tagline), філософський тез (philosophicalPremise) та вірусний YouTube-заголовок (suggestedTitle).
-        4. Склади план есе (essayPlan): thesis, 3 hookVariants, 2 ctaVariants, actFocus.
-        5. ВИЗНАЧ 16-24 КОНКРЕТНИХ МОМЕНТІВ для есе (selectedMoments) з таймкодами та ролями — НЕ БІЛЬШЕ 24.
-        6. Запропонуй РІВНО 3 альтернативні грані фільму (alternativeConcepts).
+        4. Склади план есе (essayPlan): thesis, один найкращий hook, 2 ctaVariants, actFocus.
+        5. ВИЗНАЧ 14-22 КОНКРЕТНИХ МОМЕНТІВ для есе (selectedMoments) з таймкодами та ролями — НЕ БІЛЬШЕ 22.
 
         СТРУКТУРА ЕСЕ (5 актів, саме в цьому порядку; хук — 0:00–0:40):
         1. hook — перша сцена есе: обіцянка/парадокс, який утримує глядача; 1-2 речення, без переказу фіналу.
-           Роль hook отримує РІВНО ОДНА сцена тривалістю 20-40 с — це зачіпка, а не аналіз.
+           Роль hook отримує РІВНО ОДНА сцена тривалістю 18-40 с — це зачіпка, а не аналіз.
         2. form — як фільм зроблений: монтаж, ритм, повторювані прийоми, структура сцен.
         3. psychology — що насправді рухає героєм: страх, бажання, захист, самообман.
         4. philosophy — прихований підтекст: що фільм каже про людину, свободу, владу, вибір.
@@ -42,87 +51,80 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         supports — одним реченням, який тезис акта доводить сцена; featured=true лише для найсильніших 1-2 сцен акта.
         Розподіляй сцени за РОЛЛЮ В АРЦІ ЕСЕ, а не за місцем у фільмі: хук може бути з середини,
         а наступний акт — з початку. Есе не зобов'язане йти хронологією фільму.
-        Кожен момент — ЦІЛІСНА СЦЕНА тривалістю 20-60 с, а не окрема репліка: початок і кінець
+        Кожен момент — ЦІЛІСНА СЦЕНА тривалістю 18-40 с, а не окрема репліка: початок і кінець
         мають збігатися з межами думки, щоб глядач почув закінчену розмову.
-        Сумарна тривалість усіх сцен — 720-900 с (12-15 хвилин). Це запас матеріалу:
-        монтаж потім візьме з нього обраний хронометраж 8-15 хвилин.
-        У кожному з чотирьох аналітичних актів — 3-6 сцен; у hook — рівно одна сцена 20-40 с.
+        Сумарна тривалість усього пулу — 310-590 с. Це РАНЖОВАНИЙ запас матеріалу, а не мета:
+        монтаж візьме з нього рівно стільки, скільки вмістить есе на 4-8 хвилин, тому
+        порядок сцен у пулі (від найсильнішої до найслабшої) важливіший за їхню кількість.
+        Разом 14-22 сцени (прагни 18): одна на hook, решта — на чотири аналітичні акти,
+        щонайменше по 3 в кожному; у кожному аналітичному акті — 3-6 сцен.
         НЕ вигадуй конкретних візуальних деталей (кольори, ракурси, реквізит), яких немає в діалогах:
         акт form описуй через структуру, монтаж і ритм, які виводяться з матеріалу.
 
         СТИСЛІСТЬ (відповідь мусить уміститися в ліміт токенів):
-        - Ключі JSON пиши САМЕ в цьому порядку: primaryConcept → essayPlan → selectedMoments → alternativeConcepts → reasoning.
-          Головне — тема й сцени: навіть обірвана відповідь має лишити монтаж придатним.
+        - Ключі JSON пиши САМЕ в цьому порядку: primaryConcept → essayPlan → selectedMoments → reasoning.
+          Тема — найцінніше, тому сцени (найдовша частина) пишуться останніми.
+          Альтернативні грані (alternativeConcepts) залиш ПОРОЖНЬОМ масивом: їх знайшов
+          попередній етап аналізу, і повторювати їх тут — тільки ризикувати обривом відповіді.
         - tagline, philosophicalPremise, reason і supports — до 20 слів кожен.
-        - alternativeConcepts — рівно 3, стисло: word, tagline, suggestedTitle.
-        - selectedMoments — максимум 24 сцени. Спершу обери по 1-2 найсильніші сцени
+        - evidenceQuote — 3–8 слів ДОСЛІВНО з діалогу в межах таймкоду сцени.
+          Це доказ місця у фільмі, а supports — пояснення зв'язку з тезою акта.
+        - selectedMoments — максимум 22 сцени. Спершу обери по 1-2 найсильніші сцени
           на КОЖЕН акт (hook, form, psychology, philosophy, catharsis) по всьому фільму,
-          включно з фіналом, і лише потім додавай решту до 24.
-          Не перелічуй сцени підряд за таймкодом і не бери репліки коротші за 20 с.
+          включно з фіналом, і лише потім додавай решту до 22.
+          Не перелічуй сцени підряд за таймкодом і не бери репліки коротші за 18 с.
 
         ФОРМАТ ВИВОДУ:
-        Відповідь СУВОРО валідним JSON-об'єктом без зайвих передмов і коментарів:
+        Відповідь СУВОРО валідним JSON-об'єктом без зайвих передмов і коментарів.
+        Зразок нижче — приклад ФОРМАТУ, а НЕ змісту: усе в гострих дужках вибираєш ти сам
+        з аналізу цього фільму. Копіюй із зразка лише ключі та тип значення, нічого більше.
         {
           "primaryConcept": {
-            "word": "Его",
-            "tagline": "Твій головний ворог ховається там, де ти найменше будеш його шукати — в твоїй власній голові.",
-            "philosophicalPremise": "Єдиний спосіб звільнитися — визнати, що твій ворог — це не інші люди, а ти сам.",
-            "suggestedTitle": "Цей фільм знищить твою гординю. Філософія Револьвера",
+            "word": "<СЛОВО_ТЕМИ>",
+            "tagline": "<СЛОГАН ДО 20 СЛІВ>",
+            "philosophicalPremise": "<ФІЛОСОФСЬКИЙ ТЕЗ ДО 20 СЛІВ>",
+            "suggestedTitle": "<НАЗВА ДЛЯ YouTube>",
             "accentColorHex": "#F5D020"
           },
           "essayPlan": {
-            "thesis": "Контроль — це не сила, а страх, який ти називаєш порядком.",
-            "hookVariants": [
-              "Ти контролюєш усе, крім того, що насправді вирішує твоє життя.",
-              "Герой цього фільму переміг усіх. Крім одного — себе.",
-              "Що, як твоя найбільша сила — це й твоя найбільша пастка?"
-            ],
-            "ctaVariants": [
-              "Повний розбір і опитування — у Telegram-каналі.",
-              "Продовження розбору та добірка матеріалів — у Telegram."
-            ],
+            "thesis": "<ТЕЗА ЕСЕ>",
+            "hook": "<ОДИН НАЙКРАЩИЙ ХУК>",
+            "ctaVariants": ["<ЗАКЛИК У TELEGRAM 1>", "<ЗАКЛИК У TELEGRAM 2>"],
             "actFocus": {
-              "form": "Ритм і повторювані прийоми видають внутрішній конфлікт героя.",
-              "psychology": "Страх втратити контроль керує кожним його рішенням.",
-              "philosophy": "Свобода починається там, де закінчується потреба все тримати.",
-              "catharsis": "Глядач бачить ціну контролю і власний вибір."
+              "form": "<ЩО САМЕ ДОВОДИТЬ ЦЕЙ АКТ>",
+              "psychology": "<ЩО САМЕ ДОВОДИТЬ ЦЕЙ АКТ>",
+              "philosophy": "<ЩО САМЕ ДОВОДИТЬ ЦЕЙ АКТ>",
+              "catharsis": "<ЩО САМЕ ДОВОДИТЬ ЦЕЙ АКТ>"
             }
           },
           "selectedMoments": [
             {
               "startTime": 754.5,
-              "endTime": 810.3,
-              "reason": "Ця сцена показує перший конфлікт героя з власним его, коли він усвідомлює...",
+              "endTime": 790.0,
+              "reason": "<ЧОМУ ЦЯ СЦЕНА ПОТУЖНА>",
               "dramaticWeight": 0.85,
               "actRole": "hook",
-              "supports": "Герой ще вірить, що контролює ситуацію.",
-              "featured": true
-            },
-            {
-              "startTime": 4500.0,
-              "endTime": 4558.0,
-              "reason": "Кульмінація внутрішнього конфлікту: герой стикається з наслідками своєї гордині...",
-              "dramaticWeight": 0.95,
-              "actRole": "catharsis",
-              "supports": "Ціна контролю стає очевидною.",
+              "supports": "<ТЕЗИС АКТУ, ЯКИЙ ДОВОДИТЬ СЦЕНА>",
+              "evidenceQuote": "<ДОСЛІВНА ЦИТАТА З ДІАЛОГУ ЦІЄЇ СЦЕНИ>",
               "featured": true
             }
           ],
           "alternativeConcepts": [
             {
-              "word": "Обман",
-              "tagline": "Єдиний спосіб стати розумнішим — грати з розумнішим суперником.",
-              "philosophicalPremise": "Перше правило шахів: захищай свої інтереси, розуміючи справжню гру маніпулятора.",
-              "suggestedTitle": "Ти програєш, якщо не зрозумієш цю розводку.",
+              "word": "<ІНШЕ_СЛОВО_ТЕМИ>",
+              "tagline": "<СЛОГАН ДО 20 СЛІВ>",
+              "philosophicalPremise": "<ТЕЗ ДО 20 СЛІВ>",
+              "suggestedTitle": "<НАЗВА ДЛЯ YouTube>",
               "accentColorHex": "#F5D020"
             }
           ],
-          "reasoning": "Головний конфлікт фільму і чому ця тема центральна — 2-3 речення."
+          "reasoning": "<ДРАМАТУРГІЧНИЙ РОЗБІР ДО 600 СИМВОЛІВ>"
         }
 
         ВАЖЛИВО:
-        - selectedMoments повинен містити 16-24 сцени з точними таймкодами (startTime, endTime)
-        - Кожна сцена триває 20-60 с; сума (endTime - startTime) усіх сцен — 720-900 с
+        - selectedMoments повинен містити 14-22 сцени з точними таймкодами (startTime, endTime)
+        - Кожна сцена триває 18-40 с; сума (endTime - startTime) усіх сцен — 310-590 с
+        - Найсильніші сцени — на початку списку: монтаж обрізає пул з кінця, а не з середини
         - Кожен момент повинен мати reason, dramaticWeight (0.0-1.0), actRole, supports і featured
         - НЕ включай титри в кінці фільму — фокусуйся на сюжетних сценах
         - Таймкоди повинні відповідати реальним сценам з транскрипту
@@ -135,7 +137,6 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         - Використовуй ВИКЛЮЧНО ПРАВИЛЬНУ УКРАЇНСЬКУ ЛІТЕРАТУРНУ МОВУ
         - ЗАБОРОНЕНО використовувати русизми та суржик
         - Використовуй ВИКЛЮЧНО правильні українські літературні слова: ВРЯТУВАТИ, ЗБАВИТИ, НИЖНІЙ, ЕПОХА, ДОБА
-        - Приклади правильних тем: "ВРЯТУВАТИ", "ЗБАВИТИ", "ЕГО", "ОБМАН", "СТРАХ", "ТЕРПІННЯ", "ГЕНІАЛЬНІСТЬ", "ВЛАДА", "СВОБОДА", "ІСТИНА"
         - Кожен теглайн, філософський тез та назва мають бути граматично правильними українською
         - Якщо сумніваєшся у слові — використовуй простіше, але правильне українське слово
         """
@@ -154,6 +155,7 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
             .filter { seg in
                 !seg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
+            .sorted { $0.start < $1.start }
         guard !segments.isEmpty else { return "" }
 
         var lines: [String] = []
@@ -164,7 +166,9 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         for seg in segments.dropFirst() {
             let text = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
             let gap = seg.start - sceneEnd
-            if gap < 0.8 {
+            // Непрерывная речь может длиться минуты: один таймкод в начале
+            // такого монолога не позволяет модели точно выбрать 18–40 секунд.
+            if gap < 0.8, seg.end - sceneStart <= 40, sceneText.count + text.count <= 1_200 {
                 sceneText += " " + text
                 sceneEnd = seg.end
             } else {
@@ -204,30 +208,63 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         return try await modelManager.momentFinder.analyzeThematicCore(
             transcriptSample: sampleText,
             movieTitle: movieTitle,
-            movieOverview: movieOverview
+            movieOverview: movieOverview,
+            transcript: transcript
         )
+    }
+
+    func planThematicAnalysis(
+        for concept: ThematicConcept,
+        candidates: [ThematicConcept],
+        from transcript: Transcript,
+        movieTitle: String,
+        movieOverview: String?,
+        modelManager: ModelManager,
+        directorProfile: ChatModelProfile
+    ) async throws -> ThematicAnalysisResult {
+        try await modelManager.requireDirector(profile: directorProfile)
+        return try await modelManager.momentFinder.analyzeSelectedTheme(
+            concept, candidates: candidates, transcript: transcript,
+            movieTitle: movieTitle, movieOverview: movieOverview)
     }
 
     /// Парсит ответ модели в структурированный результат. nil означает
     /// «модель не справилась» — вызывающий обязан показать это, а не
     /// подставлять заготовку. word/tagline/suggestedTitle обязательны: их
-    /// должна написать модель, а не код.
+    /// должна написать модель, а не код. philosophicalPremise необязателен —
+    /// и именно поэтому он не подменяется никаким другим полем.
+    static func parseCatalogueAnalysis(
+        from raw: String, catalogue: EssaySceneCatalogue
+    ) -> ThematicAnalysisResult? {
+        try? decodeCatalogueAnalysis(from: raw, catalogue: catalogue)
+    }
+
+    static func decodeCatalogueAnalysis(
+        from raw: String, catalogue: EssaySceneCatalogue
+    ) throws -> ThematicAnalysisResult {
+        guard let json = JSONVariantParser.extractJSONObject(from: raw),
+              var root = JSONVariantParser.deserializeTolerant(json) as? [String: Any] else {
+            throw EssaySceneCatalogue.SelectionError(detail: "Ответ с планом эссе содержит повреждённый JSON.")
+        }
+        let moments = try catalogue.decodeMoments(from: root["selection"])
+        root["selectedMoments"] = moments.map { moment -> [String: Any] in
+            ["startTime": moment.startTime, "endTime": moment.endTime,
+             "reason": moment.reason, "dramaticWeight": moment.dramaticWeight,
+             "actRole": moment.actRole?.promptKey ?? "", "supports": moment.supports ?? "",
+             "featured": moment.featured ?? false, "evidenceQuote": moment.evidenceQuote ?? ""]
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: root),
+              let text = String(data: data, encoding: .utf8),
+              let analysis = parseAnalysisObject(text) else {
+            throw EssaySceneCatalogue.SelectionError(detail: "В плане отсутствуют тема, название или обоснование эссе.")
+        }
+        return analysis
+    }
+
     static func parseThematicAnalysis(from jsonText: String) -> ThematicAnalysisResult? {
         if let jsonString = JSONVariantParser.extractJSONObject(from: jsonText),
            let strict = parseAnalysisObject(jsonString) {
             return strict
-        }
-
-        // Генерация упирается в maxTokens и обрывает JSON: закрываем хвост и
-        // берём всё, что модель успела выдать целиком. Без хотя бы одной
-        // завершённой сцены монтаж собрать не из чего — тогда честный nil.
-        if let repairedJSON = JSONVariantParser.extractTruncatedJSONObject(from: jsonText),
-           let repaired = parseAnalysisObject(repairedJSON, allowDerivedReasoning: true),
-           !repaired.selectedMoments.isEmpty {
-            Self.logger.info(
-                "salvaged truncated thematic JSON: \(repaired.selectedMoments.count) moment(s), theme '\(repaired.primaryConcept.word, privacy: .public)'"
-            )
-            return repaired
         }
 
         // Модель иногда возвращает массив вместо объекта: первая грань и есть главная тема.
@@ -235,23 +272,52 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
            let primary = parseConcept(head) {
             let filteredPrimary = filterConcept(primary)
             guard isValidConcept(filteredPrimary) else { return nil }
-            let reasoning = nonEmptyString(filteredPrimary.philosophicalPremise) ?? filteredPrimary.tagline
-            return makeResult(primary: filteredPrimary, reasoning: filterNonCyrillic(reasoning ?? ""), moments: [], alternatives: conceptArray(Array(array.dropFirst())).map { filterConcept($0) }.filter { isValidConcept($0) })
+            // Обоснование эссе обязан написать модель: ни слоган, ни название его
+            // не заменяют (клон слогана = та же строка дважды на экране и в озвучке).
+            // В legacy-массиве грань несёт reasoning при себе; её тезис — последний
+            // честный источник, а когда нет ни того, ни другого — честный nil.
+            let ownReasoning = [head["aiReasoning"], head["reasoning"]]
+                .compactMap { value -> String? in
+                    guard let raw = nonEmptyString(value) else { return nil }
+                    let filtered = filterNonCyrillic(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+                    return filtered.isEmpty ? nil : filtered
+                }
+                .first
+            guard let reasoning = ownReasoning ?? nonEmptyString(filteredPrimary.philosophicalPremise)
+            else { return nil }
+            return makeResult(primary: filteredPrimary, reasoning: reasoning, moments: [], alternatives: conceptArray(Array(array.dropFirst())).map { filterConcept($0) }.filter { isValidConcept($0) })
         }
 
         return nil
     }
 
-    /// Разбирает объект анализа (полный или восстановленный из обрезанного ответа).
-    /// nil — если нет темы или обоснования: без них результат бесполезен.
-    ///
-    /// `allowDerivedReasoning` — только для восстановленного хвоста: reasoning
-    /// пишется последним и обрезается первым, поэтому его отсутствие там означает
-    /// обрыв, а не небрежность модели. Тогда обоснованием служит philosophicalPremise
-    /// самой модели — текста мы не придумываем.
+    /// Разбирает этап 1: темы-кандидаты. Провенанс `.llm` здесь честен ровно
+    /// потому, что сырой ответ этого прохода уже лежит в director-raw-дампе.
+    static func parseThemeCandidates(from raw: String) -> [ThematicConcept] {
+        guard let jsonString = JSONVariantParser.extractJSONObject(from: raw),
+              let root = JSONVariantParser.deserializeTolerant(jsonString) as? [String: Any],
+              let entries = root["candidates"] as? [Any] else { return [] }
+        return entries.compactMap { entry -> ThematicConcept? in
+            guard let dict = entry as? [String: Any],
+                  let word = nonEmptyString(dict["word"]),
+                  let tagline = nonEmptyString(dict["tagline"]),
+                  let why = nonEmptyString(dict["why"]),
+                  let title = nonEmptyString(dict["title"]) else { return nil }
+            let concept = ThematicConcept(
+                word: filterNonCyrillic(word).trimmingCharacters(in: .whitespacesAndNewlines),
+                tagline: filterNonCyrillic(tagline),
+                philosophicalPremise: filterNonCyrillic(why),
+                suggestedTitle: filterNonCyrillic(title),
+                source: .llm)
+            return isValidConcept(concept) ? concept : nil
+        }
+    }
+
+    /// Разбирает объект анализа. nil — если нет темы или обоснования: без них
+    /// результат бесполезен, а «долечить» его нечем: reasoning пишет модель, и
+    /// если она его не дописала, ответ был обрезан, а не сформулирован короче.
     private static func parseAnalysisObject(
-        _ jsonString: String,
-        allowDerivedReasoning: Bool = false
+        _ jsonString: String
     ) -> ThematicAnalysisResult? {
         guard let root = JSONVariantParser.deserializeTolerant(jsonString) as? [String: Any],
               let primary = parseConcept(root["primaryConcept"])
@@ -261,8 +327,16 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         let filteredPrimary = filterConcept(primary)
         guard isValidConcept(filteredPrimary) else { return nil }
 
-        let modelReasoning = nonEmptyString(root["aiReasoning"]) ?? nonEmptyString(root["reasoning"])
-        guard let reasoning = modelReasoning ?? (allowDerivedReasoning ? filteredPrimary.philosophicalPremise : nil)
+        // Необязательный слот: молча подставлять в него чужую строку нельзя
+        // (клон слогана = та же фраза дважды на экране под видом тезиса), поэтому
+        // пустота остаётся пустотой и фиксируется в логе. Гейт её не отбивает.
+        if filteredPrimary.philosophicalPremise.isEmpty {
+            Self.logger.notice(
+                "тема «\(filteredPrimary.word, privacy: .public)» без philosophicalPremise: слот остаётся пустым, эссе собирается только из того, что модель написала сама"
+            )
+        }
+
+        guard let reasoning = nonEmptyString(root["aiReasoning"]) ?? nonEmptyString(root["reasoning"])
         else { return nil }
 
         let filteredMoments = parseSelectedMoments(root["selectedMoments"]).map { moment in
@@ -273,7 +347,8 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
                 dramaticWeight: moment.dramaticWeight,
                 actRole: moment.actRole,
                 supports: moment.supports.map(filterNonCyrillic),
-                featured: moment.featured
+                featured: moment.featured,
+                evidenceQuote: moment.evidenceQuote
             )
         }
         let filteredAlts = conceptArray(root["alternativeConcepts"])
@@ -314,35 +389,39 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         "Телеграм", "Ютуб", "ТікТок", "Інстаграм", "Фейсбук", "Твіттер", "Нетфлікс", "Дісней", "Піксар", "Марвел"
     ]
 
-    /// Удаляет некириллические символы (арабские, латинские и др.), сохраняя кириллицу,
-    /// цифры, пробелы, знаки препинания и whitelist термины.
+    /// Удаляет некириллические символы (арабские, латинские и др.), сохраняя
+    /// кириллицу, цифры, пробелы и знаки препинания.
+    ///
+    /// Whitelist совпадает целым словом: подстрокой «Performance» contain-ил бы
+    /// «form» и превратился в него — то есть фильтр дописал бы в текст модели то,
+    /// чего она не писала.
     static func filterNonCyrillic(_ text: String) -> String {
-        var processedText = text
-        var placeholders: [String: String] = [:]
-        
-        // Заменяем whitelist термины на уникальные кириллические плейсхолдеры
-        for (index, term) in allowedNonCyrillicTerms.enumerated() {
-            let placeholder = "КІНОТЕРМІН\(index)КИНОТЕРМ"
-            if processedText.contains(term) {
-                processedText = processedText.replacingOccurrences(of: term, with: placeholder)
-                placeholders[placeholder] = term
+        var result = ""
+        result.reserveCapacity(text.count)
+        var index = text.startIndex
+        while index < text.endIndex {
+            let runIsLetter = text[index].isLetter
+            var end = index
+            while end < text.endIndex, text[end].isLetter == runIsLetter {
+                end = text.index(after: end)
             }
+            let run = String(text[index..<end])
+            if runIsLetter {
+                if allowedNonCyrillicTerms.contains(where: { $0.caseInsensitiveCompare(run) == .orderedSame }) {
+                    result += run
+                } else {
+                    result += String(run.unicodeScalars.filter { TextUtilities.isCyrillic($0) })
+                }
+            } else {
+                result += String(run.unicodeScalars.filter { scalar in
+                    CharacterSet.decimalDigits.contains(scalar)
+                        || scalar.properties.isWhitespace
+                        || CharacterSet.punctuationCharacters.contains(scalar)
+                }.map(Character.init))
+            }
+            index = end
         }
-        
-        // Применяем фильтр не-кириллицы
-        guard let regex = try? NSRegularExpression(
-            pattern: "[^\\p{Cyrillic}\\p{Number}\\s\\p{Punctuation}]",
-            options: []
-        ) else { return text }
-        let range = NSRange(processedText.startIndex..., in: processedText)
-        processedText = regex.stringByReplacingMatches(in: processedText, range: range, withTemplate: "")
-        
-        // Восстанавливаем whitelist термины из плейсхолдеров
-        for (placeholder, original) in placeholders {
-            processedText = processedText.replacingOccurrences(of: placeholder, with: original)
-        }
-        
-        return processedText
+        return result
     }
 
     /// Применяет фильтрацию некириллических символов к текстовым полям концепта.
@@ -374,7 +453,8 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
                 dramaticWeight: weight,
                 actRole: role,
                 supports: supports,
-                featured: dict["featured"] as? Bool
+                featured: dict["featured"] as? Bool,
+                evidenceQuote: nonEmptyString(dict["evidenceQuote"]) ?? nonEmptyString(dict["quote"])
             )
         }
     }
@@ -384,6 +464,9 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
     static func parseEssayPlan(_ value: Any?) -> EssayPlan? {
         guard let dict = value as? [String: Any] else { return nil }
         let hooks = parseTextVariants(dict["hookVariants"])
+        let modelHook = nonEmptyString(dict["hook"]).map {
+            EssayPlan.TextVariant(text: filterNonCyrillic($0), source: .llm)
+        }
         let ctas = parseTextVariants(dict["ctaVariants"])
         var focus: [String: String] = [:]
         if let rawFocus = dict["actFocus"] as? [String: Any] {
@@ -397,13 +480,15 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
             }
         }
         let thesis = nonEmptyString(dict["thesis"]).map(filterNonCyrillic)
-        guard thesis != nil || !hooks.isEmpty || !ctas.isEmpty || !focus.isEmpty else { return nil }
+        guard thesis != nil || modelHook != nil || !hooks.isEmpty || !ctas.isEmpty || !focus.isEmpty else { return nil }
         return EssayPlan(
             thesis: thesis,
-            hookVariants: Array(hooks.prefix(3)),
-            selectedHook: hooks.first,
+            hookVariants: modelHook.map { [$0] } ?? Array(hooks.prefix(3)),
+            // Новый контракт содержит один явный hook. Старый список вариантов
+            // читается для совместимости, но сам по себе выбором не считается.
+            selectedHook: modelHook,
             ctaVariants: Array(ctas.prefix(2)),
-            selectedCTA: ctas.first,
+            selectedCTA: nil,
             actFocus: focus
         )
     }
@@ -465,10 +550,15 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
               let title = nonEmptyString(dict["suggestedTitle"])
         else { return nil }
 
+        // Слот тезиса остаётся пустым, когда модель его не дописала. Переливка
+        // слогана в этот слот означала бы, что в эссе звучит строка, написанная
+        // для другого слота, а зритель видел бы её дважды: авторство подделал бы
+        // код. Пустая строка — это «текста нет», и фиксирует это гейт
+        // (`DirectorArtifactGate.concept` → `.missingProse`), а не мы.
         return ThematicConcept(
             word: word,
             tagline: tagline,
-            philosophicalPremise: nonEmptyString(dict["philosophicalPremise"]) ?? tagline,
+            philosophicalPremise: nonEmptyString(dict["philosophicalPremise"]) ?? "",
             suggestedTitle: title,
             accentColorHex: nonEmptyString(dict["accentColorHex"]) ?? "#F5D020",
             source: .llm

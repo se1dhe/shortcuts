@@ -16,7 +16,8 @@ enum ThematicSource: String, Codable, Sendable {
 struct ThematicConcept: Codable, Identifiable, Equatable, Hashable, Sendable {
     var id: String { word }
     
-    /// Одно центральное слово крупными буквами, например "Эго", "Терпение", "Гениальность", "Характер", "Жалость"
+    /// Одно центральное слово крупными буквами: називний відмінок, іменник або
+    /// інфінітив. Никакого списка допустимых слов: тему обязано найти модель.
     var word: String
     
     /// Короткий смысловой слоган, отражающий суть конфликта
@@ -25,7 +26,7 @@ struct ThematicConcept: Codable, Identifiable, Equatable, Hashable, Sendable {
     /// Философская предпосылка / тезис ролика
     var philosophicalPremise: String
     
-    /// Рекомендуемый вирусный заголовок для YouTube от 2-го лица ("Ты...", "Иногда, чтобы...")
+    /// Заголовок для YouTube, который предложила модель
     var suggestedTitle: String
     
     /// Акцентный цвет субтитров реплик ("#F5D020" золотой или "#E50914" красный)
@@ -99,6 +100,19 @@ struct ThematicAnalysisResult: Codable, Sendable, Equatable {
     /// выбирала не модель, и такой анализ нельзя кэшировать как результат.
     var source: ThematicSource
 
+    /// Насколько полон был ответ модели, из которого собран анализ. `.truncated`
+    /// означает «гейт обязан отклонить»: раньше обрыв засчитывался успехом.
+    var replyCompleteness: ReplyCompleteness
+
+    /// Концепт, для которого действительно выполнялся Stage 2. Ответ модели может
+    /// уточнить формулировку тезиса, поэтому исходный выбор сохраняется отдельно.
+    var plannedConcept: ThematicConcept?
+
+    /// Привязка к конкретным репликам и таймкодам источника. Старые архивы
+    /// без неё читаются, но не выдаются за проверенный анализ текущего фильма.
+    var sourceTranscriptFingerprint: String?
+    var semanticProof: EssaySemanticProof? = nil
+
     /// Все концепты в едином списке, где главный выбор всегда идет первым
     var allConcepts: [ThematicConcept] {
         var list = [primaryConcept]
@@ -114,7 +128,10 @@ struct ThematicAnalysisResult: Codable, Sendable, Equatable {
         selectedMoments: [SelectedMoment] = [],
         alternativeConcepts: [ThematicConcept] = [],
         essayPlan: EssayPlan? = nil,
-        source: ThematicSource = .unknown
+        source: ThematicSource = .unknown,
+        replyCompleteness: ReplyCompleteness = .complete,
+        plannedConcept: ThematicConcept? = nil,
+        sourceTranscriptFingerprint: String? = nil
     ) {
         var primary = primaryConcept
         primary.isPrimaryChoice = true
@@ -130,10 +147,14 @@ struct ThematicAnalysisResult: Codable, Sendable, Equatable {
         self.alternativeConcepts = alternativeConcepts
         self.essayPlan = essayPlan
         self.source = source
+        self.replyCompleteness = replyCompleteness
+        self.plannedConcept = plannedConcept
+        self.sourceTranscriptFingerprint = sourceTranscriptFingerprint
     }
 
     private enum CodingKeys: String, CodingKey {
         case primaryConcept, aiReasoning, selectedMoments, alternativeConcepts, essayPlan, source
+        case replyCompleteness, plannedConcept, sourceTranscriptFingerprint, semanticProof
     }
 
     init(from decoder: Decoder) throws {
@@ -144,6 +165,12 @@ struct ThematicAnalysisResult: Codable, Sendable, Equatable {
         alternativeConcepts = try c.decodeIfPresent([ThematicConcept].self, forKey: .alternativeConcepts) ?? []
         essayPlan = try c.decodeIfPresent(EssayPlan.self, forKey: .essayPlan)
         source = try c.decodeIfPresent(ThematicSource.self, forKey: .source) ?? .unknown
+        // Старые проэкты не имели этого поля: считать их обрезанными задним числом
+        // значило бы сломать уже подтверждённые эссе, а не честность нового прогона.
+        replyCompleteness = try c.decodeIfPresent(ReplyCompleteness.self, forKey: .replyCompleteness) ?? .complete
+        plannedConcept = try c.decodeIfPresent(ThematicConcept.self, forKey: .plannedConcept)
+        sourceTranscriptFingerprint = try c.decodeIfPresent(String.self, forKey: .sourceTranscriptFingerprint)
+        semanticProof = try c.decodeIfPresent(EssaySemanticProof.self, forKey: .semanticProof)
     }
 }
 
@@ -171,6 +198,15 @@ struct SelectedMoment: Codable, Sendable, Equatable, Identifiable {
 
     /// Сильнейшая сцена акта: не режется бюджетом, пока есть другие кандидаты
     let featured: Bool?
+
+    /// Якорь структуры эссе (строка, которая оплачивает обещание хука). Модель его
+    /// не предлагала и не оценивала — его поставил монтаж по реплике транскрипта,
+    /// поэтому бюджет не имеет права вырезать его целиком: это обещание зрителю.
+    let structuralAnchor: Bool?
+
+    /// Дословная реплика-основание из указанного диапазона, а не пересказ reason.
+    /// nil у старых архивов: перед новым монтажом такой анализ перепроверяется.
+    let evidenceQuote: String?
     
     /// Семантическая уверенность в корректности таймкода (после валидации)
     /// nil — не валидировался, high/medium/low — результат SemanticTimecodeValidator
@@ -187,7 +223,9 @@ struct SelectedMoment: Codable, Sendable, Equatable, Identifiable {
         dramaticWeight: Double,
         actRole: LongformActType? = nil,
         supports: String? = nil,
-        featured: Bool? = nil
+        featured: Bool? = nil,
+        structuralAnchor: Bool? = nil,
+        evidenceQuote: String? = nil
     ) {
         self.startTime = startTime
         self.endTime = endTime
@@ -196,10 +234,12 @@ struct SelectedMoment: Codable, Sendable, Equatable, Identifiable {
         self.actRole = actRole
         self.supports = supports
         self.featured = featured
+        self.structuralAnchor = structuralAnchor
+        self.evidenceQuote = evidenceQuote
     }
 }
 
-/// План эссе, который Director предлагает вместе с темой: тезис, варианты хука и CTA,
+/// План эссе, который Director предлагает вместе с темой: тезис, выбранный хук и CTA,
 /// фокус каждого аналитического акта и выбранный хронометраж.
 struct EssayPlan: Codable, Equatable, Sendable {
 
@@ -208,7 +248,9 @@ struct EssayPlan: Codable, Equatable, Sendable {
         var text: String
         var source: ThematicSource
 
-        init(text: String, source: ThematicSource = .llm) {
+        /// Провенанс не выдумывается: вариант считается написанным моделью
+        /// только когда его записал парсер из сырого ответа.
+        init(text: String, source: ThematicSource = .unknown) {
             self.text = text
             self.source = source
         }
@@ -218,15 +260,19 @@ struct EssayPlan: Codable, Equatable, Sendable {
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             text = try c.decode(String.self, forKey: .text)
-            source = try c.decodeIfPresent(ThematicSource.self, forKey: .source) ?? .llm
+            source = try c.decodeIfPresent(ThematicSource.self, forKey: .source) ?? .unknown
         }
     }
 
     var thesis: String?
     var hookVariants: [TextVariant]
     var selectedHook: TextVariant?
+    var hookReason: String? = nil
     var ctaVariants: [TextVariant]
     var selectedCTA: TextVariant?
+    /// Legacy: до 2026-10-28 хронометраж запрашивался у пользователя. Теперь его
+    /// не выбирают: длина рождается из пула сцен внутри коридора 4:00–8:00. Поле
+    /// остаётся только чтобы честно прочесть старый проект и отклэмпить его.
     var targetDuration: Double?
     /// promptKey акта -> что именно доказывает акт в этом фильме
     var actFocus: [String: String]
@@ -250,7 +296,7 @@ struct EssayPlan: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case thesis, hookVariants, selectedHook, ctaVariants, selectedCTA, targetDuration, actFocus
+        case thesis, hookVariants, selectedHook, hookReason, ctaVariants, selectedCTA, targetDuration, actFocus
     }
 
     init(from decoder: Decoder) throws {
@@ -258,22 +304,31 @@ struct EssayPlan: Codable, Equatable, Sendable {
         thesis = try c.decodeIfPresent(String.self, forKey: .thesis)
         hookVariants = try c.decodeIfPresent([TextVariant].self, forKey: .hookVariants) ?? []
         selectedHook = try c.decodeIfPresent(TextVariant.self, forKey: .selectedHook)
+        hookReason = try c.decodeIfPresent(String.self, forKey: .hookReason)
         ctaVariants = try c.decodeIfPresent([TextVariant].self, forKey: .ctaVariants) ?? []
         selectedCTA = try c.decodeIfPresent(TextVariant.self, forKey: .selectedCTA)
         targetDuration = try c.decodeIfPresent(Double.self, forKey: .targetDuration)
         actFocus = try c.decodeIfPresent([String: String].self, forKey: .actFocus) ?? [:]
     }
 
-    var chosenHook: String? {
-        Self.nonEmpty(selectedHook?.text) ?? hookVariants.lazy.compactMap { Self.nonEmpty($0.text) }.first
+    /// Вариант хука, который пойдёт на экран, вместе с его авторством.
+    /// Молчаливый `hookVariants.first` больше не притворяется выбором модели:
+    /// если провенанс не записан, показать именно этот вариант решает человек,
+    /// и вызывающая сторона обязана это передать в гейт.
+    var chosenHookVariant: TextVariant? {
+        if let selected = selectedHook, Self.nonEmpty(selected.text) != nil { return selected }
+        return nil
     }
 
-    var chosenCTA: String? {
-        Self.nonEmpty(selectedCTA?.text) ?? ctaVariants.lazy.compactMap { Self.nonEmpty($0.text) }.first
+    var chosenCTAVariant: TextVariant? {
+        if let selected = selectedCTA, Self.nonEmpty(selected.text) != nil { return selected }
+        return ctaVariants.first { Self.nonEmpty($0.text) != nil }
     }
 
+    /// Старый запрошенный хронометраж — просьба, а не факт: он укладывается в
+    /// коридор политики длительности и не больше.
     var effectiveTargetDuration: Double {
-        min(max(targetDuration ?? 520.0, 300.0), 900.0)
+        EssayDurationPolicy.clamp(targetDuration ?? EssayDurationPolicy.defaultRenderedTarget)
     }
 
     func focus(for type: LongformActType) -> String? {
@@ -281,7 +336,8 @@ struct EssayPlan: Codable, Equatable, Sendable {
     }
 
     /// Фиксирует выбор пользователя: свой хук становится ручным вариантом плана.
-    func confirming(hookText: String?, ctaText: String?, targetDuration: Double) -> EssayPlan {
+    /// Хронометраж не фиксируется вовсе — он вытекает из темы.
+    func confirming(hookText: String?, ctaText: String?) -> EssayPlan {
         var copy = self
         if let hookText = Self.nonEmpty(hookText) {
             if let index = copy.hookVariants.firstIndex(where: { $0.text == hookText }) {
@@ -291,8 +347,6 @@ struct EssayPlan: Codable, Equatable, Sendable {
                 copy.hookVariants.append(manual)
                 copy.selectedHook = manual
             }
-        } else {
-            copy.selectedHook = copy.selectedHook ?? copy.hookVariants.first
         }
         if let ctaText = Self.nonEmpty(ctaText) {
             if let index = copy.ctaVariants.firstIndex(where: { $0.text == ctaText }) {
@@ -305,7 +359,7 @@ struct EssayPlan: Codable, Equatable, Sendable {
         } else {
             copy.selectedCTA = copy.selectedCTA ?? copy.ctaVariants.first
         }
-        copy.targetDuration = min(max(targetDuration, 300.0), 900.0)
+        copy.targetDuration = nil
         return copy
     }
 

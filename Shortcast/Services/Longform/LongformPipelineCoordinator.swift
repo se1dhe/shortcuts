@@ -15,6 +15,8 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
     private let audioLooper: any SeamlessAudioLooping
     private let loudnessNormalizer: any LongformLoudnessNormalizing
     private let actTitling: any LongformActTitling
+    private let editorialReview: LongformEditorialReview
+    private let discussionURL: String?
     private let modelManager: ModelManager?
 
     init(
@@ -25,6 +27,8 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         audioLooper: any SeamlessAudioLooping = SeamlessAudioLoopService.shared,
         loudnessNormalizer: any LongformLoudnessNormalizing = LongformLoudnessService(),
         actTitling: any LongformActTitling = LongformActTitleService(),
+        editorialReview: LongformEditorialReview = LongformEditorialReview(model: nil),
+        discussionURL: String? = nil,
         modelManager: ModelManager? = nil
     ) {
         self.director = director
@@ -34,6 +38,8 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         self.audioLooper = audioLooper
         self.loudnessNormalizer = loudnessNormalizer
         self.actTitling = actTitling
+        self.editorialReview = editorialReview
+        self.discussionURL = discussionURL
         self.modelManager = modelManager
     }
 
@@ -51,8 +57,8 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         progressHandler: (@Sendable (Double, String) -> Void)? = nil
     ) async throws -> LongformBuildResult {
 
-        // 1. Построение или 4-актной драaggressive арки
-        let arc: LongformNarrativeArc
+        // 1. Построение арки: аналитическая 5-актная или прежняя 4-актная
+        var arc: LongformNarrativeArc
         if let existing = existingArc {
             progressHandler?(0.10, "Использование утвержденного монтажа «\(concept.word)»...")
             arc = existing
@@ -63,25 +69,16 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
                 concept: concept,
                 selectedMoments: selectedMoments,
                 movieTitle: movieTitle,
-                targetDuration: essayPlan?.effectiveTargetDuration ?? 520.0,
+                targetDuration: essayPlan?.effectiveTargetDuration ?? EssayDurationPolicy.defaultRenderedTarget,
                 essayPlan: essayPlan,
                 sourceMovieURL: sourceURL
             )
             
             // Режиссёрское ревью арки (опциональный второй LLM-проход)
-            let reviewedArc: LongformNarrativeArc
-            if let modelManager = modelManager {
-                let reviewService = DirectorReviewService(momentFinder: modelManager.momentFinder)
-                let reviewResult = await reviewService.review(
-                    arc: built,
-                    transcript: transcript,
-                    concept: concept,
-                    movieTitle: movieTitle
-                )
-                reviewedArc = reviewResult.arc
-            } else {
-                reviewedArc = built
-            }
+            progressHandler?(0.12, "Редакторская проверка сцен и соседних реплик...")
+            let reviewedArc = await editorialReview.review(
+                arc: built, transcript: transcript, coldOpenEnabled: audioSettings.coldOpenEnabled)
+            try Task.checkCancellation()
             
             // Второй LLM-проход: названия актов из РЕАЛЬНОГО диалога, вошедшего в каждый акт.
             // Выполняется ровно один раз и до stagedArc, иначе LongformAct.id меняется под
@@ -95,6 +92,12 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             arc = outcome.arc
         }
 
+        arc.discussionURL = discussionURL ?? arc.discussionURL
+        if !selectedMoments.isEmpty, selectedMoments.allSatisfy({ $0.evidenceQuote != nil }) {
+            try EssaySceneEvidence.validateArc(
+                arc, selectedMoments: selectedMoments, coldOpenEnabled: audioSettings.coldOpenEnabled,
+                allowApprovedTrim: existingArc != nil)
+        }
         let segments = arc.segments
         guard !segments.isEmpty else {
             throw NSError(domain: "LongformPipeline", code: -1, userInfo: [NSLocalizedDescriptionKey: "Не удалось выделить сегменты для ролика."])
@@ -121,14 +124,16 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         let sourceAudioTrack = sourceAudioTracks.first
 
         // 2. Кинематографический Cold Open (нарастание саундтрека в затемнении)
-        let introPadding: Double = audioSettings.coldOpenEnabled ? 2.5 : 0.0
+        let timeline = LongformTimeline(arc: arc, coldOpenEnabled: audioSettings.coldOpenEnabled)
+        let introPadding = timeline.introDuration
         var insertTime = CMTime(seconds: introPadding, preferredTimescale: 600)
         var timedPhrases: [TimedSubtitlePhrase] = []
         let qualityGate = TranscriptQualityGate(segments: transcript.segments)
         var sceneCutPoints: [Double] = [introPadding]
         var cutTransitions: [LongformCutTransition] = []
-        let interActGap: Double = 0.8 // Мягкая кинематографическая пауза (дыхание) между актами
-        let intraActGap: Double = 0.5 // Мягкая кинематографическая пауза между сценами внутри акта
+        let interActGap = LongformTimeline.interActGap
+        let intraActGap = LongformTimeline.intraActGap
+        let captionSegments = LongformEditorialSupport.captions(transcript.segments, edits: arc.captionEdits)
 
         // Вставляем нарезанные сцены фильма по актам с кинематографическим разделением
         for (actIndex, act) in arc.acts.enumerated() {
@@ -137,7 +142,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             // экраном, который при этом засчитывается в хронометраж.
             if actIndex > 0,
                !act.segments.isEmpty,
-               !arc.acts[actIndex - 1].segments.isEmpty {
+               timeline.placements.contains(where: { $0.actIndex == actIndex && $0.isInterAct }) {
                 let prevEnd = insertTime.seconds
                 // Добавляем меж-актовую паузу (черный экран, где звучит только фоновая музыка)
                 insertTime = CMTimeAdd(insertTime, CMTime(seconds: interActGap, preferredTimescale: 600))
@@ -149,8 +154,6 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
                 ))
                 sceneCutPoints.append(nextStart)
             }
-            let actStartSec = insertTime.seconds
-
             for (segIndex, segment) in act.segments.enumerated() {
                 if segIndex > 0 {
                     let prevEnd = insertTime.seconds
@@ -186,7 +189,8 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
                     let phraseStart = max(insertedStart, insertedStart + (s.start - segment.start))
                     let phraseEnd = min(insertedEnd, insertedStart + (s.end - segment.start))
                     if phraseEnd > phraseStart {
-                        timedPhrases.append(TimedSubtitlePhrase(start: phraseStart, end: phraseEnd, text: s.text))
+                        let caption = captionSegments.first { $0.start == s.start && $0.end == s.end }?.text ?? s.text
+                        timedPhrases.append(TimedSubtitlePhrase(start: phraseStart, end: phraseEnd, text: caption))
                     }
                 }
 
@@ -197,7 +201,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         // Кинематографический хвост послевкусия (Outro Tail): 4.0 секунды черного экрана
         // после завершения речи, во время которых фоновая музыка солирует и плавно затухает
         let speechFinishTime = insertTime.seconds
-        let outroPadding: Double = 4.0
+        let outroPadding = timeline.outroDuration
         let totalDuration = speechFinishTime + outroPadding
         let totalDurationCM = CMTime(seconds: totalDuration, preferredTimescale: 600)
 
@@ -280,87 +284,19 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         transform = transform.concatenating(CGAffineTransform(translationX: tx, y: ty))
         layerInstruction.setTransform(transform, at: .zero)
 
-        // AVFoundation raises an Objective-C exception (or stops the export)
-        // when opacity ramps overlap by even one frame. This can happen when a
-        // short first shot meets the Cold Open, or when the final shot is very
-        // short. Keep every ramp on this instruction strictly disjoint.
-        var lastOpacityRampEnd = 0.0
-        func scheduleOpacityRamp(
-            from startOpacity: Float,
-            to endOpacity: Float,
-            start: Double,
-            end: Double
-        ) {
-            let safeStart = max(start, lastOpacityRampEnd + 0.001)
-            // Рампа не имеет права заканчиваться позже смонтированного видео:
-            // короткий финальный кадр растягивает fade-in за конец таймлайна,
-            // финальный кейфрейм чёрного падает внутрь ещё идущей рампы, и
-            // AVFoundation бросает неуловимое ObjC-исключение.
-            let safeEnd = min(end, speechFinishTime)
-            guard safeEnd - safeStart >= 0.02 else { return }
+        // Затемнения на ВСЕХ монтажных склейках, включая сцены внутри акта.
+        // План ограничивает рампы концом видео и исключает их пересечения.
+        let opacityRamps = LongformTransitionPlan.ramps(
+            intro: introPadding, speechEnd: speechFinishTime, cuts: cutTransitions)
+        layerInstruction.setOpacity(0, at: .zero)
+        for ramp in opacityRamps {
             layerInstruction.setOpacityRamp(
-                fromStartOpacity: startOpacity,
-                toEndOpacity: endOpacity,
+                fromStartOpacity: ramp.from, toEndOpacity: ramp.to,
                 timeRange: CMTimeRange(
-                    start: CMTime(seconds: safeStart, preferredTimescale: 600),
-                    duration: CMTime(seconds: safeEnd - safeStart, preferredTimescale: 600)
-                )
-            )
-            lastOpacityRampEnd = safeEnd
+                    start: CMTime(seconds: ramp.start, preferredTimescale: 600),
+                    duration: CMTime(seconds: ramp.end - ramp.start, preferredTimescale: 600)))
         }
-
-        // Плавный выход первого кадра фильма из затемнения (Cold Open Fade-In)
-        if introPadding > 0 {
-            layerInstruction.setOpacity(0.0, at: .zero)
-            scheduleOpacityRamp(
-                from: 0.0,
-                to: 1.0,
-                start: introPadding,
-                end: introPadding + 1.5
-            )
-        } else {
-            scheduleOpacityRamp(
-                from: 0.0,
-                to: 1.0,
-                start: 0.0,
-                end: 1.2
-            )
-        }
-
-        // Мягкие кинематографические затемнения (Dip to Black) на всех склейках сцен и актов
-        for cut in cutTransitions {
-            let fadeOutDuration: Double = cut.isInterAct ? 0.35 : 0.28
-            let fadeInDuration: Double = cut.isInterAct ? 0.45 : 0.32
-            let fadeOutStart = max(introPadding + 0.5, cut.sceneEndTime - fadeOutDuration)
-
-            scheduleOpacityRamp(
-                from: 1.0,
-                to: 0.0,
-                start: fadeOutStart,
-                end: cut.sceneEndTime
-            )
-            scheduleOpacityRamp(
-                from: 0.0,
-                to: 1.0,
-                start: cut.nextSceneStartTime,
-                end: cut.nextSceneStartTime + fadeInDuration
-            )
-        }
-
-        // Финальное кинематографическое затухание в темноту (Outro Fade to Black)
-        let finalFadeStart = max(introPadding + 2.0, speechFinishTime - 1.2)
-        scheduleOpacityRamp(
-            from: 1.0,
-            to: 0.0,
-            start: finalFadeStart,
-            end: speechFinishTime
-        )
-        // Кейфрейм держит чёрным весь аутро-хвост. Ставим его только строго вне
-        // активных рамп: совпадение с концом последней рампы безопасно, а вот
-        // попадание внутрь — ObjC-исключение, убивающее процесс.
-        if speechFinishTime >= lastOpacityRampEnd {
-            layerInstruction.setOpacity(0.0, at: CMTime(seconds: speechFinishTime, preferredTimescale: 600))
-        }
+        layerInstruction.setOpacity(0, at: CMTime(seconds: speechFinishTime, preferredTimescale: 600))
 
         instruction.layerInstructions = [layerInstruction]
         videoComposition.instructions = [instruction]
@@ -377,7 +313,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             totalDuration: totalDuration,
             layout: overlayLayout,
             hookText: arc.hookText,
-            ctaText: arc.ctaText
+            ctaText: LongformEditorialSupport.finalCard(for: arc)
         )
 
         // Подложка глубокого чёрного цвета (YUV Black Fix — предотвращает появление зелёных полос)
@@ -484,13 +420,14 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             }
         }
 
-        // 5.5. Пост-экспортная нормализация громкости до -14 LUFS / -1.5 dBTP (EBU R128).
+        // 5.5. Пост-экспортная нормализация по общим целям CinemaAudioMasteringService.
         // Это ПОСЛЕДНЯЯ аудио-операция конвейера: после защиты от Content ID и до обложки,
         // поэтому её результат уже никем не перекодируется. Имя файла и расширение сохраняются,
         // их читают генератор обложки и LongformResultsView. Этап не фатален: без ffmpeg,
         // без свободного места или при ошибке прохода остается предыдущий рендер.
         if audioSettings.loudnessNormalizationEnabled {
-            progressHandler?(0.92, "Нормализация громкости до -14 LUFS...")
+            let loudnessTarget = String(format: "%.0f", CinemaAudioMasteringService.targetLUFS)
+            progressHandler?(0.92, "Нормализация громкости до \(loudnessTarget) LUFS...")
             do {
                 finalVideoURL = try await loudnessNormalizer.normalize(
                     videoURL: finalVideoURL,
@@ -510,26 +447,38 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             workingDirectory: workingDirectory
         )
         if validationResult.hasIssues {
-            Self.logger.warning("Longform validation issues: \(validationResult.issues.map { $0.description }.joined(separator: ", "))")
+            let report = validationResult.issues.map { $0.description }.joined(separator: ", ")
+            Self.logger.error("Longform render rejected by validation: \(report)")
+            throw NSError(
+                domain: "LongformPipeline",
+                code: -4,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "Рендер отклонён проверкой: \(report)."])
         }
 
         // 6. Генерация кинематографической обложки YouTube Thumbnail (1920x1080)
         progressHandler?(0.95, "Создание обложки YouTube 1080p...")
         let thumbOutputURL = ExportLayout.artifact(in: filmDir, kind: .cover, base: concept.word, ext: "jpg")
-        let thumbnailURL = try? await thumbnailGenerator.generateThumbnail(
-            sourceAsset: sourceAsset,
-            segments: segments,
-            concept: concept,
-            movieTitle: movieTitle,
-            outputURL: thumbOutputURL
-        )
+        var thumbnail: ReviewedThumbnail?
+        var packagingWarning: String?
+        do {
+            var coverConcept = arc.concept
+            if let title = arc.publicationTitle, !title.trimmed.isEmpty { coverConcept.suggestedTitle = title }
+            thumbnail = try await thumbnailGenerator.generateReviewedThumbnail(sourceAsset: sourceAsset,
+                segments: segments, concept: coverConcept, movieTitle: movieTitle, outputURL: thumbOutputURL)
+        } catch is CancellationError { throw CancellationError() }
+        catch {
+            packagingWarning = error.localizedDescription
+            Self.logger.warning("Cover not created: \(error.localizedDescription)")
+        }
 
         // 7. Формирование вирусных метаданных
         progressHandler?(0.98, "Генерация упаковки YouTube...")
         let metadata = LongformMetadataGenerator.generate(
             movieTitle: movieTitle,
             concept: concept,
-            arc: arc
+            arc: arc,
+            timeline: timeline
         )
 
         progressHandler?(1.0, "Готово!")
@@ -539,8 +488,11 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             arc: arc,
             metadata: metadata,
             duration: totalDuration,
-            thumbnailURL: thumbnailURL,
-            validationResult: validationResult
+            thumbnailURL: thumbnail?.url,
+            validationResult: validationResult,
+            audioSettings: audioSettings,
+            thumbnailSubject: thumbnail?.subject,
+            packagingWarning: packagingWarning
         )
     }
 

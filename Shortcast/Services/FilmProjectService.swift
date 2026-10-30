@@ -63,11 +63,16 @@ final class FilmProjectService: FilmProjectServicing, Sendable {
     func loadProject(for movieURL: URL) async throws -> FilmProject? {
         let incomingBaseName = movieURL.deletingPathExtension().lastPathComponent
         let incomingFullName = movieURL.lastPathComponent
-        let incomingSize = (try? movieURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
+        // URL.resourceValues может вернуть закэшированный размер того же URL
+        // после замены файла. Для идентичности нужен свежий stat.
+        let incomingSize = ((try? FileManager.default.attributesOfItem(atPath: movieURL.path)[.size]) as? NSNumber)?.int64Value ?? 0
 
         let projects = try await listRecentProjects()
 
         return projects.first { p in
+            // URL может остаться тем же после замены файла другим фильмом.
+            if let savedSize = p.fileSizeBytes, savedSize > 0, incomingSize > 0,
+               savedSize != incomingSize { return false }
             // 1. Прямое совпадение URL
             if p.sourceMovieURL == movieURL {
                 return true

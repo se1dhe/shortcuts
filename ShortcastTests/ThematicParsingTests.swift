@@ -193,6 +193,48 @@ struct ThematicParsingTests {
         #expect(analysis.alternativeConcepts.map(\.word) == ["Звичка"])
     }
 
+    /// Живой сбой 28.10.2026: закрытый ответ этапа 2 (`complete=complete`,
+    /// `stop != length`) считался нечитаемым из-за двух строк вида
+    /// `"dramaticWeight: 0.8,` — модель не закрыла кавычку в имени ключа.
+    @Test("a key printed without its closing quote is repaired without touching values")
+    func testRepairsKeyMissingClosingQuote() throws {
+        let drifted = """
+        {
+          "selectedMoments": [
+            {
+              "startTime": 806.1,
+              "endTime: 812.3,
+              "dramaticWeight: 0.8,
+              "actRole: "philosophy",
+              "quote": "Дуже боляче. Гарного дня."
+            }
+          ]
+        }
+        """
+        let root = try #require(JSONVariantParser.deserializeTolerant(drifted) as? [String: Any])
+        let moment = try #require((root["selectedMoments"] as? [[String: Any]])?.first)
+        #expect(moment["endTime"] as? Double == 812.3)
+        #expect(moment["dramaticWeight"] as? Double == 0.8)
+        #expect(moment["actRole"] as? String == "philosophy")
+        #expect(moment["quote"] as? String == "Дуже боляче. Гарного дня.")
+    }
+
+    /// То же правило не имеет права съедать двоеточие внутри текста модели:
+    /// иначе мы чинили бы не синтаксис, а смысл.
+    @Test("a colon inside the model's own prose is never repaired into a key")
+    func testLeavesColonBearingStringsAlone() throws {
+        let json = """
+        {
+          "suggestedTitle": "Біль як вихід: Чому ми руйнуємо тіла?",
+          "notes": ["Note: 123", "Ціна: все"]
+        }
+        """
+        #expect(JSONVariantParser.repairDrift(json) == json)
+        let root = try #require(JSONVariantParser.deserializeTolerant(json) as? [String: Any])
+        #expect(root["suggestedTitle"] as? String == "Біль як вихід: Чому ми руйнуємо тіла?")
+        #expect(root["notes"] as? [String] == ["Note: 123", "Ціна: все"])
+    }
+
     @Test("an unquoted key inside an object desyncs the brace scanner: honest nil")
     func testUnquotedKeyInsideObjectIsNotRecoverable() {
         // extractJSONObject tracks string state by quote parity; one missing quote
@@ -243,11 +285,11 @@ struct ThematicParsingTests {
         #expect(LongformThematicService.parseThematicAnalysis(from: cutMidArray) == nil)
     }
 
-    @Test("reply cut off at the token cap keeps the theme and every finished scene")
-    func testTruncatedMomentsAreSalvaged() throws {
-        // Director упирается в maxTokens=8192 и обрывает JSON на середине третьей
-        // сцены. Тема, план и две завершённые сцены обязаны дожить до экрана,
-        // иначе 20 минут генерации выкидываются целиком.
+    @Test("reply cut off at the token cap is thrown away, never half-believed")
+    func testTruncatedReplyParsesToNil() {
+        // Раньше этот же ответ «долечивали»: тема и две готовые сцены доезжали до
+        // экрана с бейджем «ВЫБОР ИИ». Неполный ответ — не ответ: модель не успела
+        // ранжировать пул, и принимать за неё, какие сцены сильнее, мы не можем.
         let truncated = """
         {
           "reasoning": "Фільм досліджує межу між існуванням та ідентичністю.",
@@ -294,23 +336,14 @@ struct ThematicParsingTests {
               "reason": "Остання розмова обірвана на середині
         """
 
-        let analysis = try #require(LongformThematicService.parseThematicAnalysis(from: truncated))
-        try expectFieldsFromModel(analysis)
-        #expect(analysis.primaryConcept.word == "Ідентичність")
-        let moments = analysis.selectedMoments
-        #expect(moments.count >= 2)
-        #expect(moments[0].startTime == 8421.0)
-        #expect(moments[0].actRole == .psychology)
-        #expect(moments[1].startTime == 8618.0)
-        #expect(moments[1].actRole == .catharsis)
-        #expect(moments.allSatisfy { $0.endTime > $0.startTime })
+        #expect(LongformThematicService.parseThematicAnalysis(from: truncated) == nil)
     }
 
-    @Test("reply cut before the trailing reasoning still yields the theme and scenes")
-    func testTruncatedWithoutReasoningKeepsTheme() throws {
-        // Реальный обрыв Gemma 12B по новому порядку ключей: reasoning последний,
-        // поэтому в ответе его нет вовсе. Обоснование берём из philosophicalPremise
-        // самой модели — иначе прогон снова уходил бы в ноль.
+    @Test("reply cut before the trailing reasoning is nil, not a premise dressed as reasoning")
+    func testTruncatedWithoutReasoningParsesToNil() {
+        // Порядок ключей такой, что reasoning пишется последним: в обрыве его нет
+        // вовсе. Подставлять вместо него philosophicalPremise значило бы выдавать
+        // цитату за обоснование, которого модель не формулировала.
         let truncated = """
         {
           "primaryConcept": {
@@ -347,30 +380,20 @@ struct ThematicParsingTests {
               "startTime": 2532.0
         """
 
-        let analysis = try #require(LongformThematicService.parseThematicAnalysis(from: truncated))
-        try expectFieldsFromModel(analysis)
-        #expect(analysis.primaryConcept.word == "СВОБОДА")
-        #expect(analysis.aiReasoning == "Свобода — це не відсутність меж, а право їх обирати.")
-        #expect(analysis.selectedMoments.count == 2)
-        #expect(analysis.selectedMoments.last?.actRole == .catharsis)
+        #expect(LongformThematicService.parseThematicAnalysis(from: truncated) == nil)
     }
 
-    @Test("the real Gemma 12B reply that broke the run now parses")
-    func testRealTruncatedDirectorReplyParses() throws {
-        // Дословный ответ Director на Blade Runner 2049 (28 КБ, обрыв на 8192
-        // токенах). Он и был провалом: тема СВОБОДА есть, сцены есть, reasoning
-        // дописать не успел.
+    @Test("the real Gemma 12B reply that broke the run is rejected as truncated")
+    func testRealTruncatedDirectorReplyParsesToNil() throws {
+        // Дословный ответ Director на Blade Runner 2049 (28 КБ, обрыв на token cap).
+        // Тема в нём есть, обоснования нет — ровно тот случай, который раньше
+        // проходил в проект как «ВЫБОР ИИ» с подставленным reasoning.
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .appendingPathComponent("Fixtures/director-truncated-gemma12b.txt")
         let raw = try String(contentsOf: url, encoding: .utf8)
 
-        let analysis = try #require(LongformThematicService.parseThematicAnalysis(from: raw))
-        #expect(analysis.source == .llm)
-        #expect(analysis.primaryConcept.word == "СВОБОДА")
-        #expect(!analysis.selectedMoments.isEmpty)
-        #expect(!analysis.aiReasoning.isEmpty)
-        #expect(analysis.aiReasoning == analysis.primaryConcept.philosophicalPremise)
+        #expect(LongformThematicService.parseThematicAnalysis(from: raw) == nil)
     }
 
     @Test("a complete object without reasoning stays nil even when it has scenes")
@@ -392,7 +415,7 @@ struct ThematicParsingTests {
         #expect(LongformThematicService.parseThematicAnalysis(from: complete) == nil)
     }
 
-    @Test("prompt puts the theme first and caps prose so the reply fits 8192 tokens")
+    @Test("prompt puts the theme first and caps prose so the reply fits the token budget")
     func testPromptKeepsTheReplyInsideTheTokenCap() throws {
         let prompt = LongformThematicService.thematicSystemPrompt(movieTitle: "Фільм")
         let theme = try #require(prompt.range(of: "\"primaryConcept\""))
@@ -401,7 +424,7 @@ struct ThematicParsingTests {
         #expect(prompt.contains("600 символів"))
         #expect(prompt.contains("до 20 слів"))
         // Модель схильна перелічувати сцени підряд і не доходити до фіналу.
-        #expect(prompt.contains("максимум 24"))
+        #expect(prompt.contains("максимум 22"))
         #expect(prompt.contains("включно з фіналом"))
     }
 
@@ -636,7 +659,7 @@ struct ThematicParsingTests {
     @Test("director essay plan and scene roles parse together")
     func testParsesEssayPlanAndMomentRoles() throws {
         let json = """
-        {"reasoning":"р","primaryConcept":{"word":"ЕГО","tagline":"т","philosophicalPremise":"п","suggestedTitle":"з"},
+        {"reasoning":"р","primaryConcept":{"word":"КОНТРОЛЬ","tagline":"т","philosophicalPremise":"п","suggestedTitle":"з"},
          "essayPlan":{"thesis":"Контроль — це страх","hookVariants":["Ти контролюєш усе, крім себе.","Хто насправді обирає за тебе?"],
            "ctaVariants":["Напиши, від чого ти не відпустив."],
            "actFocus":{"form":"монтаж","psychology":"страх","philosophy":"свобода","catharsis":"вибір"}},
@@ -650,8 +673,11 @@ struct ThematicParsingTests {
         let plan = try #require(result.essayPlan)
         #expect(plan.thesis == "Контроль — це страх")
         #expect(plan.hookVariants.count == 2)
-        #expect(plan.chosenHook == "Ти контролюєш усе, крім себе.")
-        #expect(plan.chosenCTA == "Напиши, від чого ти не відпустив.")
+        // Парсер фиксирует варианты, а не «первый как выбор модели»: selectedHook
+        // появляется только после подтверждения человеком в sheet.
+        #expect(plan.selectedHook == nil)
+        #expect(plan.chosenHookVariant == nil, "список вариантов не является решением модели")
+        #expect(plan.chosenCTAVariant?.text == "Напиши, від чого ти не відпустив.")
         #expect(plan.focus(for: .philosophy) == "свобода")
         #expect(result.selectedMoments.map(\.actRole) == [.hook, .form, .psychology])
         #expect(result.selectedMoments[0].featured == true)
@@ -661,7 +687,7 @@ struct ThematicParsingTests {
     @Test("legacy director response still parses without an essay plan")
     func testLegacyResponseStillParsesWithoutEssayPlan() throws {
         let json = """
-        {"reasoning":"р","primaryConcept":{"word":"ЕГО","tagline":"т","philosophicalPremise":"п","suggestedTitle":"з"},
+        {"reasoning":"р","primaryConcept":{"word":"КОНТРОЛЬ","tagline":"т","philosophicalPremise":"п","suggestedTitle":"з"},
          "selectedMoments":[{"startTime":10,"endTime":20,"reason":"r","dramaticWeight":0.5}],
          "alternativeConcepts":[]}
         """

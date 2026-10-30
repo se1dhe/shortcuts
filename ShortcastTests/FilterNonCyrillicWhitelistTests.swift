@@ -92,12 +92,23 @@ final class FilterNonCyrillicWhitelistTests: XCTestCase {
         XCTAssertEqual(result, "ТЕРПІННЯ 101 причина дивитися Netflix 24/7")
     }
 
-    func testCaseSensitivity() {
-        // Whitelist terms are case-sensitive
+    func testCaseInsensitiveWholeTokenMatch() {
+        // Распознаём термин в любом регистре, но в текст подставляем ровно тот
+        // токен, что написала модель: «HOOK» остаётся «HOOK». Регистр не может
+        // ничего дописать, а подстрока могла — см. следующий тест.
         let input = "HOOK hook Hook"
         let result = LongformThematicService.filterNonCyrillic(input)
-        // Only "hook" is in whitelist, "HOOK" and "Hook" are not
-        // "HOOK" and "Hook" are removed, "hook" is preserved
-        XCTAssertEqual(result, " hook ")
+        XCTAssertEqual(result, "HOOK hook Hook")
+    }
+
+    func testWhitelistTermIsNotMatchedAsASubstring() {
+        // «Performance» contain-ил бы «form» и свернулся в него — то есть фильтр
+        // дописал бы в текст модели то, чего она не писала.
+        XCTAssertEqual(
+            LongformThematicService.filterNonCyrillic("Performance"),
+            "")
+        XCTAssertEqual(
+            LongformThematicService.filterNonCyrillic("трансформер"),
+            "трансформер")
     }
 }

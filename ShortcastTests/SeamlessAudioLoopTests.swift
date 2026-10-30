@@ -438,6 +438,40 @@ struct LongformLoudnessNormalizationTests {
     }
 }
 
+@Suite("Render loudness validation")
+struct RenderLoudnessValidationTests {
+    @Test("Accepts the normalized output that was previously rejected")
+    func acceptsActualRender() {
+        #expect(RenderValidationService.loudnessIssue(actual: -16.1) == nil)
+    }
+
+    @Test("Keeps a one LUFS tolerance around the mastering target", arguments: [-1.0, 0.0, 1.0])
+    func acceptsToleranceBoundary(offset: Double) {
+        #expect(RenderValidationService.loudnessIssue(
+            actual: CinemaAudioMasteringService.targetLUFS + offset
+        ) == nil)
+    }
+
+    @Test("Rejects outputs beyond the tolerance", arguments: [-1.1, 1.1])
+    func rejectsOutsideTolerance(offset: Double) {
+        let target = CinemaAudioMasteringService.targetLUFS
+        #expect(RenderValidationService.loudnessIssue(actual: target + offset)
+            == .loudnessOutOfTolerance(expected: target, actual: target + offset, tolerance: 1.0))
+    }
+
+    @Test("Honors an explicit target and tolerance")
+    func explicitTarget() {
+        #expect(RenderValidationService.loudnessIssue(actual: -14.1, expected: -14, tolerance: 0.2) == nil)
+        #expect(RenderValidationService.loudnessIssue(actual: -16.1, expected: -14, tolerance: 0.2)
+            == .loudnessOutOfTolerance(expected: -14, actual: -16.1, tolerance: 0.2))
+    }
+
+    @Test("Rejects non-finite measurements", arguments: [Double.nan, .infinity, -.infinity])
+    func rejectsNonFinite(actual: Double) {
+        #expect(RenderValidationService.loudnessIssue(actual: actual) != nil)
+    }
+}
+
 @Suite("LongformAudioMastering Loudness Hardening Tests")
 struct LongformAudioMasteringHardeningTests {
 

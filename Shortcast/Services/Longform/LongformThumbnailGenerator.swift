@@ -4,7 +4,7 @@ import CoreGraphics
 import UniformTypeIdentifiers
 import Vision
 
-/// Протокол генератора обложек YouTube в стиле канала @prrodan и Shortcast Cinema (SOLID: DIP)
+/// Генератор обложек «Кадр & Сенс» с подтверждением главного героя.
 protocol LongformThumbnailGeneratingProtocol: Sendable {
     func generateThumbnail(
         sourceAsset: AVURLAsset,
@@ -13,6 +13,27 @@ protocol LongformThumbnailGeneratingProtocol: Sendable {
         movieTitle: String,
         outputURL: URL
     ) async throws -> URL
+    func generateReviewedThumbnail(sourceAsset: AVURLAsset, segments: [TimeSegment],
+        concept: ThematicConcept, movieTitle: String, outputURL: URL) async throws -> ReviewedThumbnail
+    func generateAlternativeReviewedThumbnail(sourceAsset: AVURLAsset, segments: [TimeSegment],
+        concept: ThematicConcept, movieTitle: String, outputURL: URL,
+        avoidingTimes: [Double]) async throws -> ReviewedThumbnail
+}
+
+extension LongformThumbnailGeneratingProtocol {
+    func generateReviewedThumbnail(sourceAsset: AVURLAsset, segments: [TimeSegment],
+        concept: ThematicConcept, movieTitle: String, outputURL: URL) async throws -> ReviewedThumbnail {
+        let url = try await generateThumbnail(sourceAsset: sourceAsset, segments: segments,
+            concept: concept, movieTitle: movieTitle, outputURL: outputURL)
+        return ReviewedThumbnail(url: url, subject: nil)
+    }
+
+    func generateAlternativeReviewedThumbnail(sourceAsset: AVURLAsset, segments: [TimeSegment],
+        concept: ThematicConcept, movieTitle: String, outputURL: URL,
+        avoidingTimes: [Double]) async throws -> ReviewedThumbnail {
+        try await generateReviewedThumbnail(sourceAsset: sourceAsset, segments: segments,
+            concept: concept, movieTitle: movieTitle, outputURL: outputURL)
+    }
 }
 
 /// Модель оцененного кандидата кадра для обложки
@@ -22,6 +43,7 @@ struct ThumbnailCandidateFrame: Sendable {
     let faceBox: CGRect?
     let score: Double
     let averageLuminance: Double
+    var faceCount: Int = 1
 }
 
 /// Компоновка обложки в зависимости от положения ключевого объекта
@@ -41,13 +63,13 @@ enum ThumbnailLayoutMode: Sendable {
 /// его рисует `LongformThumbnailComposer` и его же проверяет тест на коллизию с
 /// логотипом канала, поэтому тест не может разойтись с отрисовкой.
 struct LongformCoverTextSlots: Sendable, Equatable {
-    /// Надстрочник «ФИЛОСОФИЯ ФИЛЬМА …»
+    /// Название бренда.
     let badge: CGRect
-    /// Якорное слово темы
+    /// Смысловой заголовок эссе.
     let themeWord: CGRect
     /// Золотая разделительная черта
     let rule: CGRect
-    /// Смысловой тезис / хук
+    /// Название фильма.
     let hook: CGRect
 
     /// Верхняя виньетка: эталон 200 pt при 1080 строках.
@@ -70,39 +92,13 @@ struct LongformCoverTextSlots: Sendable, Equatable {
     }
 
     static func make(layoutMode: ThumbnailLayoutMode, canvas: CGSize, hookHeight: CGFloat) -> LongformCoverTextSlots {
-        let w = canvas.width
-        let h = canvas.height
-        let textX: CGFloat
-        let textMaxW: CGFloat
-        let baseY: CGFloat
-        let isCentered: Bool
-
-        switch layoutMode {
-        case .leftTextRightFace:
-            textX = 110.0 / 1920.0 * w
-            textMaxW = 820.0 / 1920.0 * w
-            baseY = 340.0 / 1080.0 * h
-            isCentered = false
-        case .rightTextLeftFace:
-            textX = 990.0 / 1920.0 * w
-            textMaxW = 820.0 / 1920.0 * w
-            baseY = 340.0 / 1080.0 * h
-            isCentered = false
-        case .centerBottomFallback:
-            textX = 140.0 / 1920.0 * w
-            textMaxW = 1640.0 / 1920.0 * w
-            baseY = 160.0 / 1080.0 * h
-            isCentered = true
-        }
-
-        let badge = CGRect(x: textX, y: baseY + 360.0 / 1080.0 * h, width: textMaxW, height: 40.0 / 1080.0 * h)
-        let themeWord = CGRect(x: textX, y: baseY + 190.0 / 1080.0 * h, width: textMaxW, height: 160.0 / 1080.0 * h)
-        let ruleW: CGFloat = isCentered ? 160.0 / 1920.0 * w : min(140.0 / 1920.0 * w, textMaxW)
-        let ruleX: CGFloat = isCentered ? (w - ruleW) / 2.0 : textX
-        let rule = CGRect(x: ruleX, y: baseY + 160.0 / 1080.0 * h, width: ruleW, height: 4.5 / 1080.0 * h)
-        let hook = CGRect(x: textX, y: baseY - 15.0 / 1080.0 * h, width: textMaxW, height: hookHeight)
-
-        return LongformCoverTextSlots(badge: badge, themeWord: themeWord, rule: rule, hook: hook)
+        let k = canvas.height / 1080
+        let x = canvas.width * 0.05, width = canvas.width * 0.43
+        return LongformCoverTextSlots(
+            badge: CGRect(x: x, y: 930 * k, width: width, height: 44 * k),
+            themeWord: CGRect(x: x, y: 440 * k, width: width, height: 440 * k),
+            rule: CGRect(x: x, y: 390 * k, width: 140 * k, height: 3 * k),
+            hook: CGRect(x: x, y: 150 * k, width: width, height: min(hookHeight, 190 * k)))
     }
 
     /// Полосы при максимально допустимом блоке хука — то, чем оперирует тест на коллизию.
@@ -114,106 +110,54 @@ struct LongformCoverTextSlots: Sendable, Equatable {
 /// Сервис умного подбора и скоринга кадров через Apple Vision (SOLID: Single Responsibility)
 final class LongformThumbnailCandidateSelector: Sendable {
 
-    /// Подбирает наиболее выразительный кадр фильма (портретный крупный план героя с высоким контрастом)
-    func selectBestCandidate(
-        sourceAsset: AVURLAsset,
-        segments: [TimeSegment],
-        renderSize: CGSize = CGSize(width: 1920, height: 1080)
-    ) async throws -> ThumbnailCandidateFrame {
-        let candidateTimes = generateCandidateTimestamps(segments: segments, sourceAsset: sourceAsset)
-        
-        let generator = AVAssetImageGenerator(asset: sourceAsset)
-        generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = renderSize
-        generator.requestedTimeToleranceBefore = CMTime(seconds: 0.5, preferredTimescale: 600)
-        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.5, preferredTimescale: 600)
-
-        var scoredCandidates: [ThumbnailCandidateFrame] = []
-
-        for timeSec in candidateTimes {
-            let cmTime = CMTime(seconds: timeSec, preferredTimescale: 600)
-            guard let (cgImage, _) = try? await generator.image(at: cmTime) else {
-                continue
-            }
-
-            let luminance = calculateAverageLuminance(of: cgImage)
-            
-            // Если кадр полностью черный (склейка в темноту) или выбелен - отсекаем
-            if luminance < 0.05 {
-                continue
-            }
-
-            let (bestFaceBox, faceCount) = detectFaces(in: cgImage)
-            let score = scoreCandidate(
-                time: timeSec,
-                luminance: luminance,
-                bestFaceBox: bestFaceBox,
-                faceCount: faceCount,
-                candidateTimes: candidateTimes
-            )
-
-            scoredCandidates.append(
-                ThumbnailCandidateFrame(
-                    time: timeSec,
-                    image: cgImage,
-                    faceBox: bestFaceBox,
-                    score: score,
-                    averageLuminance: luminance
-                )
-            )
+    func selectBestCandidate(sourceAsset: AVURLAsset, segments: [TimeSegment],
+                             renderSize: CGSize = CGSize(width: 1920, height: 1080)) async throws -> ThumbnailCandidateFrame {
+        guard let first = try await rankedCandidates(sourceAsset: sourceAsset, segments: segments).first else {
+            throw ThumbnailSelectionError.noVerifiedLead
         }
-
-        // Сортируем по очкам выразительности
-        scoredCandidates.sort(by: { $0.score > $1.score })
-
-        if let best = scoredCandidates.first {
-            return best
-        }
-
-        // Если не удалось извлечь ни одного кадра из кандидатов, берем аварийный кадр
-        let fallbackTime = segments.first?.start ?? 60.0
-        let (fallbackImage, _) = try await generator.image(at: CMTime(seconds: fallbackTime, preferredTimescale: 600))
-        return ThumbnailCandidateFrame(
-            time: fallbackTime,
-            image: fallbackImage,
-            faceBox: nil,
-            score: 0.0,
-            averageLuminance: calculateAverageLuminance(of: fallbackImage)
-        )
+        return first
     }
 
-    /// Генерирует 12-16 контрольных точек по всему хронометражу фильма
-    private func generateCandidateTimestamps(segments: [TimeSegment], sourceAsset: AVURLAsset) -> [Double] {
-        guard !segments.isEmpty else {
-            // Если сегменты не переданы, распределяем точки равномерно по видео
-            let dur = CMTimeGetSeconds(sourceAsset.duration)
-            let safeDur = dur.isFinite && dur > 10.0 ? dur : 300.0
-            return [0.15, 0.30, 0.45, 0.55, 0.65, 0.75, 0.85].map { $0 * safeDur }
+    func rankedCandidates(sourceAsset: AVURLAsset, segments: [TimeSegment]) async throws -> [ThumbnailCandidateFrame] {
+        let duration = CMTimeGetSeconds(try await sourceAsset.load(.duration))
+        let times = Self.candidateTimestamps(segments: segments, duration: duration)
+        let generator = AVAssetImageGenerator(asset: sourceAsset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 960, height: 540)
+        generator.requestedTimeToleranceBefore = CMTime(seconds: 0.3, preferredTimescale: 600)
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.3, preferredTimescale: 600)
+        var candidates: [ThumbnailCandidateFrame] = []
+        for time in times {
+            try Task.checkCancellation()
+            guard let (image, actualTime) = try? await generator.image(at: CMTime(seconds: time, preferredTimescale: 600)) else { continue }
+            let luminance = calculateAverageLuminance(of: image)
+            guard (0.08...0.88).contains(luminance) else { continue }
+            let (face, count) = detectFaces(in: image)
+            guard count == 1, let face, face.width * face.height >= 0.015 else { continue }
+            let score = scoreCandidate(time: time, luminance: luminance, bestFaceBox: face,
+                                       faceCount: count, candidateTimes: times)
+            candidates.append(ThumbnailCandidateFrame(time: CMTimeGetSeconds(actualTime), image: image,
+                faceBox: face, score: score, averageLuminance: luminance, faceCount: count))
         }
-
-        var times: [Double] = []
-        for seg in segments {
-            // Середина сегмента
-            times.append(seg.start + seg.duration * 0.5)
-            // Дополнительные точки для длинных эмоциональных сцен
-            if seg.duration >= 7.0 {
-                times.append(seg.start + seg.duration * 0.25)
-                times.append(seg.start + seg.duration * 0.75)
-            }
+        var diverse: [ThumbnailCandidateFrame] = []
+        for candidate in candidates.sorted(by: { $0.score > $1.score }) {
+            if diverse.allSatisfy({ abs($0.time - candidate.time) >= 8 }) { diverse.append(candidate) }
+            if diverse.count == 24 { break }
         }
+        DirectorRunLog.write("cover candidates: sampled=\(times.count) clearPortraits=\(candidates.count) diverse=\(diverse.count)")
+        return diverse
+    }
 
-        // Если точек слишком много, берем до 16 равномерно распределенных
-        if times.count > 16 {
-            let step = Double(times.count) / 16.0
-            var sampled: [Double] = []
-            for i in 0..<16 {
-                let idx = min(Int(Double(i) * step), times.count - 1)
-                sampled.append(times[idx])
-            }
-            return sampled
+    static func candidateTimestamps(segments: [TimeSegment], duration: Double) -> [Double] {
+        guard duration.isFinite, duration > 1 else { return [] }
+        var times = segments.filter { $0.start.isFinite && $0.end.isFinite && $0.end > $0.start }.flatMap { scene in
+            [0.25, 0.5, 0.75].map { scene.start + scene.duration * $0 }
         }
-
-        return times
+        // Герой может не попасть в 16 кадров монтажа: проверяем также весь фильм.
+        times += (0..<40).map { duration * (0.03 + Double($0) / 40 * 0.89) }
+        let valid = Array(Set(times.filter { $0 >= 0 && $0 < duration })).sorted()
+        guard valid.count > 96 else { return valid }
+        return (0..<96).map { valid[min(valid.count - 1, Int(Double($0) * Double(valid.count - 1) / 95))] }
     }
 
     /// Детекция лиц через Apple Vision Framework
@@ -337,291 +281,115 @@ final class LongformThumbnailCandidateSelector: Sendable {
 
 /// Сервис компоновки, кино-грейдинга и монументальной типографики обложки (SOLID: Single Responsibility)
 final class LongformThumbnailComposer: Sendable {
+    private static let obsidian = NSColor(srgbRed: 8/255, green: 9/255, blue: 12/255, alpha: 1)
+    private static let gold = NSColor(srgbRed: 212/255, green: 175/255, blue: 55/255, alpha: 1)
+    private static let ivory = NSColor(srgbRed: 250/255, green: 247/255, blue: 242/255, alpha: 1)
 
-    func composeThumbnail(
-        candidate: ThumbnailCandidateFrame,
-        concept: ThematicConcept,
-        movieTitle: String,
-        renderSize: CGSize = CGSize(width: 1920, height: 1080)
-    ) throws -> CGImage {
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
-
-        guard let context = CGContext(
-            data: nil,
-            width: Int(renderSize.width),
-            height: Int(renderSize.height),
-            bitsPerComponent: 8,
-            bytesPerRow: Int(renderSize.width) * 4,
-            space: colorSpace,
-            bitmapInfo: bitmapInfo
-        ) else {
-            throw NSError(domain: "ThumbnailComposer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Не удалось создать графический контекст."])
-        }
-
-        // 1. Черная кинематографическая база
-        context.setFillColor(CGColor(gray: 0.0, alpha: 1.0))
-        context.fill(CGRect(origin: .zero, size: renderSize))
-
-        // 2. Отрисовка кадра с Aspect-Fill (устранение черных полос исходника)
-        let srcW = CGFloat(candidate.image.width)
-        let srcH = CGFloat(candidate.image.height)
-        let scale = max(renderSize.width / srcW, renderSize.height / srcH)
-        let drawW = srcW * scale
-        let drawH = srcH * scale
-        let drawX = (renderSize.width - drawW) / 2.0
-        let drawY = (renderSize.height - drawH) / 2.0
-        context.draw(candidate.image, in: CGRect(x: drawX, y: drawY, width: drawW, height: drawH))
-
-        // 3. Определение ориентации композиции
-        let layoutMode: ThumbnailLayoutMode
-        if let box = candidate.faceBox {
-            if box.midX >= 0.42 {
-                layoutMode = .leftTextRightFace
-            } else {
-                layoutMode = .rightTextLeftFace
-            }
-        } else {
-            layoutMode = .centerBottomFallback
-        }
-
-        // 4. Наложение кино-градиентов
-        drawCinematicGradients(context: context, colorSpace: colorSpace, layoutMode: layoutMode, renderSize: renderSize)
-
-        // 5. Отрисовка монументальной типографики
-        drawTypography(
-            context: context,
-            layoutMode: layoutMode,
-            concept: concept,
-            movieTitle: movieTitle,
-            renderSize: renderSize
-        )
-
-        // 6. Логотип канала — ПОСЛЕ типографики, чтобы знак оставался верхним слоем.
-        // Правый верх (ChannelLogoPlacement.essayCover) не пересекает ни один текстовый
-        // слот и целиком попадает в верхнюю виньетку, то есть лежит на гарантированно
-        // тёмном участке кадра. Если ассета нет — композит молча ничего не рисует.
-        ChannelLogo.composite(
-            in: context,
-            rect: ChannelLogoPlacement.essayCover(canvas: renderSize)
-        )
-
-        guard let finalImage = context.makeImage() else {
-            throw NSError(domain: "ThumbnailComposer", code: -2, userInfo: [NSLocalizedDescriptionKey: "Не удалось сформировать изображение."])
-        }
-
-        return finalImage
+    /// Фокус изображения задаёт подтверждённое лицо; текст всегда остаётся на чистом тёмном поле.
+    static func imageRect(imageSize: CGSize, faceBox: CGRect?, canvas: CGSize) -> CGRect {
+        let pane = CGRect(x: canvas.width * 0.38, y: 0, width: canvas.width * 0.62, height: canvas.height)
+        let scale = max(pane.width / imageSize.width, pane.height / imageSize.height)
+        let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        let face = faceBox ?? CGRect(x: 0.4, y: 0.25, width: 0.2, height: 0.4)
+        let desiredX = canvas.width * 0.74 - face.midX * size.width
+        let desiredY = canvas.height * 0.53 - face.midY * size.height
+        return CGRect(x: min(pane.minX, max(pane.maxX - size.width, desiredX)),
+                      y: min(pane.minY, max(pane.maxY - size.height, desiredY)), width: size.width, height: size.height)
     }
 
-    /// Кинематографический градиент: глубокое затемнение на стороне текста + мягкая верхняя/нижняя виньетка
-    private func drawCinematicGradients(
-        context: CGContext,
-        colorSpace: CGColorSpace,
-        layoutMode: ThumbnailLayoutMode,
-        renderSize: CGSize
-    ) {
-        let gradColors = [
-            CGColor(gray: 0.0, alpha: 0.96),
-            CGColor(gray: 0.0, alpha: 0.88),
-            CGColor(gray: 0.0, alpha: 0.50),
-            CGColor(gray: 0.0, alpha: 0.0)
-        ] as CFArray
-        let gradLocations: [CGFloat] = [0.0, 0.40, 0.70, 1.0]
-
-        if let sideGrad = CGGradient(colorsSpace: colorSpace, colors: gradColors, locations: gradLocations) {
-            switch layoutMode {
-            case .leftTextRightFace:
-                // Затемнение слева направо (текст слева)
-                context.drawLinearGradient(
-                    sideGrad,
-                    start: CGPoint(x: 0, y: renderSize.height / 2.0),
-                    end: CGPoint(x: 1250, y: renderSize.height / 2.0),
-                    options: []
-                )
-            case .rightTextLeftFace:
-                // Затемнение справа налево (текст справа)
-                context.drawLinearGradient(
-                    sideGrad,
-                    start: CGPoint(x: renderSize.width, y: renderSize.height / 2.0),
-                    end: CGPoint(x: 670, y: renderSize.height / 2.0),
-                    options: []
-                )
-            case .centerBottomFallback:
-                // Нижнее затемнение для центрированного текста
-                let bottomColors = [
-                    CGColor(gray: 0.0, alpha: 0.94),
-                    CGColor(gray: 0.0, alpha: 0.65),
-                    CGColor(gray: 0.0, alpha: 0.0)
-                ] as CFArray
-                if let bGrad = CGGradient(colorsSpace: colorSpace, colors: bottomColors, locations: [0.0, 0.50, 1.0]) {
-                    context.drawLinearGradient(
-                        bGrad,
-                        start: CGPoint(x: renderSize.width / 2.0, y: 0),
-                        end: CGPoint(x: renderSize.width / 2.0, y: 680),
-                        options: []
-                    )
-                }
+    func composeThumbnail(candidate: ThumbnailCandidateFrame, concept: ThematicConcept, movieTitle: String,
+                          renderSize: CGSize = CGSize(width: 1920, height: 1080)) throws -> CGImage {
+        let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(data: nil, width: Int(renderSize.width), height: Int(renderSize.height),
+            bitsPerComponent: 8, bytesPerRow: Int(renderSize.width) * 4, space: space,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            throw ThumbnailSelectionError.noVerifiedLead
+        }
+        let bounds = CGRect(origin: .zero, size: renderSize), k = renderSize.height / 1080
+        context.setFillColor(Self.obsidian.cgColor); context.fill(bounds)
+        context.saveGState()
+        context.clip(to: CGRect(x: renderSize.width * 0.38, y: 0, width: renderSize.width * 0.62, height: renderSize.height))
+        let imageRect = Self.imageRect(imageSize: CGSize(width: candidate.image.width, height: candidate.image.height),
+                                      faceBox: candidate.faceBox, canvas: renderSize)
+        context.interpolationQuality = .high
+        context.draw(candidate.image, in: imageRect)
+        context.restoreGState()
+        if let gradient = CGGradient(colorsSpace: space, colors: [Self.obsidian.cgColor,
+            Self.obsidian.withAlphaComponent(0.96).cgColor, Self.obsidian.withAlphaComponent(0).cgColor] as CFArray,
+            locations: [0, 0.38, 1]) {
+            context.drawLinearGradient(gradient, start: CGPoint(x: renderSize.width * 0.27, y: 0),
+                end: CGPoint(x: renderSize.width * 0.65, y: 0), options: [.drawsBeforeStartLocation])
+        }
+        if let shade = CGGradient(colorsSpace: space,
+            colors: [Self.obsidian.withAlphaComponent(0.72).cgColor, Self.obsidian.withAlphaComponent(0).cgColor] as CFArray,
+            locations: [0, 1]) {
+            context.drawLinearGradient(shade, start: CGPoint(x: 0, y: 0), end: CGPoint(x: 0, y: renderSize.height * 0.26), options: [])
+            context.drawLinearGradient(shade, start: CGPoint(x: 0, y: renderSize.height),
+                end: CGPoint(x: 0, y: renderSize.height * 0.83), options: [])
+        }
+        drawViewfinder(in: context, canvas: renderSize)
+        let layout = LongformCoverTextSlots.make(layoutMode: .leftTextRightFace, canvas: renderSize, hookHeight: 190 * k)
+        let previous = NSGraphicsContext.current
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        defer { NSGraphicsContext.current = previous }
+        let brand = NSMutableAttributedString(string: "КАДР & СЕНС", attributes: [
+            .font: serif(30 * k), .foregroundColor: Self.ivory, .kern: 4 * k])
+        brand.addAttribute(.foregroundColor, value: Self.gold, range: NSRange(location: 5, length: 1))
+        brand.draw(in: layout.badge)
+        let heading = concept.suggestedTitle.trimmed.isEmpty ? concept.word : concept.suggestedTitle
+        drawFitted(heading.uppercased(), in: layout.themeWord, maxSize: 108 * k, minSize: 54 * k,
+                   color: Self.ivory, serif: true, tracking: 0)
+        context.setFillColor(Self.gold.cgColor); context.fill(layout.rule)
+        drawFitted(movieTitle.uppercased(), in: layout.hook, maxSize: 48 * k, minSize: 28 * k,
+                   color: Self.gold, serif: false, tracking: 2 * k)
+        ("УКРАЇНСЬКЕ КІНОЕСЕ" as NSString).draw(at: CGPoint(x: layout.badge.minX, y: 82 * k),
+            withAttributes: [.font: NSFont.systemFont(ofSize: 22 * k, weight: .medium),
+                             .foregroundColor: Self.ivory.withAlphaComponent(0.7), .kern: 3 * k])
+        if let image = NSImage(named: "EssayCoverBrandMark") {
+            var rect = NSRect(origin: .zero, size: image.size)
+            if let mark = image.cgImage(forProposedRect: &rect, context: nil, hints: nil) {
+                context.draw(mark, in: ChannelLogoPlacement.essayCover(canvas: renderSize, inset: 48 * k))
             }
         }
-
-        // Мягкая виньетка сверху и снизу (полосы — доли канваса, общий источник с тестом)
-        let edgeColors = [CGColor(gray: 0.0, alpha: 0.60), CGColor(gray: 0.0, alpha: 0.0)] as CFArray
-        if let edgeGrad = CGGradient(colorsSpace: colorSpace, colors: edgeColors, locations: [0.0, 1.0]) {
-            let topBand = LongformCoverTextSlots.topVignette(canvas: renderSize)
-            let bottomBand = LongformCoverTextSlots.bottomVignette(canvas: renderSize)
-            // Верх
-            context.drawLinearGradient(
-                edgeGrad,
-                start: CGPoint(x: renderSize.width / 2.0, y: topBand.maxY),
-                end: CGPoint(x: renderSize.width / 2.0, y: topBand.minY),
-                options: []
-            )
-            // Низ
-            context.drawLinearGradient(
-                edgeGrad,
-                start: CGPoint(x: renderSize.width / 2.0, y: bottomBand.minY),
-                end: CGPoint(x: renderSize.width / 2.0, y: bottomBand.maxY),
-                options: []
-            )
-        }
+        guard let image = context.makeImage() else { throw ThumbnailSelectionError.noVerifiedLead }
+        return image
     }
 
-    /// Отрисовка монументальной типографики в стиле @prrodan (SOLID: Single Responsibility)
-    private func drawTypography(
-        context: CGContext,
-        layoutMode: ThumbnailLayoutMode,
-        concept: ThematicConcept,
-        movieTitle: String,
-        renderSize: CGSize
-    ) {
-        let nsContext = NSGraphicsContext(cgContext: context, flipped: false)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = nsContext
-
-        // Координаты размещения текстового блока — из общего источника геометрии
-        // (`LongformCoverTextSlots`), который проверяет тест на коллизию с логотипом.
-        let layout = LongformCoverTextSlots.make(
-            layoutMode: layoutMode,
-            canvas: renderSize,
-            hookHeight: 160.0 / 1080.0 * renderSize.height
-        )
-        let textMaxW = layout.hook.width
-        let isCentered: Bool
-        switch layoutMode {
-        case .leftTextRightFace, .rightTextLeftFace: isCentered = false
-        case .centerBottomFallback: isCentered = true
+    private func serif(_ size: CGFloat) -> NSFont {
+        NSFont(name: "Georgia-Bold", size: size) ?? NSFont.systemFont(ofSize: size, weight: .bold)
+    }
+    private func drawFitted(_ text: String, in rect: CGRect, maxSize: CGFloat, minSize: CGFloat,
+                            color: NSColor, serif useSerif: Bool, tracking: CGFloat) {
+        var size = maxSize
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byWordWrapping
+        paragraph.lineSpacing = maxSize * 0.04
+        var attributed = NSAttributedString()
+        var measured = CGRect.zero
+        repeat {
+            let font = useSerif ? serif(size) : (NSFont(name: "AvenirNext-DemiBold", size: size) ?? NSFont.boldSystemFont(ofSize: size))
+            attributed = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color,
+                .paragraphStyle: paragraph, .kern: tracking])
+            measured = attributed.boundingRect(with: CGSize(width: rect.width, height: 4000),
+                options: [.usesLineFragmentOrigin, .usesFontLeading])
+            if measured.height <= rect.height && measured.width <= rect.width + 1 { break }
+            size -= 2
+        } while size >= minSize
+        // Верхний край фиксирован: разные длины названия не сдвигают название фильма.
+        attributed.draw(with: CGRect(x: rect.minX, y: rect.maxY - min(rect.height, ceil(measured.height)),
+            width: rect.width, height: min(rect.height, ceil(measured.height) + 2)),
+            options: [.usesLineFragmentOrigin, .usesFontLeading])
+    }
+    private func drawViewfinder(in context: CGContext, canvas: CGSize) {
+        let k = canvas.height / 1080, inset = 34 * k, length = 34 * k
+        context.setStrokeColor(Self.gold.withAlphaComponent(0.65).cgColor); context.setLineWidth(2 * k)
+        for point in [CGPoint(x: inset, y: inset), CGPoint(x: canvas.width - inset, y: inset),
+                      CGPoint(x: inset, y: canvas.height - inset), CGPoint(x: canvas.width - inset, y: canvas.height - inset)] {
+            let dx: CGFloat = point.x < canvas.width / 2 ? 1 : -1
+            let dy: CGFloat = point.y < canvas.height / 2 ? 1 : -1
+            context.strokeLineSegments(between: [CGPoint(x: point.x, y: point.y + dy * length), point,
+                                                point, CGPoint(x: point.x + dx * length, y: point.y)])
         }
-
-        // Кинематографическая глубокая тень
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.98)
-        shadow.shadowBlurRadius = 18.0
-        shadow.shadowOffset = NSSize(width: 0, height: -4.0)
-
-        let accentColor = NSColor(hex: concept.accentColorHex) ?? NSColor(calibratedRed: 1.0, green: 0.89, blue: 0.36, alpha: 1.0)
-
-        // 1. Бейдж-надстрочник: ФИЛОСОФИЯ ФИЛЬМА «НАЗВАНИЕ»
-        let badgeFont = SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: 22.0, fallback: .bold)
-        let badgeParagraph = NSMutableParagraphStyle()
-        if isCentered { badgeParagraph.alignment = .center }
-
-        let badgeAttrs: [NSAttributedString.Key: Any] = [
-            .font: badgeFont,
-            .foregroundColor: accentColor,
-            .shadow: shadow,
-            .paragraphStyle: badgeParagraph,
-            .kern: 3.0
-        ]
-        let badgeText = "ФІЛОСОФІЯ ФІЛЬМУ «\(movieTitle.uppercased())»"
-        let badgeStr = NSAttributedString(string: badgeText, attributes: badgeAttrs)
-        if isCentered {
-            badgeStr.draw(in: layout.badge)
-        } else {
-            badgeStr.draw(at: layout.badge.origin)
-        }
-
-        // 2. Главное якорное слово темы (монументально 125-130pt с авто-масштабированием)
-        var anchorFontSize: CGFloat = isCentered ? 110.0 : 125.0
-        let rawAnchor = concept.word.uppercased()
-
-        // Проверяем ширину и уменьшаем шрифт при необходимости, чтобы слово никогда не вылезало за границу
-        let testFont = SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: anchorFontSize, fallback: .heavy)
-        let testSize = (rawAnchor as NSString).size(withAttributes: [.font: testFont, .kern: 4.0])
-        if testSize.width > textMaxW {
-            anchorFontSize = max(65.0, floor(anchorFontSize * (textMaxW / testSize.width)))
-        }
-
-        let titleFont = SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: anchorFontSize, fallback: .heavy)
-        let titleParagraph = NSMutableParagraphStyle()
-        if isCentered { titleParagraph.alignment = .center }
-
-        let titleAttrs: [NSAttributedString.Key: Any] = [
-            .font: titleFont,
-            .foregroundColor: NSColor.white,
-            .strokeColor: NSColor.black,
-            .strokeWidth: -3.2,
-            .shadow: shadow,
-            .paragraphStyle: titleParagraph,
-            .kern: 4.0
-        ]
-        let titleStr = NSAttributedString(string: rawAnchor, attributes: titleAttrs)
-        if isCentered {
-            titleStr.draw(in: layout.themeWord)
-        } else {
-            titleStr.draw(at: layout.themeWord.origin)
-        }
-
-        // 3. Золотая акцентная разделительная черта
-        context.setFillColor(accentColor.cgColor)
-        context.fill(layout.rule)
-
-        // 4. Смысловой тезис / хук (жесткий перенос слов по строкам, защита от обрезания)
-        var hookFontSize: CGFloat = 34.0
-        let hookParagraph = NSMutableParagraphStyle()
-        hookParagraph.lineBreakMode = .byWordWrapping
-        hookParagraph.lineSpacing = 8.0
-        if isCentered { hookParagraph.alignment = .center }
-
-        var hookAttrs: [NSAttributedString.Key: Any] = [
-            .font: SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: hookFontSize, fallback: .heavy),
-            .foregroundColor: NSColor(calibratedWhite: 0.94, alpha: 1.0),
-            .strokeColor: NSColor.black,
-            .strokeWidth: -2.0,
-            .shadow: shadow,
-            .paragraphStyle: hookParagraph,
-            .kern: 1.5
-        ]
-
-        let cleanTagline = concept.tagline.uppercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        var hookStr = NSAttributedString(string: cleanTagline, attributes: hookAttrs)
-
-        // Измеряем высоту с переносом строк
-        var measuredRect = hookStr.boundingRect(
-            with: CGSize(width: textMaxW, height: 300.0),
-            options: [.usesLineFragmentOrigin, .usesFontLeading]
-        )
-
-        // Если текст слишком длинный для 3 строк, масштабируем размер шрифта вниз
-        if measuredRect.height > 165.0 {
-            hookFontSize = 28.0
-            hookAttrs[.font] = SubtitleRenderer.resolveFont(name: "RussoOne-Regular", size: hookFontSize, fallback: .heavy)
-            hookStr = NSAttributedString(string: cleanTagline, attributes: hookAttrs)
-            measuredRect = hookStr.boundingRect(
-                with: CGSize(width: textMaxW, height: 300.0),
-                options: [.usesLineFragmentOrigin, .usesFontLeading]
-            )
-        }
-
-        let hookRect = CGRect(
-            origin: layout.hook.origin,
-            size: CGSize(
-                width: textMaxW,
-                height: max(measuredRect.height + 20.0, 160.0 / 1080.0 * renderSize.height)
-            )
-        )
-        hookStr.draw(in: hookRect)
-
-        NSGraphicsContext.restoreGraphicsState()
     }
 }
 
@@ -648,48 +416,56 @@ final class LongformThumbnailExporter: Sendable {
     }
 }
 
-/// Главный генератор кинематографических обложек YouTube 1080p (SOLID: Facade & DIP)
+/// Проверка героя, композиция по бренду и экспорт обложки 1080p.
 final class LongformThumbnailGenerator: LongformThumbnailGeneratingProtocol, Sendable {
 
     private let candidateSelector: LongformThumbnailCandidateSelector
     private let composer: LongformThumbnailComposer
     private let exporter: LongformThumbnailExporter
+    private let verifier: ThumbnailSubjectVerifier?
 
-    init(
-        candidateSelector: LongformThumbnailCandidateSelector = LongformThumbnailCandidateSelector(),
-        composer: LongformThumbnailComposer = LongformThumbnailComposer(),
-        exporter: LongformThumbnailExporter = LongformThumbnailExporter()
-    ) {
-        self.candidateSelector = candidateSelector
-        self.composer = composer
-        self.exporter = exporter
+    init(candidateSelector: LongformThumbnailCandidateSelector = LongformThumbnailCandidateSelector(),
+         composer: LongformThumbnailComposer = LongformThumbnailComposer(),
+         exporter: LongformThumbnailExporter = LongformThumbnailExporter(),
+         verifier: ThumbnailSubjectVerifier? = nil) {
+        self.candidateSelector = candidateSelector; self.composer = composer
+        self.exporter = exporter; self.verifier = verifier
     }
 
-    func generateThumbnail(
-        sourceAsset: AVURLAsset,
-        segments: [TimeSegment],
-        concept: ThematicConcept,
-        movieTitle: String,
-        outputURL: URL
-    ) async throws -> URL {
-        let renderSize = CGSize(width: 1920, height: 1080)
+    func generateThumbnail(sourceAsset: AVURLAsset, segments: [TimeSegment], concept: ThematicConcept,
+                           movieTitle: String, outputURL: URL) async throws -> URL {
+        try await generateReviewedThumbnail(sourceAsset: sourceAsset, segments: segments, concept: concept,
+                                             movieTitle: movieTitle, outputURL: outputURL).url
+    }
 
-        // 1. Умный поиск лучшего драматического кадра через Vision и скоринг
-        let bestCandidate = try await candidateSelector.selectBestCandidate(
-            sourceAsset: sourceAsset,
-            segments: segments,
-            renderSize: renderSize
-        )
+    func generateReviewedThumbnail(sourceAsset: AVURLAsset, segments: [TimeSegment], concept: ThematicConcept,
+                                   movieTitle: String, outputURL: URL) async throws -> ReviewedThumbnail {
+        try await generateReviewedThumbnail(sourceAsset: sourceAsset, segments: segments,
+            concept: concept, movieTitle: movieTitle, outputURL: outputURL, avoidingTimes: [])
+    }
 
-        // 2. Кинематографическая компоновка кадра, градиентов и монументальной типографики
-        let composedImage = try composer.composeThumbnail(
-            candidate: bestCandidate,
-            concept: concept,
-            movieTitle: movieTitle,
-            renderSize: renderSize
-        )
+    func generateAlternativeReviewedThumbnail(sourceAsset: AVURLAsset, segments: [TimeSegment], concept: ThematicConcept,
+        movieTitle: String, outputURL: URL, avoidingTimes: [Double]) async throws -> ReviewedThumbnail {
+        try await generateReviewedThumbnail(sourceAsset: sourceAsset, segments: segments,
+            concept: concept, movieTitle: movieTitle, outputURL: outputURL, avoidingTimes: avoidingTimes)
+    }
 
-        // 3. Экспорт в финальный JPEG 1920x1080
-        return try exporter.export(image: composedImage, to: outputURL, quality: 0.94)
+    private func generateReviewedThumbnail(sourceAsset: AVURLAsset, segments: [TimeSegment], concept: ThematicConcept,
+        movieTitle: String, outputURL: URL, avoidingTimes: [Double]) async throws -> ReviewedThumbnail {
+        guard let verifier else { throw ThumbnailSelectionError.visionUnavailable }
+        let candidates = try await candidateSelector.rankedCandidates(sourceAsset: sourceAsset, segments: segments)
+        var (candidate, evidence) = try await verifier.select(
+            from: candidates, movieTitle: movieTitle, avoidingTimes: avoidingTimes)
+        let full = AVAssetImageGenerator(asset: sourceAsset)
+        full.appliesPreferredTrackTransform = true
+        full.maximumSize = CGSize(width: 1920, height: 1080)
+        full.requestedTimeToleranceBefore = .zero; full.requestedTimeToleranceAfter = .zero
+        let (image, _) = try await full.image(at: CMTime(seconds: candidate.time, preferredTimescale: 600))
+        candidate = ThumbnailCandidateFrame(time: candidate.time, image: image, faceBox: candidate.faceBox,
+            score: candidate.score, averageLuminance: candidate.averageLuminance, faceCount: candidate.faceCount)
+        let composed = try composer.composeThumbnail(candidate: candidate, concept: concept, movieTitle: movieTitle)
+        let url = try exporter.export(image: composed, to: outputURL)
+        DirectorRunLog.write("cover confirmed: leadingCast=\(evidence.leadingCast.joined(separator: ", ")) time=\(evidence.sourceTime) model=\(evidence.modelID)")
+        return ReviewedThumbnail(url: url, subject: evidence)
     }
 }

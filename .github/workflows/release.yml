@@ -31,7 +31,7 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Build Shortcast (Release, unsigned)
+      - name: Build КАДР & СЕНС (Release, unsigned)
         run: |
           xcodebuild \
             -project Shortcast.xcodeproj \
@@ -46,14 +46,14 @@ jobs:
       - name: Package .dmg
         run: |
           set -euo pipefail
-          APP="build/Build/Products/Release/Shortcast.app"
+          APP="build/Build/Products/Release/КАДР & СЕНС.app"
           test -d "$APP"
           STAGE="dist/dmg"
           mkdir -p "$STAGE"
           cp -R "$APP" "$STAGE/"
           ln -s /Applications "$STAGE/Applications"
           hdiutil create \
-            -volname "Shortcast" \
+            -volname "КАДР & СЕНС" \
             -srcfolder "$STAGE" \
             -ov -format UDZO \
             "dist/Shortcast.dmg"

@@ -113,6 +113,8 @@ final class LongformActTitleService: LongformActTitling, Sendable {
                 titled.title = proposal.title
                 if !proposal.dramaticBeat.isEmpty {
                     titled.dramaticBeat = String(proposal.dramaticBeat.prefix(Self.maxBeatChars))
+                } else {
+                    notes.append("акт \(index + 1): модель не дала dramaticBeat — лишається значення з плану")
                 }
                 titled.titleProvenance = ActTitleProvenance(
                     source: .llm,

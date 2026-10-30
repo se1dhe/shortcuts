@@ -2,13 +2,13 @@ import Foundation
 
 /// Упаковка и метаданные YouTube для длинного ролика Shortcast Cinema
 struct LongformYouTubeMetadata: Codable, Equatable, Sendable {
-    /// Вирусный кликбейтный, но глубокий заголовок от 2-го лица ("Ты...", "Иногда, чтобы...")
+    /// Заголовок конкретного эссе с названием фильма.
     var title: String
     
-    /// Философское описание-манифест из коротких смысловых абзацев + дисклеймер Fair Use
+    /// Хук, тезис и вывод эссе, главы, обсуждение и атрибуция исходного материала.
     var description: String
     
-    /// Высокочастотные и тематические теги
+    /// Keyword tags API: не хештеги описания.
     var tags: [String]
     
     /// Закрепленный комментарий с призывом к дискуссии
@@ -17,6 +17,14 @@ struct LongformYouTubeMetadata: Codable, Equatable, Sendable {
     /// Опрос для Telegram (если CTA содержит вопрос)
     var telegramPoll: TelegramPoll? = nil
     
+    /// Отдельно от keyword tags API: готовые токены для описания и копирования.
+    var hashtagTokens: [String]? = nil
+    var packagingVersion: Int? = nil
+    var hashtags: [String] {
+        hashtagTokens ?? Array(tags.prefix(5)).compactMap(LongformMetadataGenerator.hashtag)
+    }
+    var hashtagText: String { hashtags.joined(separator: " ") }
+
     struct TelegramPoll: Codable, Equatable, Sendable {
         let question: String
         let options: [String]
@@ -34,8 +42,8 @@ struct LongformYouTubeMetadata: Codable, Equatable, Sendable {
         self.pinnedComment = pinnedComment
     }
 
-    /// Стандартный дисклеймер добросовестного использования для длинных эссе
+    /// Нейтральная атрибуция; не заявление о гарантированной правовой защите.
     static let standardFairUseDisclaimer = """
-    Disclaimer: This video is intended for commentary, motivational and entertainment purposes only. It does not promote or encourage illegal, dangerous, harmful or unethical behavior. The material is edited and presented to discuss the themes, characters and ideas of the film.
+    Українське кіноесе з аналізом тем і персонажів фільму. Фрагменти використано для критичного обговорення; права на вихідні матеріали належать їхнім правовласникам.
     """
 }

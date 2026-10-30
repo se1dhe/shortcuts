@@ -10,6 +10,7 @@ if [[ -n "${CI:-}" ]]; then exit 0; fi
 if [[ -n "${ACTION:-}" && "${ACTION}" != "build" ]]; then exit 0; fi
 if [[ "${SHORTCAST_SKIP_INSTALL:-0}" == "1" ]]; then exit 0; fi
 
+PROJECT_ROOT="${SRCROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 SRC="${1:-}"
 
 # 1. Check if argument or environment passed a valid bundle
@@ -24,14 +25,18 @@ fi
 if [[ -z "$SRC" || ! -d "$SRC" ]]; then
   POSSIBLE_CANDIDATES=()
   for P in \
-    "$HOME"/Library/Developer/Xcode/DerivedData/Shortcast-*/Build/Products/Release/"Short Generator.app" \
-    "$HOME"/Library/Developer/Xcode/DerivedData/Shortcast-*/Build/Products/Debug/"Short Generator.app" \
-    ".derivedData/Build/Products/Release/Short Generator.app" \
-    ".derivedData/Build/Products/Debug/Short Generator.app" \
-    "build/Build/Products/Release/Short Generator.app" \
-    "build/Build/Products/Debug/Short Generator.app"
+    "$HOME"/Library/Developer/Xcode/DerivedData/Shortcast-*/Build/Products/Release/"КАДР & СЕНС.app" \
+    "$HOME"/Library/Developer/Xcode/DerivedData/Shortcast-*/Build/Products/Debug/"КАДР & СЕНС.app" \
+    "$PROJECT_ROOT/.derivedData/Build/Products/Release/КАДР & СЕНС.app" \
+    "$PROJECT_ROOT/.derivedData/Build/Products/Debug/КАДР & СЕНС.app" \
+    "$PROJECT_ROOT/build/Build/Products/Release/КАДР & СЕНС.app" \
+    "$PROJECT_ROOT/build/Build/Products/Debug/КАДР & СЕНС.app" \
+    "$PROJECT_ROOT/.build/Build/Products/Release/КАДР & СЕНС.app" \
+    "$PROJECT_ROOT/.build/Build/Products/Debug/КАДР & СЕНС.app" \
+    "$PROJECT_ROOT/build/Release/КАДР & СЕНС.app" \
+    "$PROJECT_ROOT/build/Debug/КАДР & СЕНС.app"
   do
-    if [[ -d "$P" ]]; then
+    if [[ -f "$P/Contents/Info.plist" && -x "$P/Contents/MacOS/КАДР & СЕНС" ]]; then
       POSSIBLE_CANDIDATES+=("$P")
     fi
   done
@@ -60,9 +65,15 @@ if [[ -z "$SRC" || ! -d "$SRC" ]]; then
   exit 0
 fi
 
-APP_NAME="$(basename "$SRC")"
+# Never replace the installed app with an incomplete or unrelated bundle.
+BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$SRC/Contents/Info.plist")
+if [[ "$BUNDLE_ID" != "app.shortcast.Shortcast" ]]; then
+  echo "error: install-app: unexpected bundle identifier: $BUNDLE_ID" >&2
+  exit 1
+fi
+APP_NAME="КАДР & СЕНС.app"
 DEST_DIR="/Applications"
-if [[ ! -w "$DEST_DIR" ]]; then
+if [[ ! -d "$DEST_DIR/$APP_NAME" && ! -w "$DEST_DIR" ]]; then
   DEST_DIR="$HOME/Applications"
   mkdir -p "$DEST_DIR"
 fi
@@ -70,9 +81,21 @@ fi
 DEST="$DEST_DIR/$APP_NAME"
 TMP="$DEST_DIR/.$APP_NAME.installing"
 
+# Remove the prior display-name bundle only after verifying it belongs to this app.
+for OLD in "/Applications/Short Generator.app" "$HOME/Applications/Short Generator.app"; do
+  [[ -d "$OLD" && "$OLD" != "$DEST" ]] || continue
+  OLD_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$OLD/Contents/Info.plist" 2>/dev/null || true)
+  if [[ "$OLD_ID" == "app.shortcast.Shortcast" ]]; then
+    echo "==> Removing previous branded bundle $OLD"
+    rm -rf "$OLD"
+  fi
+done
+
 echo "==> Installing $APP_NAME -> $DEST"
 rm -rf "$TMP"
 /usr/bin/ditto "$SRC" "$TMP"
+# Unit-test hosts are build artifacts, never part of the installed application.
+rm -rf "$TMP/Contents/PlugIns/ShortcastTests.xctest"
 rm -rf "$DEST"
 mv "$TMP" "$DEST"
 
@@ -81,43 +104,43 @@ echo "==> Ensuring ad-hoc code signature and permissions..."
 /usr/bin/xattr -cr "$DEST" || true
 /usr/bin/codesign --force --deep --sign - "$DEST" || true
 
-# Register with LaunchServices & unregister the DerivedData / intermediate copy to avoid duplicates in Launchpad
-LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-if [[ -x "$LSREGISTER" ]]; then
-  echo "==> Updating LaunchServices registration..."
-  if [[ "$SRC" != "$DEST" ]]; then
-    "$LSREGISTER" -u "$SRC" 2>/dev/null || true
-  fi
-  "$LSREGISTER" -f -trusted "$DEST" || true
-
-  # Xcode invokes its built-in 'RegisterWithLaunchServices' on the intermediate
-  # DerivedData product right as the target build completes.
-  # To prevent a duplicate placeholder icon in the app hub / Launchpad, spawn
-  # an asynchronous unregister watcher that runs after Xcode finishes.
-  (
-    sleep 2
-    if [[ -n "${SRC:-}" && "$SRC" != "$DEST" ]]; then
-      "$LSREGISTER" -u "$SRC" 2>/dev/null || true
-    fi
-    if [[ -d "$HOME/Library/Developer/Xcode/DerivedData" ]]; then
-      find "$HOME/Library/Developer/Xcode/DerivedData" -maxdepth 5 -name "$APP_NAME" -not -path "$DEST" -exec "$LSREGISTER" -u {} + 2>/dev/null || true
-    fi
-    "$LSREGISTER" -f -trusted "$DEST" 2>/dev/null || true
-  ) >/dev/null 2>&1 &
-fi
-touch "$DEST"
+# Clean all registrations belonging to this app, including deleted temporary
+# builds and malformed legacy products. The scheme repeats this synchronously
+# after Xcode's final RegisterWithLaunchServices task; no timing-based watcher.
+/usr/bin/python3 "$PROJECT_ROOT/scripts/register-installed-app.py" --installed "$DEST"
 
 # 4. Sync browser-publisher automation scripts to Application Support
-PUBLISHER_SRC="${SRCROOT:-.}/scripts/browser-publisher"
+PUBLISHER_SRC="$PROJECT_ROOT/scripts/browser-publisher"
 if [[ -d "$PUBLISHER_SRC" ]]; then
   PUBLISHER_DEST="$HOME/Library/Application Support/Shortcast/browser-publisher"
   mkdir -p "$PUBLISHER_DEST"
-  /usr/bin/rsync -a --exclude 'node_modules/.cache' "$PUBLISHER_SRC/" "$PUBLISHER_DEST/" || true
+  /usr/bin/rsync -a --delete --delete-excluded --exclude '/test/' --exclude 'node_modules/.cache' "$PUBLISHER_SRC/" "$PUBLISHER_DEST/" || true
   echo "✓ Synced browser automation scripts to $PUBLISHER_DEST"
 fi
 
 # Touch to notify Finder of the updated app bundle
 touch "$DEST"
+
+# Xcode's product bundles are needed for incremental builds. Keep them in place,
+# but hide them from normal Finder searches after installation so only the
+# installed copy is presented as the application.
+for STALE in \
+  "$PROJECT_ROOT"/.build/Build/Products/Debug/"$APP_NAME" \
+  "$PROJECT_ROOT"/.build/Build/Products/Release/"$APP_NAME" \
+  "$PROJECT_ROOT"/.derivedData/Build/Products/Debug/"$APP_NAME" \
+  "$PROJECT_ROOT"/.derivedData/Build/Products/Release/"$APP_NAME" \
+  "$PROJECT_ROOT"/build/Build/Products/Debug/"$APP_NAME" \
+  "$PROJECT_ROOT"/build/Build/Products/Release/"$APP_NAME" \
+  "$HOME"/Library/Developer/Xcode/DerivedData/Shortcast-*/Build/Products/Debug/"$APP_NAME" \
+  "$HOME"/Library/Developer/Xcode/DerivedData/Shortcast-*/Build/Products/Release/"$APP_NAME"
+do
+  [[ -d "$STALE" && "$STALE" != "$DEST" ]] || continue
+  STALE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$STALE/Contents/Info.plist" 2>/dev/null || true)
+  if [[ "$STALE_ID" == "app.shortcast.Shortcast" ]]; then
+    /usr/bin/chflags hidden "$STALE"
+    echo "✓ Hid Xcode build product $STALE"
+  fi
+done
 
 echo "✓ Successfully installed and registered $APP_NAME in $DEST_DIR"
 

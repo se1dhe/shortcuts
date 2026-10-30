@@ -30,7 +30,9 @@ struct SceneDetectionService {
     static func detectScenes(
         in url: URL,
         threshold: Double = 0.3,
-        sampleRate: Double = 2.0
+        sampleRate: Double = 2.0,
+        range: TimeSegment? = nil,
+        spatialThreshold: Double? = nil
     ) async throws -> [Scene] {
         let asset = AVURLAsset(url: url)
         
@@ -39,6 +41,12 @@ struct SceneDetectionService {
         }
         
         let assetReader = try AVAssetReader(asset: asset)
+        let assetDuration = try await asset.load(.duration).seconds
+        let analysisStart = max(0, range?.start ?? 0)
+        let analysisEnd = min(assetDuration, range?.end ?? assetDuration)
+        guard analysisEnd > analysisStart, sampleRate > 0 else { return [] }
+        assetReader.timeRange = CMTimeRange(start: CMTime(seconds: analysisStart, preferredTimescale: 600),
+            end: CMTime(seconds: analysisEnd, preferredTimescale: 600))
         let outputSettings: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             kCVPixelBufferWidthKey as String: 160,
@@ -48,16 +56,19 @@ struct SceneDetectionService {
         let trackOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: outputSettings)
         assetReader.add(trackOutput)
         assetReader.startReading()
+        defer { assetReader.cancelReading() }
         
         var scenes: [Scene] = []
-        var lastSceneStart: Double = 0
+        var lastSceneStart = analysisStart
         var previousHistogram: [Float]?
+        var previousThumbnail: [UInt8]?
         
         let sampleInterval = CMTime(seconds: 1.0 / sampleRate, preferredTimescale: 600)
-        var nextSampleTime = CMTime.zero
-        let duration = try await asset.load(.duration).seconds
+        var nextSampleTime = CMTime(seconds: analysisStart, preferredTimescale: 600)
+        let duration = analysisEnd
         
         while let sampleBuffer = trackOutput.copyNextSampleBuffer() {
+            try Task.checkCancellation()
             let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
             
             if presentationTime < nextSampleTime {
@@ -71,15 +82,22 @@ struct SceneDetectionService {
             }
             
             let currentHistogram = computeHistogram(for: pixelBuffer)
+            let thumbnail = spatialThreshold == nil ? nil : computeThumbnail(for: pixelBuffer)
             
             if let prev = previousHistogram {
                 let diff = computeL1Distance(hist1: prev, hist2: currentHistogram)
                 
-                // Normalizing diff (max diff is approx 160*90 * 3) -> adjust logic based on normalization
-                let maxDiff: Float = 160.0 * 90.0 * 3.0
+                // Readers may ignore requested buffer dimensions. Normalize
+                // by the actual sampled pixel count, not an assumed 160×90.
+                let maxDiff = max(1, currentHistogram.reduce(0, +))
                 let normalizedDiff = Double(diff / maxDiff)
                 
-                if normalizedDiff > threshold {
+                let spatialDiff: Double
+                if let thumbnail, let previousThumbnail, thumbnail.count == previousThumbnail.count {
+                    spatialDiff = zip(thumbnail, previousThumbnail).reduce(0.0) { $0 + abs(Double($1.0) - Double($1.1)) }
+                        / Double(max(1, thumbnail.count) * 255)
+                } else { spatialDiff = 0 }
+                if normalizedDiff > threshold || spatialThreshold.map({ spatialDiff > $0 }) == true {
                     let currentTime = presentationTime.seconds
                     scenes.append(Scene(start: lastSceneStart, end: currentTime))
                     lastSceneStart = currentTime
@@ -87,6 +105,7 @@ struct SceneDetectionService {
             }
             
             previousHistogram = currentHistogram
+            previousThumbnail = thumbnail
         }
         
         if lastSceneStart < duration {
@@ -107,9 +126,9 @@ struct SceneDetectionService {
         
         var histogram = [Float](repeating: 0, count: 256 * 3)
         
-        for y in 0..<height {
+        for y in stride(from: 0, to: height, by: max(1, height / 90)) {
             let rowData = baseAddress.advanced(by: y * bytesPerRow)
-            for x in 0..<width {
+            for x in stride(from: 0, to: width, by: max(1, width / 160)) {
                 let pixel = rowData.advanced(by: x * 4).assumingMemoryBound(to: UInt8.self)
                 let b = Int(pixel[0])
                 let g = Int(pixel[1])
@@ -122,6 +141,25 @@ struct SceneDetectionService {
         }
         
         return histogram
+    }
+
+    /// Layout changes can be a hard cut even when the palette is identical
+    /// (e.g. reverse shots in the same room). Compare a small spatial grid too.
+    private static func computeThumbnail(for pixelBuffer: CVPixelBuffer) -> [UInt8] {
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return [] }
+        let width = CVPixelBufferGetWidth(pixelBuffer), height = CVPixelBufferGetHeight(pixelBuffer)
+        let stride = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        var bytes: [UInt8] = []; bytes.reserveCapacity(32 * 18 * 3)
+        for y in 0..<18 {
+            for x in 0..<32 {
+                let pixel = base.advanced(by: min(height - 1, y * height / 18) * stride
+                    + min(width - 1, x * width / 32) * 4).assumingMemoryBound(to: UInt8.self)
+                bytes.append(contentsOf: [pixel[0], pixel[1], pixel[2]])
+            }
+        }
+        return bytes
     }
     
     private static func computeL1Distance(hist1: [Float], hist2: [Float]) -> Float {

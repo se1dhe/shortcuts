@@ -7,10 +7,12 @@ struct ThematicConceptSelectionSheet: View {
     let concepts: [ThematicConcept]
     let aiReasoning: String?
     let source: ThematicSource
-    /// План эссе от Director: варианты хука, CTA, целевой хронометраж.
+    /// План эссе от Director: варианты хука и CTA.
     let initialEssayPlan: EssayPlan?
     /// Идёт ли сейчас настоящий анализ Director — состояние модели, а не таймера.
     let isRegenerating: Bool
+    let planningError: String?
+    let cancelTitle: String
     let onSelect: (ThematicConcept, String, LongformAudioSettings, EssayPlan) -> Void
     let onCancel: () -> Void
     let onRegenerate: (() -> Void)?
@@ -21,10 +23,7 @@ struct ThematicConceptSelectionSheet: View {
     @State private var customTitle: String = ""
     @State private var showCustomInput: Bool = false
 
-    // Хук эссе: вариант модели или свой текст (0:00–0:09)
-    @State private var selectedHookIndex: Int = 0
-    @State private var customHook: String = ""
-    @AppStorage("shortcast.longform.essayDurationMinutes") private var essayDurationMinutes: Int = 11
+    // Хук выбирает модель после проверки темы и сцен.
 
     // Аудиомастеринг и звукорежиссура Shortcast Cinema (автоматически сохраняются в UserDefaults)
     @AppStorage("shortcast.longform.dialogueFocusEnabled") private var dialogueFocusEnabled: Bool = true
@@ -70,6 +69,8 @@ struct ThematicConceptSelectionSheet: View {
         source: ThematicSource = .unknown,
         isRegenerating: Bool = false,
         essayPlan: EssayPlan? = nil,
+        planningError: String? = nil,
+        cancelTitle: String = "Отмена",
         onSelect: @escaping (ThematicConcept, String, LongformAudioSettings, EssayPlan) -> Void,
         onCancel: @escaping () -> Void,
         onRegenerate: (() -> Void)? = nil
@@ -80,6 +81,8 @@ struct ThematicConceptSelectionSheet: View {
         self.aiReasoning = aiReasoning
         self.source = source
         self.initialEssayPlan = essayPlan
+        self.planningError = planningError
+        self.cancelTitle = cancelTitle
         self.isRegenerating = isRegenerating
         self.onSelect = onSelect
         self.onCancel = onCancel
@@ -88,19 +91,21 @@ struct ThematicConceptSelectionSheet: View {
         let primaryId = concepts.first(where: { $0.isPrimaryChoice })?.id ?? concepts.first?.id
         self._selectedConceptId = State(initialValue: primaryId)
 
-        let pickedHook = essayPlan?.selectedHook
-        let hookIndex = pickedHook.flatMap { hook in
-            essayPlan?.hookVariants.firstIndex(where: { $0.text == hook.text })
-        } ?? 0
-        self._selectedHookIndex = State(initialValue: hookIndex)
-        self._customHook = State(initialValue: pickedHook?.source == .manual ? pickedHook?.text ?? "" : "")
+
+    }
+
+    /// Шапка отвечает на вопрос «кто автор той темы, что уйдёт в эссе», а не
+    /// «откуда взялся разбор»: выбрали карточку или вписали своё слово — бейдж
+    /// обязан показывать этого автора, иначе «ВЫБОР ИИ» стоит над нашей кнопкой.
+    private var effectiveProvenance: ThematicSource {
+        conceptForConfirmation?.source ?? source
     }
 
     private var provenance: (header: String, badge: String, badgeIcon: String, reasoning: String, reasoningIcon: String, warning: String?) {
-        switch source {
+        switch effectiveProvenance {
         case .llm:
             return (
-                "Нейросеть проанализировала диалоги и выбрала фундаментальную тему для 8–15-минутного кино-эссе:",
+                "Нейросеть проанализировала диалоги и выбрала фундаментальную тему для 4–8-минутного кино-эссе:",
                 "ВЫБОР ИИ • ГЛАВНАЯ ТЕМА ЭССЕ",
                 "sparkles",
                 "Почему модель выбрала именно эту тему:",
@@ -109,7 +114,7 @@ struct ThematicConceptSelectionSheet: View {
             )
         case .manual:
             return (
-                "Тему выбрали вы, а не модель — это фиксированный лейтмотив для 8–15-минутного кино-эссе:",
+                "Тему выбрали вы, а не модель — это фиксированный лейтмотив для 4–8-минутного кино-эссе:",
                 "ВЫБРАНО ВАМИ • ГЛАВНАЯ ТЕМА ЭССЕ",
                 "hand.tap.fill",
                 "Почему вы выбрали эту тему:",
@@ -119,7 +124,7 @@ struct ThematicConceptSelectionSheet: View {
         case .unknown:
             let base = "Провенанс темы не записан: она могла прийти из проекта, сохранённого до учёта источников, поэтому мы не утверждаем, что её выбрала модель."
             return (
-                "Источник этой темы не записан, поэтому сказать, кто её выбрал, невозможно. Ниже тема, на которой стоит собрать 8–15-минутное кино-эссе:",
+                "Источник этой темы не записан, поэтому сказать, кто её выбрал, невозможно. Ниже тема, на которой стоит собрать 4–8-минутное кино-эссе:",
                 "ИСТОЧНИК НЕ ЗАПИСАН • ГЛАВНАЯ ТЕМА ЭССЕ",
                 "questionmark.circle",
                 "Обоснование темы (кто её выбрал — не записано):",
@@ -154,12 +159,17 @@ struct ThematicConceptSelectionSheet: View {
     var activeSelection: ThematicConcept? {
         if showCustomInput && !customWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let word = customWord.trimmingCharacters(in: .whitespacesAndNewlines)
-            let title = customTitle.isEmpty ? "Ты никогда не поймёшь это, пока не потеряешь всё." : customTitle
+            // Ручная тема получает только слова пользователя. Слоган, тезис и
+            // заголовок от себя экран не дописывает: пустая строка здесь значит
+            // «текста нет», а не «мы сейчас что-нибудь подставим». Пустой
+            // `suggestedTitle` честно собирается в `buildPrrodanTitle` из слова и
+            // названия фильма, а пустые `tagline`/`philosophicalPremise`
+            // потребитель обязан показать пустыми, а не выдуманными.
             return ThematicConcept(
                 word: word,
-                tagline: "Сквозное эссе вокруг идеи «\(word)».",
-                philosophicalPremise: "Исследование цены успеха и внутренней силы через тему «\(word)».",
-                suggestedTitle: title,
+                tagline: "",
+                philosophicalPremise: "",
+                suggestedTitle: customTitle.trimmingCharacters(in: .whitespacesAndNewlines),
                 accentColorHex: "#F5D020",
                 source: .manual
             )
@@ -167,8 +177,14 @@ struct ThematicConceptSelectionSheet: View {
         return concepts.first(where: { $0.id == selectedConceptId }) ?? primaryConcept ?? concepts.first
     }
 
+    private var applicableEssayPlan: EssayPlan? {
+        guard !showCustomInput, !userPickedAlternativeCard else { return nil }
+        return initialEssayPlan
+    }
+
     private var userPickedAlternativeCard: Bool {
         guard let selectedConceptId, let primaryId = primaryConcept?.id else { return false }
+        guard concepts.contains(where: { $0.id == selectedConceptId }) else { return false }
         return selectedConceptId != primaryId
     }
 
@@ -220,13 +236,13 @@ struct ThematicConceptSelectionSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 0) {
             // Заголовок и блок названия фильма
             VStack(spacing: 10) {
                 HStack(spacing: 12) {
                     Image(systemName: "film.fill")
                         .font(.title2)
-                        .foregroundStyle(.yellow)
+                        .foregroundStyle(StudioTheme.accent)
                     Text("Центральная тема кино-эссе (Shortcast Cinema)")
                         .font(.title2.weight(.bold))
 
@@ -245,7 +261,7 @@ struct ThematicConceptSelectionSheet: View {
                             .font(.caption.weight(.semibold))
                         }
                         .buttonStyle(.bordered)
-                        .tint(.yellow)
+                        .tint(StudioTheme.accent)
                         .disabled(isRegenerating)
                         .help("Повторно запустить глубокий анализ сценария через нейросеть Director")
                     }
@@ -287,10 +303,23 @@ struct ThematicConceptSelectionSheet: View {
                         .frame(maxWidth: 620)
                 }
             }
+            .padding(.horizontal, 22)
             .padding(.top, 14)
+            .padding(.bottom, 10)
 
+            if let planningError {
+                Label(planningError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 22)
+                    .padding(.bottom, 10)
+            }
+
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(spacing: 16) {
             // Сетка карточек концептов
-            ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 14) {
                     if concepts.isEmpty {
                         // Темы нет — и придумывать её за модель мы не будем.
@@ -325,8 +354,8 @@ struct ThematicConceptSelectionSheet: View {
                                     }
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 4)
-                                    .background(Color.yellow.opacity(0.20))
-                                    .foregroundStyle(.yellow)
+                                    .background(StudioTheme.accent.opacity(0.20))
+                                    .foregroundStyle(StudioTheme.accent)
                                     .clipShape(Capsule())
 
                                     if isGenerated {
@@ -343,7 +372,7 @@ struct ThematicConceptSelectionSheet: View {
 
                                     Text("РЕКОМЕНДОВАНО ДЛЯ YOUTUBE")
                                         .font(.system(size: 10, weight: .heavy))
-                                        .foregroundStyle(Color.yellow.opacity(0.85))
+                                        .foregroundStyle(StudioTheme.accent.opacity(0.85))
                                 }
 
                                 // Основная строка концепта
@@ -355,7 +384,7 @@ struct ThematicConceptSelectionSheet: View {
 
                                         Text(primary.suggestedTitle)
                                             .font(.caption.weight(.bold))
-                                            .foregroundStyle(Color(hex: primary.accentColorHex))
+                                            .foregroundStyle(StudioTheme.accent)
                                     }
                                     .frame(width: 290, alignment: .leading)
 
@@ -367,17 +396,22 @@ struct ThematicConceptSelectionSheet: View {
                                             .font(.subheadline.weight(.bold))
                                             .foregroundStyle(.primary)
 
-                                        Text(primary.philosophicalPremise)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(2)
+                                        // Пустой тезис не рисуем: пустая строка под
+                                        // слоганом читается как баг вёрстки, а не как
+                                        // «модель его не написала».
+                                        if !primary.philosophicalPremise.isEmpty {
+                                            Text(primary.philosophicalPremise)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(2)
+                                        }
                                     }
 
                                     Spacer()
 
                                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                                         .font(.title)
-                                        .foregroundStyle(isSelected ? .yellow : .secondary.opacity(0.4))
+                                        .foregroundStyle(isSelected ? StudioTheme.accent : .secondary.opacity(0.4))
                                 }
 
                                 // Драматургический разбор выбранной темы
@@ -385,11 +419,11 @@ struct ThematicConceptSelectionSheet: View {
                                     HStack(alignment: .top, spacing: 10) {
                                         Image(systemName: provenance.reasoningIcon)
                                             .font(.subheadline)
-                                            .foregroundStyle(.yellow)
+                                            .foregroundStyle(StudioTheme.accent)
                                         VStack(alignment: .leading, spacing: 3) {
                                             Text(provenance.reasoning)
                                                 .font(.caption.weight(.bold))
-                                                .foregroundStyle(.yellow)
+                                                .foregroundStyle(StudioTheme.accent)
                                             Text(reasoning)
                                                 .font(.caption)
                                                 .foregroundStyle(.primary.opacity(0.95))
@@ -404,18 +438,18 @@ struct ThematicConceptSelectionSheet: View {
                                     )
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 8)
-                                            .stroke(Color.yellow.opacity(0.35), lineWidth: 1)
+                                            .stroke(StudioTheme.accent.opacity(0.35), lineWidth: 1)
                                     )
                                 }
                             }
                             .padding(14)
                             .background(
                                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .fill(isSelected ? Color.yellow.opacity(0.14) : Color(nsColor: .controlBackgroundColor))
+                                    .fill(isSelected ? StudioTheme.accent.opacity(0.14) : StudioTheme.raised)
                             )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .stroke(isSelected ? Color.yellow : Color.yellow.opacity(0.4), lineWidth: isSelected ? 2.5 : 1.2)
+                                    .stroke(isSelected ? StudioTheme.accent : StudioTheme.accent.opacity(0.4), lineWidth: isSelected ? 2.5 : 1.2)
                             )
                         }
                         .buttonStyle(.plain)
@@ -460,7 +494,7 @@ struct ThematicConceptSelectionSheet: View {
 
                                             Text(concept.suggestedTitle)
                                                 .font(.caption.weight(.medium))
-                                                .foregroundStyle(Color(hex: concept.accentColorHex))
+                                                .foregroundStyle(StudioTheme.accent)
                                         }
                                         .frame(width: 290, alignment: .leading)
 
@@ -472,26 +506,28 @@ struct ThematicConceptSelectionSheet: View {
                                                 .font(.subheadline.weight(.semibold))
                                                 .foregroundStyle(.primary)
 
-                                            Text(concept.philosophicalPremise)
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                                .lineLimit(2)
+                                            if !concept.philosophicalPremise.isEmpty {
+                                                Text(concept.philosophicalPremise)
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                                    .lineLimit(2)
+                                            }
                                         }
 
                                         Spacer()
 
                                         Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                                             .font(.title2)
-                                            .foregroundStyle(isSelected ? .yellow : .secondary.opacity(0.4))
+                                            .foregroundStyle(isSelected ? StudioTheme.accent : .secondary.opacity(0.4))
                                     }
                                     .padding(12)
                                     .background(
                                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                            .fill(isSelected ? Color.yellow.opacity(0.12) : Color(nsColor: .controlBackgroundColor))
+                                            .fill(isSelected ? StudioTheme.accent.opacity(0.12) : StudioTheme.raised)
                                     )
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                            .stroke(isSelected ? Color.yellow : Color.secondary.opacity(0.15), lineWidth: isSelected ? 2 : 1)
+                                            .stroke(isSelected ? StudioTheme.accent : StudioTheme.line, lineWidth: isSelected ? 2 : 1)
                                     )
                                 }
                                 .buttonStyle(.plain)
@@ -506,7 +542,7 @@ struct ThematicConceptSelectionSheet: View {
                         } label: {
                             HStack {
                                 Image(systemName: showCustomInput ? "chevron.down" : "plus.circle.fill")
-                                    .foregroundStyle(.yellow)
+                                    .foregroundStyle(StudioTheme.accent)
                                 Text("Ввести своё философское слово/тему вручную")
                                     .font(.subheadline.weight(.medium))
                                 Spacer()
@@ -519,8 +555,15 @@ struct ThematicConceptSelectionSheet: View {
                                 TextField("Главное слово (например: Честь, Гордость, Гнев)", text: $customWord)
                                     .textFieldStyle(.roundedBorder)
 
-                                TextField("Заголовок YouTube от 2-го лица (например: Ты поймёшь это...)", text: $customTitle)
+                                TextField("Заголовок YouTube для этого эссе", text: $customTitle)
                                     .textFieldStyle(.roundedBorder)
+
+                                // Честно говорим, чего у ручной темы нет и почему.
+                                Text("Слогана и философского тезиса у этой темы не будет: их пишет только модель, а экран за модель ничего не сочиняет. Заголовок возьмём из вашего поля; если оно пустое, публикация получит название из слова темы и имени фильма. Тема помечена как выбранная вами, а не моделью.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .padding(12)
                             .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.08)))
@@ -529,70 +572,29 @@ struct ThematicConceptSelectionSheet: View {
                     .padding(.top, 4)
                 }
                 .padding(.horizontal, 6)
-            }
-            .frame(maxHeight: 285)
 
-            // Хук эссе: модель предлагает варианты, пользователь выбирает или вписывает свой
+            // Один явный выбор модели, а не меню и не нулевой пункт массива.
             VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Хук (0:00–0:40)")
-                        .font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Text("Кликните вариант или впишите свой")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                let variants = initialEssayPlan?.hookVariants ?? []
-                if !variants.isEmpty {
-                    HStack(spacing: 8) {
-                        ForEach(Array(variants.enumerated()), id: \.offset) { index, variant in
-                            Button {
-                                selectedHookIndex = index
-                                customHook = ""
-                            } label: {
-                                Text(variant.text)
-                                    .font(.caption)
-                                    .multilineTextAlignment(.leading)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(8)
-                            }
-                            .buttonStyle(.plain)
-                            .background(RoundedRectangle(cornerRadius: 8)
-                                .fill(selectedHookIndex == index && customHook.isEmpty
-                                      ? Color.yellow.opacity(0.18) : Color.secondary.opacity(0.06)))
-                            .overlay(RoundedRectangle(cornerRadius: 8)
-                                .stroke(selectedHookIndex == index && customHook.isEmpty
-                                        ? Color.yellow.opacity(0.7) : Color.clear))
-                        }
+                Label("Хук, выбранный моделью", systemImage: "sparkles")
+                    .font(.subheadline.weight(.semibold))
+                if let hook = applicableEssayPlan?.selectedHook, hook.source == .llm {
+                    Text(hook.text).font(.body).textSelection(.enabled)
+                    if let reason = applicableEssayPlan?.hookReason, !reason.isEmpty {
+                        Text(reason).font(.caption).foregroundStyle(.secondary)
                     }
+                } else {
+                    Text("Модель определит один подходящий хук при анализе выбранной темы.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                TextField("Свой хук (1–2 предложения)", text: $customHook, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(1...3)
-                Text("Хук задаёт обещание эссе. Модель предложила варианты из диалогов; свой текст заменит их.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(10)
             .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.05)))
 
-            // Целевой хронометраж эссе
-            HStack(spacing: 10) {
-                Text("Хронометраж:")
-                    .font(.subheadline.weight(.semibold))
-                Picker("", selection: $essayDurationMinutes) {
-                    Text("8 мин").tag(8)
-                    Text("10 мин").tag(10)
-                    Text("11 мин").tag(11)
-                    Text("12 мин").tag(12)
-                    Text("15 мин").tag(15)
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 360)
-                Spacer()
-            }
-            .padding(10)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.05)))
+            // Хронометраж эссе не выбирается: он растёт из выбранной темы
+            Text("Хронометраж не выбирается: он рождается из темы — от 4:00 до 8:00.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
 
             Divider()
 
@@ -602,7 +604,7 @@ struct ThematicConceptSelectionSheet: View {
                     HStack(spacing: 8) {
                         Image(systemName: "waveform.badge.magnifyingglass")
                             .font(.headline)
-                            .foregroundStyle(.yellow)
+                            .foregroundStyle(StudioTheme.accent)
                         Text("Звукорежиссура и аудиомастеринг")
                             .font(.headline)
                     }
@@ -632,8 +634,8 @@ struct ThematicConceptSelectionSheet: View {
                                     .font(.system(size: 9, weight: .black))
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
-                                    .background(Color.yellow.opacity(0.2))
-                                    .foregroundStyle(.yellow)
+                                    .background(StudioTheme.accent.opacity(0.2))
+                                    .foregroundStyle(StudioTheme.accent)
                                     .clipShape(Capsule())
                             }
                             Text("Приглушать оригинальную музыку фильма, сохраняя чёткие голоса актеров дубляжа")
@@ -654,7 +656,7 @@ struct ThematicConceptSelectionSheet: View {
                                 .frame(width: 85)
                             Text("-\(Int(round(originalMusicDucking * 100)))%")
                                 .font(.caption.monospacedDigit().weight(.bold))
-                                .foregroundStyle(.yellow)
+                                .foregroundStyle(StudioTheme.accent)
                                 .frame(width: 50, alignment: .trailing)
                         }
                         .help("Уровень приглушения фоновой музыки и шумов оригинального фильма (по умолчанию -82%)")
@@ -709,7 +711,7 @@ struct ThematicConceptSelectionSheet: View {
                                 }
                             }
                             .buttonStyle(.bordered)
-                            .tint(customAudioURL != nil ? .yellow : .secondary)
+                            .tint(customAudioURL != nil ? StudioTheme.accent : .secondary)
 
                             if customAudioURL != nil {
                                 Button {
@@ -732,7 +734,7 @@ struct ThematicConceptSelectionSheet: View {
                                 .font(.subheadline.weight(.medium))
                             }
                             .buttonStyle(.bordered)
-                            .tint(previewController.isPlaying ? .yellow : .secondary)
+                            .tint(previewController.isPlaying ? StudioTheme.accent : .secondary)
                             .disabled(resolvedMusicURL == nil)
 
                             Spacer()
@@ -789,11 +791,16 @@ struct ThematicConceptSelectionSheet: View {
             .padding(10)
             .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.05)))
 
+                }
+                .padding(.horizontal, 22)
+                .padding(.vertical, 12)
+            }
+
             Divider()
 
             // Кнопки управления
             HStack(spacing: 16) {
-                Button("Отмена", role: .cancel) {
+                Button(cancelTitle, role: .cancel) {
                     previewController.stop()
                     onCancel()
                 }
@@ -817,35 +824,35 @@ struct ThematicConceptSelectionSheet: View {
                             antiCopyrightEnabled: antiCopyrightEnabled,
                             antiCopyrightPreset: antiCopyrightPreset
                         )
-                        let variants = initialEssayPlan?.hookVariants ?? []
-                        let chosenHook: String? = customHook.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            ? (variants.indices.contains(selectedHookIndex) ? variants[selectedHookIndex].text : variants.first?.text)
-                            : customHook
-                        let plan = (initialEssayPlan ?? EssayPlan()).confirming(
-                            hookText: chosenHook,
-                            ctaText: initialEssayPlan?.chosenCTA,
-                            targetDuration: Double(essayDurationMinutes) * 60.0
-                        )
+                        let plan = applicableEssayPlan ?? EssayPlan()
                         onSelect(chosen, finalTitle, audioSettings, plan)
                     }
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "wand.and.stars")
-                        Text("Смонтировать кино-эссе (~\(essayDurationMinutes) мин)")
+                        Text("Смонтировать кино-эссе (4:00–8:00)")
                     }
                     .font(.headline)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.yellow)
+                .tint(StudioTheme.accent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(activeSelection == nil)
             }
-            .padding(.bottom, 8)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 12)
         }
-        .padding(22)
         .frame(minWidth: 780, minHeight: 640)
+        .background(StudioTheme.background)
+        .preferredColorScheme(.dark)
+        .tint(StudioTheme.accent)
+        .onChange(of: concepts.map(\.id)) { _, ids in
+            if let selectedConceptId, !ids.contains(selectedConceptId) {
+                self.selectedConceptId = primaryConcept?.id
+            }
+        }
         .onChange(of: selectedPresetIndex) { _, _ in
             if previewController.isPlaying, let url = resolvedMusicURL {
                 previewController.play(url: url, volume: Float(ambientVolume))

@@ -45,6 +45,11 @@ struct EditableActModel: Identifiable, Equatable {
     var titleProvenance: ActTitleProvenance?
     var scenes: [EditableSceneSegment]
 
+    /// Название акта в глазах UI — то же единственное правило, что у `LongformAct`:
+    /// отсутствие поля это `.unknown`, а не «его вывела модель». Своя формулировка
+    /// с дефолтом позволяла бы редактору показывать другую метку, чем экран результата.
+    var effectiveTitleSource: ActTitleSource { titleProvenance?.source ?? .unknown }
+
     var duration: Double {
         scenes.reduce(0.0) { $0 + $1.duration }
     }
@@ -68,6 +73,7 @@ struct LongformActEditorView: View {
     let movieTitle: String
     let transcriptSegments: [TranscriptSegment]
     let sourceURL: URL?
+    let coldOpenEnabled: Bool
     let onApply: (LongformNarrativeArc) -> Void
     let onCancel: () -> Void
 
@@ -76,8 +82,12 @@ struct LongformActEditorView: View {
     @State private var sourceDuration: Double = .infinity
     @State private var previewPlayer: AVPlayer?
     @State private var previewStopTask: Task<Void, Never>?
+    @State private var publicationTitle = ""
+    @State private var hookText = ""
+    @State private var conclusionText = ""
+    @State private var ctaText = ""
 
-    private let minSceneDuration: Double = 3.0
+    private let minSceneDuration = EssayDurationPolicy.sceneLength.lowerBound
 
     init(
         arc: LongformNarrativeArc,
@@ -85,6 +95,7 @@ struct LongformActEditorView: View {
         movieTitle: String,
         transcriptSegments: [TranscriptSegment],
         sourceURL: URL? = nil,
+        coldOpenEnabled: Bool = true,
         onApply: @escaping (LongformNarrativeArc) -> Void,
         onCancel: @escaping () -> Void
     ) {
@@ -93,16 +104,24 @@ struct LongformActEditorView: View {
         self.movieTitle = movieTitle
         self.transcriptSegments = transcriptSegments
         self.sourceURL = sourceURL
+        self.coldOpenEnabled = coldOpenEnabled
         self.onApply = onApply
         self.onCancel = onCancel
     }
 
     private var totalDuration: Double {
-        editedActs.reduce(0.0) { $0 + $1.duration }
+        var candidate = arc
+        candidate.acts = editedActs.map { act in
+            LongformAct(type: act.type, title: act.title, dramaticBeat: act.dramaticBeat,
+                        segments: act.scenes.map { TimeSegment(start: $0.start, end: $0.end) })
+        }
+        candidate.conclusionText = conclusionText
+        candidate.ctaText = ctaText
+        return LongformTimeline(arc: candidate, coldOpenEnabled: coldOpenEnabled).duration
     }
 
     private var originalTotalDuration: Double {
-        arc.totalDuration
+        LongformTimeline(arc: arc, coldOpenEnabled: coldOpenEnabled).duration
     }
 
     private var totalDiffSeconds: Double {
@@ -130,7 +149,9 @@ struct LongformActEditorView: View {
             }
         }
         .frame(minWidth: 1040, minHeight: 700)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(StudioTheme.background)
+        .preferredColorScheme(.dark)
+        .tint(StudioTheme.accent)
         .onAppear {
             loadInitialActs()
             preparePreviewPlayer()
@@ -165,8 +186,8 @@ struct LongformActEditorView: View {
                         .font(.caption.weight(.bold))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color.yellow.opacity(0.18), in: Capsule())
-                        .foregroundStyle(.yellow)
+                        .background(StudioTheme.accent.opacity(0.18), in: Capsule())
+                        .foregroundStyle(StudioTheme.accent)
 
                     if totalEditedCount > 0 {
                         Text("Изменено актов: \(totalEditedCount)")
@@ -205,7 +226,7 @@ struct LongformActEditorView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.1)))
+                .background(RoundedRectangle(cornerRadius: 8).fill(StudioTheme.raised))
 
                 Button {
                     resetAllActs()
@@ -228,12 +249,14 @@ struct LongformActEditorView: View {
                     .padding(.vertical, 6)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.yellow)
+                .tint(StudioTheme.accent)
                 .keyboardShortcut(.defaultAction)
+                .disabled(editingProblem != nil)
             }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
+        .background(StudioTheme.panel)
     }
 
     // MARK: - Act Tabs Bar
@@ -249,14 +272,14 @@ struct LongformActEditorView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(isSelected ? Color.yellow : (act.isEdited ? Color.green : Color.secondary.opacity(0.4)))
+                            .fill(isSelected ? StudioTheme.accent : (act.isEdited ? StudioTheme.success : Color.secondary.opacity(0.4)))
                             .frame(width: 7, height: 7)
 
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 4) {
                                 Text("АКТ \(idx + 1)")
                                     .font(.caption2.weight(.black))
-                                    .foregroundStyle(isSelected ? .yellow : .secondary)
+                                    .foregroundStyle(isSelected ? StudioTheme.accent : .secondary)
 
                                 if act.isEdited {
                                     Text("✓")
@@ -288,11 +311,11 @@ struct LongformActEditorView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(isSelected ? Color.yellow.opacity(0.12) : Color.secondary.opacity(0.06))
+                            .fill(isSelected ? StudioTheme.accent.opacity(0.12) : StudioTheme.panel)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(isSelected ? Color.yellow.opacity(0.4) : Color.clear, lineWidth: 1)
+                            .strokeBorder(isSelected ? StudioTheme.accent.opacity(0.45) : StudioTheme.line, lineWidth: 1)
                     )
                 }
                 .buttonStyle(.plain)
@@ -300,7 +323,7 @@ struct LongformActEditorView: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 8)
-        .background(Color.secondary.opacity(0.03))
+        .background(StudioTheme.panel)
     }
 
     // MARK: - Act Detail Editor
@@ -311,13 +334,39 @@ struct LongformActEditorView: View {
 
         ScrollView(.vertical, showsIndicators: true) {
             VStack(alignment: .leading, spacing: 16) {
+                DisclosureGroup("Хук, вывод и текст публикации") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextField("Название YouTube", text: $publicationTitle)
+                        let suspicious = UkrainianTextReview.suspiciousWords(in: publicationTitle)
+                        if !suspicious.isEmpty {
+                            Text("Проверьте написание: " + suspicious.joined(separator: ", "))
+                                .font(.caption).foregroundStyle(.orange)
+                        }
+                        TextField("Вступительный вопрос", text: $hookText)
+                        TextField("Вывод эссе", text: $conclusionText)
+                        TextField("Призыв к обсуждению", text: $ctaText)
+                    }
+                    .textFieldStyle(.roundedBorder)
+                    .padding(.top, 8)
+                }
+                if let problem = editingProblem {
+                    Label(problem, systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                if let notes = arc.editorialNotes, !notes.isEmpty {
+                    DisclosureGroup("Замечания редактора (\(notes.count))") {
+                        ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
+                            Text("• " + note).font(.caption).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
                 // Карточка темы акта
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
                             Text("АКТ \(actIndex + 1): \(act.type.displayName.uppercased())")
                                 .font(.caption.weight(.black))
-                                .foregroundStyle(.yellow)
+                                .foregroundStyle(StudioTheme.accent)
 
                             Text("•")
                                 .foregroundStyle(.secondary)
@@ -328,17 +377,17 @@ struct LongformActEditorView: View {
 
                         // Провенанс названия: честная подпись под строкой, которую зритель судит
                         // как «работу ИИ». На видео её нет — раскладка эссе заморожена, отчётность
-                        // живёт только здесь.
+                        // живёт только здесь. Бейдж описывает ровно ту строку, что показана выше:
+                        // источник из провенанса акта, а не из анализа целиком и не из дефолта.
                         HStack(spacing: 5) {
-                            Image(systemName: act.titleProvenance?.source.isTrustworthy ?? false
+                            Image(systemName: act.effectiveTitleSource.isTrustworthy
                                   ? "checkmark.seal" : "exclamationmark.seal")
                                 .font(.caption2)
-                            Text(act.titleProvenance?.source.displayCaption
-                                 ?? ActTitleSource.unknown.displayCaption)
+                            Text(act.effectiveTitleSource.displayCaption)
                                 .font(.caption2)
                         }
                         .foregroundStyle(.tertiary)
-                        .help(act.titleProvenance?.evidence ?? "Источник названия не зафиксирован")
+                        .help(Self.titleSourceHelp(for: act))
 
                         Text(act.dramaticBeat)
                             .font(.subheadline)
@@ -395,7 +444,7 @@ struct LongformActEditorView: View {
 
                     Text("Длительность: \(formatDurationWithTenths(scene.duration))")
                         .font(.subheadline.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(.yellow)
+                        .foregroundStyle(StudioTheme.accent)
 
                     if abs(scene.diffDuration) > 0.1 {
                         Text(String(format: "(%@%.1fc)", scene.diffDuration > 0 ? "+" : "", scene.diffDuration))
@@ -454,7 +503,7 @@ struct LongformActEditorView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "speaker.wave.2")
                             .font(.caption2)
-                            .foregroundStyle(.yellow)
+                            .foregroundStyle(StudioTheme.accent)
                         Text("Первая фраза входа:")
                             .font(.caption2.weight(.medium))
                             .foregroundStyle(.secondary)
@@ -511,7 +560,7 @@ struct LongformActEditorView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "speaker.wave.2")
                             .font(.caption2)
-                            .foregroundStyle(.yellow)
+                            .foregroundStyle(StudioTheme.accent)
                         Text("Финальная фраза выхода:")
                             .font(.caption2.weight(.medium))
                             .foregroundStyle(.secondary)
@@ -576,7 +625,7 @@ struct LongformActEditorView: View {
         }
         .buttonStyle(.bordered)
         .controlSize(.mini)
-        .tint(delta > 0 ? .yellow : .secondary)
+        .tint(delta > 0 ? StudioTheme.accent : .secondary)
     }
 
     // MARK: - Act In/Out + Preview
@@ -646,7 +695,7 @@ struct LongformActEditorView: View {
             }
         }
         .padding(14)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.purple.opacity(0.08)))
+        .background(RoundedRectangle(cornerRadius: 10).fill(StudioTheme.accent.opacity(0.08)))
     }
 
     private var actPreviewPlayer: some View {
@@ -676,9 +725,11 @@ struct LongformActEditorView: View {
 
     private func sceneRangeSliders(actIndex: Int, sceneIndex: Int) -> some View {
         let scene = editedActs[actIndex].scenes[sceneIndex]
-        let maxBound = sourceDuration.isFinite ? sourceDuration : max(scene.end + 60.0, scene.originalEnd + 60.0)
-        let startUpper = max(0.0, scene.end - minSceneDuration)
-        let endLower = scene.start + minSceneDuration
+        let anchor = sceneAnchor(actIndex: actIndex, sceneIndex: sceneIndex)
+        let startLower = max(0, anchor.start - 8, scene.end - 40)
+        let startUpper = max(startLower + 0.01, min(anchor.start + 8, scene.end - minSceneDuration))
+        let endLower = max(anchor.end - 8, scene.start + minSceneDuration)
+        let maxBound = max(endLower + 0.01, min(anchor.end + 8, scene.start + 40, sourceDuration))
 
         return VStack(spacing: 8) {
             HStack {
@@ -690,7 +741,7 @@ struct LongformActEditorView: View {
                         get: { scene.start },
                         set: { setStart(actIndex: actIndex, sceneIndex: sceneIndex, value: $0) }
                     ),
-                    in: 0...max(0.01, startUpper)
+                    in: startLower...startUpper
                 )
             }
             HStack {
@@ -741,14 +792,21 @@ struct LongformActEditorView: View {
 
     private func setStart(actIndex: Int, sceneIndex: Int, value: Double) {
         var current = editedActs[actIndex].scenes[sceneIndex]
-        current.start = min(max(0.0, value), current.end - minSceneDuration)
+        let anchor = sceneAnchor(actIndex: actIndex, sceneIndex: sceneIndex)
+        let lower = max(0, anchor.start - 8, current.end - 40)
+        let upper = min(anchor.start + 8, current.end - minSceneDuration)
+        guard upper >= lower else { return }
+        current.start = min(max(lower, value), upper)
         editedActs[actIndex].scenes[sceneIndex] = current
     }
 
     private func setEnd(actIndex: Int, sceneIndex: Int, value: Double) {
         var current = editedActs[actIndex].scenes[sceneIndex]
-        let maxEnd = sourceDuration.isFinite ? sourceDuration : value
-        current.end = min(max(current.start + minSceneDuration, value), maxEnd)
+        let anchor = sceneAnchor(actIndex: actIndex, sceneIndex: sceneIndex)
+        let lower = max(anchor.end - 8, current.start + minSceneDuration)
+        let upper = min(anchor.end + 8, current.start + 40, sourceDuration)
+        guard upper >= lower else { return }
+        current.end = min(max(lower, value), upper)
         editedActs[actIndex].scenes[sceneIndex] = current
     }
 
@@ -778,6 +836,10 @@ struct LongformActEditorView: View {
     }
 
     private func loadInitialActs() {
+        publicationTitle = arc.publicationTitle ?? arc.concept.suggestedTitle
+        hookText = arc.hookText ?? ""
+        conclusionText = arc.conclusionText ?? ""
+        ctaText = arc.ctaText ?? ""
         editedActs = arc.acts.enumerated().map { actIdx, act in
             let scenes = act.segments.enumerated().map { segIdx, seg in
                 EditableSceneSegment(sceneIndex: segIdx, start: seg.start, end: seg.end)
@@ -807,17 +869,63 @@ struct LongformActEditorView: View {
             ))
         }
 
-        let updatedArc = LongformNarrativeArc(
-            id: arc.id,
-            movieTitle: arc.movieTitle,
-            concept: arc.concept,
-            acts: updatedActs,
-            summary: arc.summary,
-            mood: arc.mood,
-            durationReport: arc.durationReport
-        )
+        var updatedArc = arc
+        updatedArc.acts = updatedActs
+        updatedArc.sceneEdits = LongformEditorialSupport.recordingEdits(from: arc, acts: updatedActs)
+        updatedArc.publicationTitle = publicationTitle.trimmed
+        updatedArc.hookText = hookText.trimmed
+        updatedArc.conclusionText = conclusionText.trimmed
+        updatedArc.ctaText = ctaText.trimmed
 
         onApply(updatedArc)
+    }
+
+    private func sceneAnchor(actIndex: Int, sceneIndex: Int) -> TimeSegment {
+        let range = arc.acts[actIndex].segments[sceneIndex]
+        return LongformEditorialSupport.anchor(for: range, role: arc.acts[actIndex].type, in: arc)
+    }
+
+    private var editingProblem: String? {
+        var candidate = arc
+        candidate.acts = editedActs.map { act in
+            LongformAct(type: act.type, title: act.title, dramaticBeat: act.dramaticBeat,
+                        segments: act.scenes.map { TimeSegment(start: $0.start, end: $0.end) })
+        }
+        candidate.conclusionText = conclusionText
+        candidate.ctaText = ctaText
+        if !EssayDurationPolicy.rendered.contains(LongformTimeline(arc: candidate, coldOpenEnabled: coldOpenEnabled).duration) {
+            return "После правок эссе должно оставаться в пределах 4:00–8:00."
+        }
+        let scenes = candidate.segments.sorted { $0.start < $1.start }
+        if zip(scenes, scenes.dropFirst()).contains(where: { $0.end > $1.start }) {
+            return "Сцены пересекаются: один фрагмент фильма попадёт в ролик дважды."
+        }
+        for (ai, act) in candidate.acts.enumerated() {
+            for (si, range) in act.segments.enumerated() {
+                if !LongformEditorialSupport.allowed(range, around: sceneAnchor(actIndex: ai, sceneIndex: si)) {
+                    return "Сцена должна длиться 18–40 с; локальная правка границ — не более 8 с."
+                }
+            }
+        }
+        if publicationTitle.count > 120 || hookText.count > 180 || conclusionText.count > 140 || ctaText.count > 200 {
+            return "Сократите текст: название до 120, хук до 180, вывод до 140, CTA до 200 символов."
+        }
+        return nil
+    }
+
+    /// Подсказка обязана описывать ровно тот артефакт, под которым висит: «источник
+    /// не зафиксирован» верно только для `.unknown`, а для `.template` источник
+    /// записан — просто реплики-доказательства у него нет.
+    static func titleSourceHelp(for act: EditableActModel) -> String {
+        switch act.effectiveTitleSource {
+        case .llm, .transcriptLine:
+            return act.titleProvenance?.evidence
+                ?? "Реплика-основание не записана: метка есть, доказать её нечем"
+        case .template:
+            return "Название дала формула темы — ни модель, ни реплика акта его не выводили"
+        case .unknown:
+            return "Источник названия не зафиксирован"
+        }
     }
 
     private func phrasesFor(start: Double, end: Double) -> [TranscriptSegment] {

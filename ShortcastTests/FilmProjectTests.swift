@@ -16,14 +16,6 @@ struct FilmProjectTests {
             accentColorHex: "#F5D020"
         )
 
-        let candidate = ClipCandidate(
-            start: 120.0,
-            end: 175.0,
-            why: "Кульминационный диалог о гравитации",
-            hook: "Он понял это только спустя 20 лет...",
-            overlay: "Тайная комната"
-        )
-
         let project = FilmProject(
             sourceMovieURL: testURL,
             movieFileName: "interstellar.mp4",
@@ -31,8 +23,7 @@ struct FilmProjectTests {
             movieYear: "2014",
             durationSeconds: 10140.0,
             discoveredConcepts: [concept],
-            selectedConcept: concept,
-            candidates: [candidate]
+            selectedConcept: concept
         )
 
         let encoder = JSONEncoder()
@@ -47,8 +38,6 @@ struct FilmProjectTests {
         #expect(restored.movieYear == "2014")
         #expect(restored.discoveredConcepts.count == 1)
         #expect(restored.discoveredConcepts.first?.word == "ТЕРПІННЯ")
-        #expect(restored.candidates.count == 1)
-        #expect(restored.candidates.first?.hook == "Он понял это только спустя 20 лет...")
     }
 
     @Test("FilmProjectService can save, load, and delete projects in custom storage")
@@ -392,9 +381,11 @@ struct FilmProjectTests {
         workspace.thematicAnalysis = analysisA
         workspace.selectedConcept = conceptB
 
-        // Производные переменные больше не могут жить своей жизнью.
-        #expect(workspace.thematicReasoning == analysisA.aiReasoning)
-        #expect(workspace.discoveredConcepts == analysisA.allConcepts)
+        // Сырой старый анализ остаётся читаемым, но без транскрипта и привязки
+        // к источнику не становится карточками с бейджем «выбор ИИ».
+        #expect(workspace.thematicAnalysis == analysisA)
+        #expect(workspace.thematicReasoning == nil)
+        #expect(workspace.discoveredConcepts.isEmpty)
 
         await workspace.persistThemeState(reason: "тест D5")
 
@@ -409,8 +400,9 @@ struct FilmProjectTests {
         let restored = WorkspaceModel(filmProjectService: service)
         restored.thematicAnalysis = reloaded.thematicAnalysis
         restored.selectedConcept = reloaded.selectedConcept
-        #expect(restored.thematicReasoning == analysisA.aiReasoning)
-        #expect(restored.discoveredConcepts == analysisA.allConcepts)
+        #expect(restored.thematicAnalysis == analysisA)
+        #expect(restored.thematicReasoning == nil)
+        #expect(restored.discoveredConcepts.isEmpty)
         #expect(restored.thematicAnalysis?.source.isTrustworthy == true)
 
         try? FileManager.default.removeItem(at: tempDir)

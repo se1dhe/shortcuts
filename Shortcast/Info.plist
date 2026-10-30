@@ -11,9 +11,9 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
+	<string>КАДР &amp; СЕНС</string>
 	<key>CFBundleDisplayName</key>
-	<string>Short Generator</string>
+	<string>КАДР &amp; СЕНС</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

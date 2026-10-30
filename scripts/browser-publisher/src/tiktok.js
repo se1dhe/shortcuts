@@ -65,6 +65,8 @@ export async function uploadToTikTok(page, { videoPath, caption, hashtags = [], 
     await page.keyboard.press('Meta+A').catch(() => {});
     await page.keyboard.press('Backspace').catch(() => {});
     await page.keyboard.type(fullText, { delay: 15 });
+  } else {
+    throw new Error('Редактор описания TikTok не найден. Публикация не выполнялась.');
   }
 
   // Ensure Public privacy is selected if not draft
@@ -85,6 +87,9 @@ export async function uploadToTikTok(page, { videoPath, caption, hashtags = [], 
     }));
     // Wait up to 60 seconds for user to solve
     await captchaLocator.waitFor({ state: 'hidden', timeout: 60000 }).catch(() => {});
+    if (await captchaLocator.isVisible().catch(() => false)) {
+      throw new Error('Проверка TikTok ещё не завершена. Публикация не выполнялась.');
+    }
   }
 
   // Click Post or Save to draft
@@ -94,6 +99,7 @@ export async function uploadToTikTok(page, { videoPath, caption, hashtags = [], 
 
   await postButton.waitFor({ state: 'visible', timeout: 20000 });
   await page.waitForTimeout(2000); // brief settling
+  const existingLinks = new Set(await page.locator('a[href*="/video/"]').evaluateAll(nodes => nodes.map(node => node.href)));
   await postButton.click();
 
   console.log(JSON.stringify({ type: 'progress', platform: 'tiktok', message: 'Отправка публикации...' }));
@@ -102,11 +108,16 @@ export async function uploadToTikTok(page, { videoPath, caption, hashtags = [], 
   await page.waitForSelector(
     'text="Your video has been uploaded", text="Видео опубликовано", text="Manage your posts", text="Управление видео"',
     { timeout: 35000 }
-  ).catch(() => {});
+  ).catch(() => { throw new Error('TikTok не подтвердил результат отправки. Проверьте профиль перед повтором.'); });
+
+  const links = await page.locator('a[href*="/video/"]').evaluateAll(nodes => nodes.map(node => node.href));
+  const candidates = [...new Set(links)].filter(link => !existingLinks.has(link) && /^https:\/\/(www\.)?tiktok\.com\/@[^/]+\/video\/\d+\/?(?:\?.*)?$/.test(link));
+  const postURL = candidates.length === 1 ? candidates[0] : null;
 
   console.log(JSON.stringify({
     type: 'success',
     platform: 'tiktok',
     message: isDraft ? 'Шортс сохранён в черновики TikTok!' : 'Шортс успешно опубликован в TikTok!',
+    url: postURL,
   }));
 }

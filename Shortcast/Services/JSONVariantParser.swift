@@ -1,34 +1,9 @@
 import Foundation
 
-enum JSONVariantParserError: LocalizedError {
-    case noJSONObject
-    case noVariants
-
-    var errorDescription: String? {
-        switch self {
-        case .noJSONObject:
-            return "The model didn't return readable JSON."
-        case .noVariants:
-            return "The model's response had no usable platform variants."
-        }
-    }
-}
-
 /// Tolerant parser for the model's JSON output. The model is asked for clean
 /// JSON, but small models drift — this strips fences / thinking blocks, finds
 /// the first balanced object, and accepts a few key spellings.
 enum JSONVariantParser {
-
-    static func parse(_ raw: String) throws -> GenerationResult {
-        let cleaned = cleanRawOutput(raw)
-        guard let jsonString = extractJSONObject(from: cleaned),
-              let root = deserializeTolerant(jsonString)
-        else {
-            Self.log("JSON parse failed. Raw output (\(raw.count) chars):\n\(raw)")
-            throw JSONVariantParserError.noJSONObject
-        }
-        return try parse(object: root)
-    }
 
     /// Deserializes a JSON object string, repairing the JSON-breaking glitches
     /// small models occasionally emit before giving up. Returns the parsed value
@@ -39,6 +14,9 @@ enum JSONVariantParser {
             return root
         }
         let repaired = repairDrift(jsonString)
+        if repaired.count != jsonString.count {
+            log("tolerant parse kept the reply only after repair: \(jsonString.count) → \(repaired.count) chars")
+        }
         if let data = repaired.data(using: .utf8),
            let root = try? JSONSerialization.jsonObject(with: data) {
             return root
@@ -47,14 +25,30 @@ enum JSONVariantParser {
     }
 
     /// Fixes glitches that break otherwise-good model JSON:
+    /// - Key missing its closing quote (`  "endTime: 812.3,` → `"endTime": 812.3,`)
     /// - Key missing its opening quote (`  foo": …` → `  "foo": …`)
     /// - Duplicate commas inside lists/objects (`,,` or `, ,` → `,`)
     /// - Leading commas after opening brackets (`[,` or `{,` → `[` or `{`)
     /// - Trailing commas before closing braces/brackets (`,}` or `,]` → `}` or `]`)
     static func repairDrift(_ json: String) -> String {
         var s = json
+        // Ключ без закрывающей кавычки. Живое свидетельство 28.10.2026: этап 2
+        // выдал закрытый ответ (`complete=complete`, `stop != length`), в котором
+        // две строки были напечатаны как `"dramaticWeight: 0.8,` — `JSONSerialization`
+        // спотыкался о перевод строки внутри «строки» и весь эссе-ответ считался
+        // нечитаемым. Заякорено на всю строку и на скаляр после двоеточия, поэтому
+        // значение с двоеточием внутри (`"Ціна: все",`) под правило не попадает:
+        // чинится синтаксис, а не слова модели.
+        s = restoreMissingClosingQuoteOnKeys(s)
         // Key missing its opening quote (after `{`, `,` or a newline).
         s = regexReplace(s, #"([\n\r{,]\s*)([A-Za-z_][A-Za-z0-9_]*)("\s*:)"#, with: "$1\"$2$3")
+        // A scene entry occasionally loses both its opening object brace and
+        // the `id` key prefix, leaving a bare string before the remaining fields:
+        //   "S020",
+        //   "role": "psychology",
+        // Restore only this unambiguous scene-object shape. A valid string array
+        // item cannot be followed by a sibling `role` property in this layout.
+        s = restoreMissingSceneObjectStart(s)
         // Duplicate commas inside lists or objects: `,,` or `, ,` -> `,`
         s = regexReplace(s, #",(?:\s*,)+"#, with: ",")
         // Leading comma after an opening bracket/brace: `[,` or `{,` -> `[` or `{`
@@ -62,6 +56,36 @@ enum JSONVariantParser {
         // Trailing comma before a closing brace/bracket: `,]` or `,}` -> `]` or `}`
         s = regexReplace(s, #",(\s*[}\]])"#, with: "$1")
         return s
+    }
+
+    /// Вставляет кавычку, которую модель забыла закрыть после имени ключа, и
+    /// пишет в лог, сколько строк пришлось чинить: правка ответа модели никогда
+    /// не должна проходить молча.
+    private static func restoreMissingClosingQuoteOnKeys(_ json: String) -> String {
+        let pattern = #"(?m)^([ \t]*)"([A-Za-z_][A-Za-z0-9_]*)\s*:\s*("[^"\\\n]*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)\s*(,?)[ \t]*$"#
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return json }
+        let range = NSRange(json.startIndex..., in: json)
+        let hits = re.matches(in: json, range: range)
+        guard !hits.isEmpty else { return json }
+        let repaired = re.stringByReplacingMatches(
+            in: json, range: range, withTemplate: "$1\"$2\": $3$4")
+        log("restored \(hits.count) missing key quote(s) — syntax only, no words changed")
+        return repaired
+    }
+
+    private static func restoreMissingSceneObjectStart(_ json: String) -> String {
+        let pattern = #"(?m)^([ \t]*)"([A-Za-z0-9_-]+)"[ \t]*,[ \t]*\r?\n([ \t]*)"role"[ \t]*:"#
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return json }
+        let range = NSRange(json.startIndex..., in: json)
+        let hits = re.numberOfMatches(in: json, range: range)
+        guard hits > 0 else { return json }
+        let repaired = re.stringByReplacingMatches(
+            in: json,
+            range: range,
+            withTemplate: "$1{\"id\": \"$2\",\n$3\"role\":"
+        )
+        log("restored \(hits) missing scene object start(s) and id key(s)")
+        return repaired
     }
 
     private static func regexReplace(_ s: String, _ pattern: String, with template: String) -> String {
@@ -72,41 +96,6 @@ enum JSONVariantParser {
 
     /// Same as `parse(_:)` but for an already-deserialized JSON value — lets the
     /// Director's combined output reuse this when captions arrive inline per clip.
-    static func parse(object root: Any) throws -> GenerationResult {
-        var rawVariants: [[String: Any]] = []
-        var language: String?
-
-        if let object = root as? [String: Any] {
-            language = object["language"] as? String
-            if let array = object["variants"] as? [[String: Any]] {
-                rawVariants = array
-            } else {
-                // Object keyed directly by platform name (e.g. the Director's
-                // inline `captions` block). Inject the platform key into each
-                // entry so `makeVariant` — which requires a "platform" field —
-                // can build them.
-                rawVariants = SocialPlatform.allCases.compactMap { platform in
-                    guard var dict = object[platform.rawValue] as? [String: Any] else { return nil }
-                    dict["platform"] = platform.rawValue
-                    return dict
-                }
-            }
-        } else if let array = root as? [[String: Any]] {
-            rawVariants = array
-        }
-
-        var byPlatform: [SocialPlatform: PostVariant] = [:]
-        for entry in rawVariants {
-            if let variant = makeVariant(from: entry) {
-                byPlatform[variant.platform] = variant
-            }
-        }
-
-        let ordered = SocialPlatform.allCases.compactMap { byPlatform[$0] }
-        guard !ordered.isEmpty else { throw JSONVariantParserError.noVariants }
-        return GenerationResult(variants: ordered, detectedLanguage: language)
-    }
-
     /// Returns the first balanced `{ ... }` block, ignoring everything else
     /// (markdown fences, thinking text, trailing commentary).
     static func extractJSONObject(from raw: String) -> String? {
@@ -141,111 +130,6 @@ enum JSONVariantParser {
         return nil
     }
 
-    /// Восстанавливает объект из ответа, обрезанного по лимиту токенов: закрывает
-    /// незакрытую строку и скобки, отбрасывая недописанный хвост. nil — если даже
-    /// после починки JSON не читается.
-    ///
-    /// Сначала пробуем закрыть хвост как есть (обрыв внутри строки или числа),
-    /// затем — отрезать по последней структурной запятой, пока не получится
-    /// читаемый объект. Запятые внутри строк не считаются границей.
-    static func extractTruncatedJSONObject(from raw: String) -> String? {
-        // Целый объект — не наша забота: строгий разбор уже отказал по смыслу
-        // (например, модель не написала reasoning), и «обрезка» валидного JSON
-        // до частичного протащила бы мусор.
-        guard extractJSONObject(from: raw) == nil else { return nil }
-
-        let cleaned = cleanRawOutput(raw)
-        guard let start = cleaned.firstIndex(of: "{") else { return nil }
-        let text = String(cleaned[start...])
-
-        if let closed = closeTruncatedJSON(text) { return closed }
-        for comma in structuralCommaOffsets(in: text).reversed() {
-            let cut = String(text[text.startIndex..<comma])
-            if let closed = closeTruncatedJSON(cut) { return closed }
-        }
-        return nil
-    }
-
-    /// Позиции запятых вне строк — только по ним можно резать обрезанный JSON,
-    /// не разрывая текст модели.
-    private static func structuralCommaOffsets(in text: String) -> [String.Index] {
-        var offsets: [String.Index] = []
-        var inString = false
-        var escaped = false
-        var index = text.startIndex
-        while index < text.endIndex {
-            let char = text[index]
-            if inString {
-                if escaped {
-                    escaped = false
-                } else if char == "\\" {
-                    escaped = true
-                } else if char == "\"" {
-                    inString = false
-                }
-            } else if char == "\"" {
-                inString = true
-            } else if char == "," {
-                offsets.append(index)
-            }
-            index = text.index(after: index)
-        }
-        return offsets
-    }
-
-    /// Дописывает недостающие кавычку и скобки, снимает висячую запятую и
-    /// проверяет результат десериализацией. nil — если хвост не чинится.
-    private static func closeTruncatedJSON(_ text: String) -> String? {
-        var stack: [Character] = []
-        var inString = false
-        var escaped = false
-        for char in text {
-            if inString {
-                if escaped {
-                    escaped = false
-                } else if char == "\\" {
-                    escaped = true
-                } else if char == "\"" {
-                    inString = false
-                }
-                continue
-            }
-            switch char {
-            case "\"": inString = true
-            case "{", "[": stack.append(char)
-            case "}", "]":
-                guard let open = stack.last,
-                      (open == "{" && char == "}") || (open == "[" && char == "]")
-                else { return nil }
-                stack.removeLast()
-            default: break
-            }
-        }
-
-        // A balanced object is the strict extractor's job. Reaching here with
-        // nothing to close means the reply was complete but invalid (e.g. no
-        // reasoning), and pretending it was truncated would smuggle it through.
-        guard inString || !stack.isEmpty else { return nil }
-
-        var s = text
-        if escaped { s.removeLast() }
-        if inString { s.append("\"") }
-        s = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        while s.hasSuffix(",") {
-            s.removeLast()
-            s = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        for open in stack.reversed() {
-            s.append(open == "{" ? "}" : "]")
-        }
-
-        let candidate = repairDrift(s)
-        guard let data = candidate.data(using: .utf8),
-              (try? JSONSerialization.jsonObject(with: data)) != nil
-        else { return nil }
-        return candidate
-    }
-
     /// Strips common model wrappers (markdown fences, thinking blocks, tool calls)
     /// so `extractJSONObject` sees clean JSON.
     private static func cleanRawOutput(_ raw: String) -> String {
@@ -269,44 +153,4 @@ enum JSONVariantParser {
         FileHandle.standardError.write(Data("[shortcast/json] \(message)\n".utf8))
     }
 
-    private static func makeVariant(from entry: [String: Any]) -> PostVariant? {
-        guard let platformRaw = (entry["platform"] as? String)?.lowercased(),
-              let platform = SocialPlatform(rawValue: platformRaw)
-        else { return nil }
-
-        let hook = string(entry, "hook", "title", "headline").sanitizedModelText
-        let summary = string(entry, "description", "caption", "summary", "body").sanitizedModelText
-        let hashtags = normalizeHashtags(from: entry)
-        return PostVariant(platform: platform, hook: hook, summary: summary, hashtags: hashtags, pinnedComment: "")
-    }
-
-    /// First non-empty string value among the given keys.
-    private static func string(_ entry: [String: Any], _ keys: String...) -> String {
-        for key in keys {
-            if let value = (entry[key] as? String)?.trimmed, !value.isEmpty {
-                return value
-            }
-        }
-        return ""
-    }
-
-    private static func normalizeHashtags(from entry: [String: Any]) -> [String] {
-        let value = entry["hashtags"] ?? entry["tags"] ?? entry["hashtag"] ?? entry["tag"]
-        let rawList: [String]
-        if let array = value as? [String] {
-            rawList = array
-        } else if let array = value as? [Any] {
-            rawList = array.compactMap { $0 as? String }
-        } else if let joined = value as? String {
-            rawList = joined.split(whereSeparator: { " ,\n".contains($0) }).map(String.init)
-        } else {
-            rawList = []
-        }
-        let cleaned = rawList
-            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "# ")) }
-            .filter { !$0.isEmpty }
-
-        var seen = Set<String>()
-        return cleaned.filter { seen.insert($0.lowercased()).inserted }
-    }
 }

@@ -107,7 +107,6 @@ final class BrowserAutomationService: BrowserPublishingProtocol, Sendable {
             }
             return BrowserAuthStatus(
                 tiktok: auth["tiktok"] ?? false,
-                instagram: auth["instagram"] ?? false,
                 youtube: auth["youtube"] ?? false
             )
         }
@@ -135,7 +134,6 @@ final class BrowserAutomationService: BrowserPublishingProtocol, Sendable {
             }
             return BrowserAuthStatus(
                 tiktok: auth["tiktok"] ?? false,
-                instagram: auth["instagram"] ?? false,
                 youtube: auth["youtube"] ?? false
             )
         }

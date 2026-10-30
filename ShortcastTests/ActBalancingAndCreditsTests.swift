@@ -245,7 +245,8 @@ struct ActBalancingAndCreditsTests {
         ]
         let plan = EssayPlan(
             thesis: "Контроль — це страх",
-            hookVariants: [.init(text: "Ти контролюєш усе, крім себе.")],
+            hookVariants: [.init(text: "Ти контролюєш усе, крім себе.", source: .llm)],
+            selectedHook: .init(text: "Ти контролюєш усе, крім себе.", source: .llm),
             targetDuration: 480,
             actFocus: ["philosophy": "свобода"]
         )
@@ -306,9 +307,10 @@ struct ActBalancingAndCreditsTests {
         )
     }
 
-    /// Модель может вернуть 9 коротких сцен на 2,5 минуты при выбранных 12.
-    /// Арка обязана сама добрать материал до заказанного хронометража.
-    @Test func analyticArcFillsTheSelectedRuntimeWhenDirectorReturnsSparseScenes() async throws {
+    /// Хронометраж не заказывают: он рождается из пула. Бедный пул (5 сцен по
+    /// 30 с = 150 с) даёт нижнюю границу коридора, и арка обязана добрать
+    /// материал до этого окна, а не до 480 с, которые когда-то просили.
+    @Test func analyticArcFillsTheWindowBornFromASparsePool() async throws {
         let transcript = dialogueTranscript(until: 2400)
         let moments = [
             planned(200, 230, .hook, weight: 0.9, featured: true),
@@ -328,22 +330,64 @@ struct ActBalancingAndCreditsTests {
             essayPlan: plan
         )
 
+        let poolSeconds = moments.reduce(0.0) { $0 + ($1.endTime - $1.startTime) }
+        let window = EssayDurationPolicy.renderedTarget(poolSeconds: poolSeconds)
+        #expect(window == EssayDurationPolicy.rendered.lowerBound,
+                "пул на \(poolSeconds) с обязан дать нижнюю границу коридора")
         let total = arc.acts.flatMap(\.segments).reduce(0.0) { $0 + $1.duration }
-        #expect(total >= 480 * 0.85, "Эссе собрано на \(total) с — это не выбранный хронометраж")
-        #expect(total <= 480 * 1.12)
+        #expect(total >= window * 0.85, "Эссе собрано на \(total) с — это не окно \(window) с")
+        #expect(total <= window * 1.12)
         #expect(arc.acts.allSatisfy { !$0.segments.isEmpty })
+    }
+
+    /// Богатый пул (16 сцен по 30 с) даёт верх коридора: ту же картину, но с
+    /// другим материалом модель ведёт к другой длине эссе.
+    @Test func analyticArcFillsTheUpperCorridorForARichPool() async throws {
+        let transcript = dialogueTranscript(until: 2400)
+        let roles: [LongformActType] = [
+            .hook, .form, .form, .psychology, .psychology, .philosophy, .philosophy, .catharsis,
+            .form, .psychology, .philosophy, .catharsis, .form, .psychology, .philosophy, .catharsis
+        ]
+        let moments = roles.enumerated().map { index, role in
+            planned(
+                Double(100 + index * 140), Double(130 + index * 140), role,
+                weight: role == .hook || (role == .catharsis && index == 15) ? 0.95 : 0.5,
+                featured: role == .hook || (role == .catharsis && index == 15))
+        }
+        let arc = try await LongformNarrativeDirector().buildArc(
+            from: transcript,
+            concept: analyticConcept,
+            selectedMoments: moments,
+            movieTitle: "Test",
+            targetDuration: 480,
+            essayPlan: EssayPlan(targetDuration: 480)
+        )
+
+        let poolSeconds = moments.reduce(0.0) { $0 + ($1.endTime - $1.startTime) }
+        let window = EssayDurationPolicy.renderedTarget(poolSeconds: poolSeconds)
+        #expect(window == EssayDurationPolicy.rendered.upperBound)
+        let total = arc.acts.flatMap(\.segments).reduce(0.0) { $0 + $1.duration }
+        #expect(total >= window * 0.85, "богатый пул собран на \(total) с при окне \(window) с")
+        #expect(total <= window * 1.12)
     }
 
     /// Если модель уже вернула достаточно материала, добор не трогает сцены.
     @Test func analyticArcLeavesAPoolThatAlreadyMeetsTheRuntimeUnchanged() async throws {
-        let transcript = dialogueTranscript(until: 2400)
-        let moments = [
-            planned(100, 140, .hook, weight: 0.9, featured: true),
-            planned(500, 620, .form),
-            planned(900, 1020, .psychology),
-            planned(1400, 1510, .philosophy),
-            planned(2100, 2190, .catharsis, weight: 0.95, featured: true)
-        ]
+        // 14 цельных проверяемых сцен по 30 с. Прежний fixture с 90–120 с
+        // проверял сохранение диапазонов, запрещённых политикой 18–40 с.
+        let roles = LongformActType.canonicalAnalyticOrder
+        let moments: [SelectedMoment] = (0..<14).map { index in
+            let start = Double(100 + index * 100)
+            let role: LongformActType = index == 0 ? .hook : roles[1 + (index - 1) % 4]
+            return SelectedMoment(
+                startTime: start, endTime: start + 30,
+                reason: "Сцена розкриває наслідки вчинку", dramaticWeight: 0.8,
+                actRole: role, supports: "Вчинок має ціну",
+                evidenceQuote: "Кожне рішення має свою ціну")
+        }
+        let transcript = Transcript(segments: moments.map {
+            TranscriptSegment(start: $0.startTime, end: $0.endTime, text: "Кожне рішення має свою ціну.")
+        }, language: "uk")
         let plan = EssayPlan(targetDuration: 480)
 
         let arc = try await LongformNarrativeDirector().buildArc(
@@ -386,7 +430,10 @@ struct ActBalancingAndCreditsTests {
         )
 
         let total = arc.acts.flatMap(\.segments).reduce(0.0) { $0 + $1.duration }
-        #expect(total >= 480 * 0.85, "Эссе собрано на \(total) с при цели 480 с")
+        // Пул на 50 с — это нижняя граница коридора, а не 480 с из legacy-плана.
+        let window = EssayDurationPolicy.renderedTarget(
+            poolSeconds: moments.reduce(0.0) { $0 + ($1.endTime - $1.startTime) })
+        #expect(total >= window * 0.85, "Эссе собрано на \(total) с при окне \(window) с")
         // Добавленный материал не пересекается сам с собой.
         let ranges = arc.acts.flatMap(\.segments).sorted { $0.start < $1.start }
         for (previous, next) in zip(ranges, ranges.dropFirst()) {
@@ -512,7 +559,8 @@ struct ActBalancingAndCreditsTests {
             planned(1700, 1730, .catharsis, weight: 0.95, featured: true),
         ]
         let plan = EssayPlan(
-            hookVariants: [.init(text: "Це серійне ім'я. Це серійний номер.")],
+            hookVariants: [.init(text: "Це серійне ім'я. Це серійний номер.", source: .llm)],
+            selectedHook: .init(text: "Це серійне ім'я. Це серійний номер.", source: .llm),
             targetDuration: 480
         )
         let arc = try await LongformNarrativeDirector().buildArc(
@@ -567,7 +615,9 @@ struct ActBalancingAndCreditsTests {
         let catharsis = try #require(arc.acts.last)
         #expect(catharsis.type == .catharsis)
         let finale = try #require(catharsis.segments.last)
-        #expect(abs(finale.start - 1400) < 0.01 && abs(finale.end - 1470) < 0.01,
+        // Сильнейшая сцена остаётся той же, но её 70 с ограничены
+        // действующей верхней границей сцены — 40 с.
+        #expect(abs(finale.start - 1400) < 0.01 && abs(finale.end - 1440) < 0.01,
                 "Эссе заканчивается не сильнейшей сценой Director: \(finale)")
 
         let philosophy = try #require(arc.acts.first { $0.type == .philosophy })
@@ -575,14 +625,30 @@ struct ActBalancingAndCreditsTests {
     }
 
     /// Промпт обязан требовать сцены, из которых вообще можно собрать
-    /// выбранные 8–15 минут, а не девять реплик.
+    /// коридор 4–8 минут, а не девять реплик.
     @Test func thematicPromptAsksForScenesThatCanFillTheRuntime() {
         let prompt = LongformThematicService.thematicSystemPrompt(movieTitle: "Фільм")
 
-        #expect(prompt.contains("16-24"), "Промпт не задаёт количество сцен")
-        #expect(prompt.contains("20-60"), "Промпт не задаёт длину сцены")
-        #expect(prompt.contains("720") && prompt.contains("900"),
+        #expect(prompt.contains("14-22"), "Промпт не задаёт количество сцен")
+        #expect(prompt.contains("18-40"), "Промпт не задаёт длину сцены")
+        #expect(prompt.contains("310") && prompt.contains("590"),
                 "Промпт не задаёт суммарный запас материала под хронометраж")
+        #expect(!prompt.contains("720") && !prompt.contains("900"),
+                "Промпт всё ещё просит 12–15 минут материала")
+    }
+
+    /// Тема рождается из анализа, а не из меню: промпт не имеет права перечислять
+    /// слова-примеры, иначе модель выбирает из нашего списка, а не из фильма.
+    @Test func thematicPromptNeverOffersAThemeMenu() {
+        let prompt = LongformThematicService.thematicSystemPrompt(movieTitle: "Фільм")
+
+        for banned in ["ЕГО", "Его", "ЙОГО", "ОБМАН", "СТРАХ", "ТЕРПІННЯ", "ГЕНІАЛЬНІСТЬ",
+                       "ВЛАДА", "СВОБОДА", "ІСТИНА", "Обман"] {
+            #expect(!prompt.contains(banned),
+                    "Промпт подсовывает тему «\(banned)» — это подстановка, а не выбор модели")
+        }
+        #expect(prompt.contains("НЕ даємо тобі списку тем"),
+                "Промпт не объясняет модели, почему примеров темы нет")
     }
 
     /// Catharsis в промпте — это развязка фильма, а сильнейшая сцена — его финал:
@@ -596,8 +662,9 @@ struct ActBalancingAndCreditsTests {
                 "Промпт не связывает катарсис с развязкой фильма")
     }
 
-    /// Промпт обязан держать структуру из `essays_20_films.md`: хук 0:00–0:40
-    /// одной сценой и CTA-закличем у Telegram, а не в комментарии.
+    /// Промпт обязан держать структуру из архива
+    /// `docs/archive/essays_20_films-2026-10-27.md`: хук 0:00–0:40 одной сценой
+    /// и CTA-закличем у Telegram, а не в комментарии.
     @Test func thematicPromptFollowsTheEssaysStructure() {
         let prompt = LongformThematicService.thematicSystemPrompt(movieTitle: "Фільм")
 

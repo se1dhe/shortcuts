@@ -3,74 +3,15 @@ import Observation
 import SwiftUI
 import AVFoundation
 
-/// Drives the main window's state machine. Two flows share it:
-///  - short video → one set of editable variants → publish (the original path).
-///  - long video → transcribe → find moments → cut + caption N shorts → publish.
+/// Film → thematic essay → editable shorts → release.
 @MainActor
 @Observable
 final class WorkspaceModel {
 
-    /// What the user wants to do with a dropped video. Chosen explicitly on the
-    /// drop screen rather than guessed from the video's length.
-    enum InputMode: String, CaseIterable, Identifiable, Sendable {
-        case shorts    // long video → cut into clips → caption each → publish
-        case longform  // фильм → 4-актное кино-эссе (16:9 YouTube, 5-8 мин, Shortcast Cinema)
-        case caption   // short video → captions → publish (the original flow)
-        case youtube   // search YouTube → download → use the long-video flow
-
-        var id: String { rawValue }
-
-        var title: LocalizedStringKey {
-            switch self {
-            case .shorts:   "Шортсы из фильма"
-            case .longform: "Кино-эссе (16:9)"
-            case .caption:  "Быстрый клип"
-            case .youtube:  "Найти на YouTube"
-            }
-        }
-
-        var dropTitle: LocalizedStringKey {
-            switch self {
-            case .shorts:   "Перетащите фильм для нарезки шортсов"
-            case .longform: "Перетащите фильм для кино-эссе (16:9)"
-            case .caption:  "Перетащите короткое видео"
-            case .youtube:  "Найти видео на YouTube"
-            }
-        }
-
-        var dropSubtitle: LocalizedStringKey {
-            switch self {
-            case .shorts:   "Полный фильм — нейросеть найдет сюжетные арки, нарежет 1:1, наложит сабы и сведет звук"
-            case .longform: "16:9 YouTube (5–8 мин). Нейросеть выявит лейтмотив (терпение, гнев, гений), соберет 4 акта и наложит саундтрек"
-            case .caption:  "До 60 секунд — ролик для TikTok, Reels или YouTube Shorts"
-            case .youtube:  "Поиск видео по теме, загрузка и последующий монтаж на Mac"
-            }
-        }
-
-        var symbol: String {
-            switch self {
-            case .shorts:   "scissors"
-            case .longform: "film.fill"
-            case .caption:  "film.stack"
-            case .youtube:  "magnifyingglass"
-            }
-        }
-    }
-
-    /// The selected mode. Drives routing in `process(url:)`. Defaults to making
-    /// shorts from a long video — the app's headline flow.
-    var inputMode: InputMode = .shorts
-
     enum Phase: Equatable {
         case empty
-        // Single-video flow:
         case processing
-        case results
-        // Shorts flow:
         case transcribing
-        case findingMoments
-        case shortsResults
-        // Longform flow:
         case selectingLongformConcept
         case editingLongformSubtitles
         case buildingLongform(fraction: Double, step: String)
@@ -80,13 +21,6 @@ final class WorkspaceModel {
     private(set) var phase: Phase = .empty
     private(set) var job: VideoJob?
 
-    /// The three proposed posts (single-video flow). Bound by the result cards.
-    var variants: [PostVariant] = []
-    private(set) var detectedLanguage: String?
-
-    /// The generated shorts (long-video flow).
-    var clips: [ShortClip] = []
-
     /// Хранит полный транскрипт фильма
     var storedTranscript: Transcript?
     /// Полный анализ фильма с ОДНОЙ главной темой и разбором ИИ — единственный
@@ -95,10 +29,18 @@ final class WorkspaceModel {
     /// Выбранная тема для ролика
     var selectedConcept: ThematicConcept?
     /// Драматургический разбор сценария от ИИ (производное от thematicAnalysis)
-    var thematicReasoning: String? { thematicAnalysis?.aiReasoning }
+    var thematicReasoning: String? { discoveredConcepts.isEmpty ? nil : thematicAnalysis?.aiReasoning }
     /// Выявленные темы для длинного ролика Shortcast Cinema (производное от thematicAnalysis)
     var discoveredConcepts: [ThematicConcept] {
-        return thematicAnalysis?.allConcepts ?? []
+        guard let analysis = thematicAnalysis,
+              let transcript = storedTranscript ?? currentProject?.transcript,
+              ThematicAnalysisCache.isReusable(analysis, transcript: transcript) else { return [] }
+        let stems = DirectorArtifactGate.groundingStems(
+            from: LongformThematicService.stratifiedThematicSample(from: transcript))
+        return analysis.allConcepts.filter {
+            if case .rejected = DirectorArtifactGate.concept($0, in: stems) { return false }
+            return true
+        }
     }
     /// Промежуточные параметры эссе для редактора субтитров
     var stagedConcept: ThematicConcept?
@@ -116,15 +58,15 @@ final class WorkspaceModel {
     /// Активный проект фильма (сохранение прогресса транскрипции, тем и шортсов)
     var currentProject: FilmProject?
     let filmProjectService: any FilmProjectServicing
+    let thematicService: any ThematicConceptDiscovering
 
-    init(filmProjectService: any FilmProjectServicing = FilmProjectService.shared) {
+    init(
+        filmProjectService: any FilmProjectServicing = FilmProjectService.shared,
+        thematicService: any ThematicConceptDiscovering = LongformThematicService()
+    ) {
         self.filmProjectService = filmProjectService
+        self.thematicService = thematicService
     }
-
-    /// Temporary input copies and normalized containers, deleted when the user
-    /// starts over or an import fails. Originals already in the working folder
-    /// are intentionally never registered here.
-    private var tempInputURLs: Set<URL> = []
 
     /// Shown while an import is copied or normalized before a `VideoJob` exists.
     private(set) var inputPreparationMessage: String?
@@ -148,57 +90,88 @@ final class WorkspaceModel {
 
     private var pipelineTask: Task<Void, Never>?
 
-    // Publishing (single-video flow)
-    private(set) var isPublishing = false
-    private(set) var publishReport: UploadPostClient.PublishReport?
-    private(set) var publishError: String?
-    /// True while "Publish all approved" runs over the shorts.
-    private(set) var isPublishingAll = false
+    private(set) var isRefreshingLongformPackaging = false
+    private(set) var isRegeneratingLongformCover = false
+    private(set) var longformPackagingError: String?
+    private var previousLongformCoverTimes: [String: Set<Double>] = [:]
+    var isWorkingOnEssayRelease = false
 
     var isBusy: Bool {
+        isRefreshingLongformPackaging || isRegeneratingLongformCover || isWorkingOnEssayRelease || showsPipelineProgress
+    }
+
+    /// Only the main pipeline replaces the editor with a full-screen progress
+    /// view. Sheet-owned tasks must keep their presenting editor mounted so
+    /// their progress, errors and publication receipts remain visible.
+    var showsPipelineProgress: Bool {
         switch phase {
-        case .processing, .transcribing, .findingMoments, .buildingLongform: return true
+        case .processing, .transcribing, .buildingLongform: return true
         default: return false
-        }
-    }
-
-    func applyCurrentSubtitleSettings(_ settings: AppSettings) {
-        for clip in clips {
-            if clip.isCinemaMode { continue }
-            clip.applySubtitleDefaults(
-                settings.subtitleAppearance,
-                burnSubtitles: settings.burnSubtitles)
-        }
-    }
-
-    func applyCurrentWatermarkSettings(_ settings: AppSettings) {
-        for clip in clips {
-            clip.applyWatermarkDefaults(
-                enabled: settings.watermarkEnabled,
-                text: settings.watermarkText,
-                appearance: settings.watermarkAppearance)
-        }
-    }
-
-    func applyCurrentPromoSettings(_ settings: AppSettings) {
-        for clip in clips {
-            if clip.isCinemaMode { continue }
-            clip.applyPromoDefaults(
-                enabled: settings.promoOverlayEnabled,
-                promoCode: settings.promoCode,
-                durationSeconds: settings.promoDurationSeconds)
-        }
-    }
-
-    func applyCurrentHookSettings(_ settings: AppSettings) {
-        for clip in clips {
-            if clip.isCinemaMode { continue }
-            clip.hookAppearance = settings.hookAppearance
         }
     }
 
     /// Holds state while the user is choosing an audio track (when a video has > 1 audio streams).
     var pendingAudioSelection: PendingAudioSelection?
+
+    /// Очищает только состояние фильма, не удаляет файлы и архивы.
+    func clearFilmAnalysisState() {
+        storedTranscript = nil
+        thematicAnalysis = nil
+        selectedConcept = nil
+        detectedMovie = nil
+        longformResult = nil
+        stagedConcept = nil
+        stagedConfirmedMovieTitle = nil
+        stagedAudioSettings = nil
+        stagedArc = nil
+        stagedEssayPlan = nil
+    }
+
+    /// Восстановление идёт присваиванием всех полей, а не только ненулевых:
+    /// отсутствие анализа во втором проекте не означает «оставить первый».
+    func restoreFilmProjectState(_ project: FilmProject?) {
+        clearFilmAnalysisState()
+        currentProject = project
+        guard let project else { return }
+        storedTranscript = project.transcript
+        detectedMovie = project.tmdbMetadata
+        if let edits = project.longformResult?.arc.captionEdits, !edits.isEmpty {
+            do {
+                try SubtitleCorrectionStore.shared.update {
+                    $0.importEdits(edits, filmKey: subtitleCorrectionFilmKey, language: subtitleCorrectionLanguage)
+                }
+            } catch { Self.log("Subtitle correction memory import failed: \(error.localizedDescription)") }
+        }
+        guard let transcript = project.transcript,
+              let analysis = project.thematicAnalysis,
+              ThematicAnalysisCache.isReusable(analysis, transcript: transcript) else {
+            currentProject?.thematicAnalysis = nil
+            currentProject?.discoveredConcepts = []
+            currentProject?.selectedConcept = nil
+            if let analysis = project.thematicAnalysis, let transcript = project.transcript,
+               ThematicAnalysisCache.hasMatchingSource(analysis, transcript: transcript) {
+                longformResult = project.longformResult
+                stagedAudioSettings = project.longformResult?.audioSettings
+            } else {
+                currentProject?.longformResult = nil
+            }
+            Self.log("Cached thematic analysis requires regeneration for '\(project.movieTitle)'; transcript retained")
+            return
+        }
+        thematicAnalysis = analysis
+        if let selected = project.selectedConcept,
+           SelectedThemeAnalysisResolver.matches(analysis, selection: selected) {
+            selectedConcept = selected
+        } else {
+            selectedConcept = analysis.primaryConcept
+        }
+        if let result = project.longformResult,
+           result.arc.concept.word.caseInsensitiveCompare(analysis.primaryConcept.word) == .orderedSame {
+            longformResult = LongformPackagingService.updatingText(result)
+            currentProject?.longformResult = longformResult
+            stagedAudioSettings = result.audioSettings
+        }
+    }
 
     // MARK: - Entry
 
@@ -212,14 +185,14 @@ final class WorkspaceModel {
         modelManager: ModelManager,
         settings: AppSettings
     ) async {
+        pipelineTask?.cancel()
+        restoreFilmProjectState(nil)
+        job = nil
+        pendingAudioSelection = nil
         errorMessage = nil
         pipelineError = nil
-        publishReport = nil
-        publishError = nil
 
         // Clean up previous run leftovers
-        cleanUpTempInput()
-        cleanUpOrphanedInputFiles(settings: settings)
 
         // Copy input file immediately while security-scoped access is guaranteed active
         let sandboxFriendlyURL: URL
@@ -272,7 +245,6 @@ final class WorkspaceModel {
 
     func cancelAudioTrackSelection() {
         self.pendingAudioSelection = nil
-        cleanUpTempInput()
         phase = .empty
     }
 
@@ -301,8 +273,6 @@ final class WorkspaceModel {
         settings: AppSettings
     ) async {
         errorMessage = nil
-        publishReport = nil
-        publishError = nil
         pipelineError = nil
         inputPreparationMessage = "Preparing your video…"
         phase = .processing
@@ -324,13 +294,10 @@ final class WorkspaceModel {
                 from: sandboxFriendlyURL,
                 workingDirectory: settings.workingDirectory ?? sandboxFriendlyURL.deletingLastPathComponent(),
                 selectedAudioStreamIndex: selectedAudioStreamIndex)
-            if normalizedInputURL != sandboxFriendlyURL {
-                tempInputURLs.insert(normalizedInputURL)
-            }
+
         } catch {
             errorMessage = error.localizedDescription
             inputPreparationMessage = nil
-            cleanUpTempInput()
             phase = .empty
             return
         }
@@ -347,22 +314,22 @@ final class WorkspaceModel {
                 sourceMetadata: effectiveSourceMetadata)
         } catch {
             errorMessage = error.localizedDescription
-            cleanUpTempInput()
             phase = .empty
             return
         }
 
-        // Загружаем или создаем постоянный проект фильма (SOLID: Single Responsibility)
-        if let existingProject = try? await filmProjectService.loadProject(for: sandboxFriendlyURL) {
-            self.currentProject = existingProject
-            // Обновляем выбранный аудио-трек если пользователь выбрал другой
+        // Загружаем проект без переноса состояния предыдущего фильма.
+        if var existingProject = try? await filmProjectService.loadProject(for: sandboxFriendlyURL) {
             if let trackId = selectedAudioStreamIndex, existingProject.selectedAudioTrackId != trackId {
-                self.currentProject?.selectedAudioTrackId = trackId
-                if let project = self.currentProject {
-                    try? await filmProjectService.saveProject(project)
-                }
+                existingProject.selectedAudioTrackId = trackId
+                existingProject.transcript = nil
+                existingProject.thematicAnalysis = nil
+                existingProject.discoveredConcepts = []
+                existingProject.selectedConcept = nil
+                existingProject.longformResult = nil
+                try? await filmProjectService.saveProject(existingProject)
             }
-            if let t = existingProject.transcript { self.storedTranscript = t }
+            restoreFilmProjectState(existingProject)
 
             // Проверяем сохраненные метаданные фильма на предмет старых галлюцинаций LLM
             let fileQuery = MovieMetadataService.parseCandidate(originalBaseName)
@@ -381,20 +348,7 @@ final class WorkspaceModel {
                     self.detectedMovie = m
                 }
             }
-            if let ta = existingProject.thematicAnalysis {
-                self.thematicAnalysis = ta
-                if self.selectedConcept == nil {
-                    self.selectedConcept = ta.primaryConcept
-                }
-            } else if !existingProject.discoveredConcepts.isEmpty {
-                // Старые архивы без thematicAnalysis больше не поддерживаются
-                Self.log("Legacy archive without thematicAnalysis ignored for '\(existingProject.movieTitle)'")
-            }
-            if let sc = existingProject.selectedConcept {
-                self.selectedConcept = sc
-            }
-            if let lr = existingProject.longformResult { self.longformResult = lr }
-            Self.log("Loaded cached FilmProject: \(existingProject.movieTitle) (\(existingProject.candidates.count) candidates, \(existingProject.discoveredConcepts.count) concepts)")
+            Self.log("Loaded cached FilmProject: \(existingProject.movieTitle) (\(existingProject.discoveredConcepts.count) concepts)")
         } else {
             let project = FilmProject(
                 sourceMovieURL: sandboxFriendlyURL,
@@ -415,29 +369,11 @@ final class WorkspaceModel {
             }
         }
 
-        switch inputMode {
-        case .caption:
-            await processPrecutShort(job: newJob, modelManager: modelManager, settings: settings)
-        case .longform:
-            await startLongformPipeline(job: newJob, modelManager: modelManager, settings: settings)
-        case .youtube:
-            // YouTube Shorts (< 3 min, vertical) go through the pre-cut short
-            // pipeline (transcription + subtitles + watermark + captions, no
-            // moment-finding). Long videos use the moment-finding pipeline.
-            if newJob.durationSeconds < 180 {
-                await processPrecutShort(job: newJob, modelManager: modelManager, settings: settings)
-            } else {
-                startShortsPipeline(job: newJob, modelManager: modelManager, settings: settings)
-            }
-        case .shorts:
-            // Movie / long video pipeline: find character & narrative arcs.
-            // Only very short pre-cut clips (< 60s) skip moment-finding.
-            if newJob.durationSeconds < 60 {
-                await processPrecutShort(job: newJob, modelManager: modelManager, settings: settings)
-            } else {
-                startShortsPipeline(job: newJob, modelManager: modelManager, settings: settings)
-            }
+        let task = Task {
+            await self.startLongformPipeline(job: newJob, modelManager: modelManager, settings: settings)
         }
+        pipelineTask = task
+        await task.value
     }
 
     // MARK: - Theme persistence
@@ -445,8 +381,92 @@ final class WorkspaceModel {
     /// Создаёт координатор монтажа с проброшенным шлюзом к прогретому Director'у.
     /// `LongformActTitleService` получает `MomentFinderService` через `DirectorChatGateway`:
     /// модель переиспользуется уже прогретая, без повторной холодной загрузки (политика RAM).
-    private func makeLongformCoordinator(modelManager: ModelManager) -> LongformPipelineCoordinator {
-        let gateway = DirectorChatGateway(
+    private func makeLongformCoordinator(modelManager: ModelManager, settings: AppSettings) -> LongformPipelineCoordinator {
+        let gateway = makeDirectorGateway(modelManager: modelManager)
+        let actTitleService = LongformActTitleService(model: gateway)
+        return LongformPipelineCoordinator(thumbnailGenerator: LongformPackagingService.makeThumbnailGenerator(modelManager: modelManager, movie: detectedMovie),
+            actTitling: actTitleService,
+            editorialReview: makeEditorialReview(model: gateway),
+            discussionURL: LongformEditorialSupport.telegramURL(channelID: settings.telegramChannelId), modelManager: modelManager)
+    }
+
+    var subtitleCorrectionFilmKey: String {
+        if let movie = detectedMovie ?? currentProject?.tmdbMetadata { return "movie:\(movie.id)" }
+        let title = currentProject?.longformResult?.arc.movieTitle ?? stagedConfirmedMovieTitle
+            ?? currentProject?.movieTitle ?? job?.effectiveTitle ?? ""
+        return "title:" + SubtitleCorrectionMemory.key(title).lowercased()
+    }
+
+    var subtitleCorrectionLanguage: String { storedTranscript?.language?.lowercased() ?? "uk" }
+
+    private func makeEditorialReview(model: any LongformActTitleModeling) -> LongformEditorialReview {
+        let memory: SubtitleCorrectionMemory
+        do { memory = try SubtitleCorrectionStore.shared.load() }
+        catch {
+            Self.log("Subtitle correction memory load failed: \(error.localizedDescription)")
+            memory = SubtitleCorrectionMemory()
+        }
+        return LongformEditorialReview(model: model, correctionMemory: memory,
+            correctionFilmKey: subtitleCorrectionFilmKey, correctionLanguage: subtitleCorrectionLanguage)
+    }
+
+    func refreshLongformPackaging(modelManager: ModelManager) async {
+        guard !isRefreshingLongformPackaging, let original = longformResult,
+              let source = job?.url ?? currentProject?.sourceMovieURL else { return }
+        isRefreshingLongformPackaging = true
+        longformPackagingError = nil
+        let projectID = currentProject?.id
+        defer { isRefreshingLongformPackaging = false }
+        let generator = LongformPackagingService.makeThumbnailGenerator(modelManager: modelManager, movie: detectedMovie ?? currentProject?.tmdbMetadata)
+        do {
+            let updated = try await LongformPackagingService(thumbnailGenerator: generator).refresh(original, sourceURL: source)
+            guard currentProject?.id == projectID, longformResult?.outputURL == original.outputURL else { return }
+            longformResult = updated
+            longformPackagingError = updated.packagingWarning
+            if var project = currentProject {
+                project.longformResult = updated
+                try await filmProjectService.saveProject(project)
+                currentProject = project
+            }
+        } catch is CancellationError { }
+        catch { longformPackagingError = error.localizedDescription }
+    }
+
+    func regenerateLongformCover(modelManager: ModelManager) async {
+        guard !isRefreshingLongformPackaging, !isRegeneratingLongformCover,
+              let original = longformResult,
+              let source = job?.url ?? currentProject?.sourceMovieURL else { return }
+        isRegeneratingLongformCover = true
+        longformPackagingError = nil
+        let projectID = currentProject?.id
+        let resultKey = original.outputURL.standardizedFileURL.path
+        var excludedTimes = previousLongformCoverTimes[resultKey] ?? []
+        if let currentTime = original.thumbnailSubject?.sourceTime { excludedTimes.insert(currentTime) }
+        defer { isRegeneratingLongformCover = false }
+
+        let generator = LongformPackagingService.makeThumbnailGenerator(
+            modelManager: modelManager, movie: detectedMovie ?? currentProject?.tmdbMetadata)
+        do {
+            let updated = try await LongformPackagingService(thumbnailGenerator: generator)
+                .regenerateCover(original, sourceURL: source, avoidingTimes: Array(excludedTimes))
+            guard currentProject?.id == projectID,
+                  longformResult?.outputURL == original.outputURL else { return }
+            if let sourceTime = updated.thumbnailSubject?.sourceTime {
+                previousLongformCoverTimes[resultKey, default: []].insert(sourceTime)
+            }
+            longformResult = updated
+            longformPackagingError = nil
+            if var project = currentProject {
+                project.longformResult = updated
+                try await filmProjectService.saveProject(project)
+                currentProject = project
+            }
+        } catch is CancellationError { }
+        catch { longformPackagingError = error.localizedDescription }
+    }
+
+    private func makeDirectorGateway(modelManager: ModelManager) -> DirectorChatGateway {
+        DirectorChatGateway(
             readiness: { [weak modelManager] in await modelManager?.momentFinder.isReady ?? false },
             identifier: { [weak modelManager] in await modelManager?.momentFinder.profile.modelID },
             completion: { [weak modelManager] instructions, prompt, maxTokens in
@@ -457,8 +477,6 @@ final class WorkspaceModel {
                 )
             }
         )
-        let actTitleService = LongformActTitleService(model: gateway)
-        return LongformPipelineCoordinator(actTitling: actTitleService, modelManager: modelManager)
     }
 
     /// Единственная точка, которая пишет состояние темы в архив: анализ, выбранная
@@ -488,11 +506,42 @@ final class WorkspaceModel {
 
     // MARK: - Long-form Flow (YouTube 16:9 Thematic Essays in Shortcast Cinema style)
 
+    private func resolveLongformAnalysis(
+        for concept: ThematicConcept,
+        transcript: Transcript,
+        movieTitle: String,
+        userPlan: EssayPlan?,
+        modelManager: ModelManager,
+        settings: AppSettings
+    ) async throws -> ThematicAnalysisResult {
+        let cached = thematicAnalysis
+        let sourceURL = job?.url
+        let analysis = try await SelectedThemeAnalysisResolver.resolve(
+            selection: concept, cached: cached, transcript: transcript, userPlan: userPlan
+        ) {
+            try await self.thematicService.planThematicAnalysis(
+                for: concept, candidates: cached?.allConcepts ?? [concept],
+                from: transcript, movieTitle: movieTitle,
+                movieOverview: self.detectedMovie?.overview,
+                modelManager: modelManager,
+                directorProfile: settings.copywriterModel.directorProfile)
+        }
+        try Task.checkCancellation()
+        guard job?.url == sourceURL else { throw CancellationError() }
+        if let old = longformResult,
+           old.arc.concept.word.caseInsensitiveCompare(analysis.primaryConcept.word) != .orderedSame
+            || old.arc.concept.philosophicalPremise != analysis.primaryConcept.philosophicalPremise {
+            // Старое видео остаётся в Exports, но не выдаётся за результат нового тезиса.
+            longformResult = nil
+        }
+        thematicAnalysis = analysis
+        selectedConcept = analysis.primaryConcept
+        stagedEssayPlan = analysis.essayPlan
+        return analysis
+    }
+
     private func startLongformPipeline(job newJob: VideoJob, modelManager: ModelManager, settings: AppSettings) async {
-        cleanupClipTempFiles()
         self.job = newJob
-        self.clips = []
-        self.variants = []
         self.pipelineError = nil
         // Не затираем longformResult, если проект уже имеет сохранённый результат:
         // при reopen проекта пользователь должен увидеть готовое эссе, а не пустой экран.
@@ -504,8 +553,8 @@ final class WorkspaceModel {
         // реально выданный моделью, открываем экран выбора концепта мгновенно
         // (0.01 сек), без повторного Whisper и Director.
         if let existingAnalysis = self.thematicAnalysis ?? self.currentProject?.thematicAnalysis,
-           existingAnalysis.source == .llm,
-           let cachedTranscript = self.storedTranscript ?? self.currentProject?.transcript {
+           let cachedTranscript = self.storedTranscript ?? self.currentProject?.transcript,
+           ThematicAnalysisCache.isReusable(existingAnalysis, transcript: cachedTranscript) {
             self.storedTranscript = cachedTranscript
             self.thematicAnalysis = existingAnalysis
             if self.selectedConcept == nil {
@@ -520,7 +569,11 @@ final class WorkspaceModel {
                     rottenTomatoes: movie.rottenTomatoesScore)
             }
             Self.log("Instantly loaded cached thematic analysis for '\(newJob.effectiveTitle)': primary concept '\(existingAnalysis.primaryConcept.word)'")
-            self.phase = .selectingLongformConcept
+            if let result = longformResult, FileManager.default.fileExists(atPath: result.outputURL.path) {
+                self.phase = .longformResults
+            } else {
+                self.phase = .selectingLongformConcept
+            }
             return
         }
         if let staleAnalysis = self.thematicAnalysis ?? self.currentProject?.thematicAnalysis,
@@ -642,7 +695,7 @@ final class WorkspaceModel {
             // выдала модель, иначе обязан отработать Director.
             let analysis: ThematicAnalysisResult
             if let existing = self.thematicAnalysis ?? self.currentProject?.thematicAnalysis,
-               existing.source == .llm {
+               ThematicAnalysisCache.isReusable(existing, transcript: transcript) {
                 analysis = existing
                 self.thematicAnalysis = existing
                 if self.selectedConcept == nil {
@@ -651,7 +704,6 @@ final class WorkspaceModel {
                 Self.log("Reusing model-produced thematic analysis for '\(effectiveMovieTitle)': \(existing.primaryConcept.word)")
             } else {
                 progressTracker.startStoryAnalysis()
-                let thematicService = LongformThematicService()
                 // Тема, не полученная от модели, не подставляется: ошибка уходит
                 // в catch ниже, и эссе не откроется с выдуманным лейтмотивом.
                 analysis = try await thematicService.discoverThematicAnalysis(
@@ -661,6 +713,11 @@ final class WorkspaceModel {
                     modelManager: modelManager,
                     directorProfile: settings.copywriterModel.directorProfile
                 )
+                guard ThematicAnalysisCache.isReusable(analysis, transcript: transcript) else {
+                    throw ThematicDiscoveryError.noGroundedTheme("анализ не подтверждён текущим транскриптом")
+                }
+                // Новое редакторское решение требует нового рендера. Старый файл остаётся в Exports.
+                self.longformResult = nil
                 self.thematicAnalysis = analysis
                 // АВТОНОМНЫЙ ВЫБОР: модель сама выбирает и предлагает ОДНУ главную тему
                 self.selectedConcept = analysis.primaryConcept
@@ -682,7 +739,8 @@ final class WorkspaceModel {
         confirmedMovieTitle: String? = nil,
         audioSettings: LongformAudioSettings = LongformAudioSettings(),
         essayPlan: EssayPlan? = nil,
-        settings: AppSettings
+        settings: AppSettings,
+        modelManager: ModelManager
     ) {
         guard let transcript = storedTranscript else { return }
         self.stagedConcept = concept
@@ -702,10 +760,15 @@ final class WorkspaceModel {
             finalMovieTitle = "Фильм"
         }
 
-        Task {
+        pipelineTask?.cancel()
+        phase = .buildingLongform(fraction: 0.01, step: "Проверка сцен выбранной темы...")
+        pipelineTask = Task {
             do {
+                let analysis = try await resolveLongformAnalysis(
+                    for: concept, transcript: transcript, movieTitle: finalMovieTitle,
+                    userPlan: essayPlan, modelManager: modelManager, settings: settings)
                 let narrativeDirector = LongformNarrativeDirector()
-                var selectedMoments = self.thematicAnalysis?.selectedMoments ?? []
+                var selectedMoments = analysis.selectedMoments
                 
                 // Семантическая валидация таймкодов
                 let validator = SemanticTimecodeValidator()
@@ -722,18 +785,28 @@ final class WorkspaceModel {
                     }
                 }
                 
-                let arc = try await narrativeDirector.buildArc(
+                let builtArc = try await narrativeDirector.buildArc(
                     from: transcript,
-                    concept: concept,
+                    concept: analysis.primaryConcept,
                     selectedMoments: selectedMoments,
                     movieTitle: finalMovieTitle,
-                    targetDuration: essayPlan?.effectiveTargetDuration ?? 520.0,
-                    essayPlan: essayPlan,
+                    targetDuration: analysis.essayPlan?.effectiveTargetDuration ?? EssayDurationPolicy.defaultRenderedTarget,
+                    essayPlan: analysis.essayPlan,
                     sourceMovieURL: self.currentProject?.sourceMovieURL
                 )
-                self.stagedArc = arc
+                try Task.checkCancellation()
+                try await modelManager.requireDirector(profile: settings.copywriterModel.directorProfile)
+                let gateway = makeDirectorGateway(modelManager: modelManager)
+                let reviewed = await makeEditorialReview(model: gateway).review(arc: builtArc,
+                    transcript: transcript, coldOpenEnabled: audioSettings.coldOpenEnabled)
+                let titled = await LongformActTitleService(model: gateway).applyTitles(to: reviewed,
+                    transcript: transcript, movieTitle: finalMovieTitle, progress: nil)
+                try Task.checkCancellation()
+                self.stagedArc = titled.arc
                 self.phase = .editingLongformSubtitles
             } catch {
+                if Task.isCancelled { return }
+                self.phase = .selectingLongformConcept
                 self.errorMessage = "Ошибка построения арки: \(error.localizedDescription)"
             }
         }
@@ -751,16 +824,8 @@ final class WorkspaceModel {
         settings: AppSettings
     ) {
         if let stored = storedTranscript {
-            let updatedTranscript = Transcript(segments: updatedSegments, language: stored.language, provenance: stored.provenance)
-            self.storedTranscript = updatedTranscript
-            // Сохраняем правки субтитров на диск: при перезапуске проекта пользователь
-            // видит отредактированные субтитры, а не исходный Whisper-выход.
-            self.currentProject?.transcript = updatedTranscript
-            if let project = self.currentProject {
-                Task {
-                    try? await filmProjectService.saveProject(project)
-                }
-            }
+            stagedArc?.captionEdits = LongformEditorialSupport.captionEdits(
+                original: stored.segments, updated: updatedSegments)
         }
         guard let concept = stagedConcept, let audioSettings = stagedAudioSettings else { return }
         confirmLongformConceptInternal(
@@ -768,6 +833,7 @@ final class WorkspaceModel {
             confirmedMovieTitle: stagedConfirmedMovieTitle,
             audioSettings: audioSettings,
             essayPlan: stagedEssayPlan,
+            approvedArc: stagedArc,
             modelManager: modelManager,
             settings: settings
         )
@@ -823,21 +889,14 @@ final class WorkspaceModel {
         modelManager: ModelManager,
         settings: AppSettings
     ) {
+        var editedArc = existingResult.arc
         if let stored = storedTranscript {
-            let updatedTranscript = Transcript(segments: updatedSegments, language: stored.language, provenance: stored.provenance)
-            self.storedTranscript = updatedTranscript
-            // Сохраняем правки субтитров на диск: при перезапуске проекта пользователь
-            // видит отредактированные субтитры, а не исходный Whisper-выход.
-            self.currentProject?.transcript = updatedTranscript
-            if let project = self.currentProject {
-                Task {
-                    try? await filmProjectService.saveProject(project)
-                }
-            }
+            editedArc.captionEdits = LongformEditorialSupport.captionEdits(
+                original: stored.segments, updated: updatedSegments)
         }
         startLongformRebuild(
             concept: existingResult.arc.concept,
-            existingArc: existingResult.arc,
+            existingArc: editedArc,
             modelManager: modelManager,
             settings: settings,
             initialStep: "Перерендер видео с обновленными субтитрами...",
@@ -845,7 +904,7 @@ final class WorkspaceModel {
         )
     }
 
-    /// Полностью пересобирает режиссуру и монтаж на ту же тему: новая нарезка актов, те же фильм и концепт.
+    /// Запрашивает у Director новый план сцен на ту же тему, затем собирает его в монтаж.
     func regenerateLongformFromScratch(
         concept: ThematicConcept,
         movieTitle: String,
@@ -854,11 +913,15 @@ final class WorkspaceModel {
     ) {
         pipelineTask?.cancel()
         Self.log("regenerateLongformFromScratch: concept=\(concept.word) movie=\(movieTitle)")
+        // Сброс кэша анализа обязателен: иначе resolver переиспользует старый пул
+        // и кнопка лишь повторно отрендерит те же сцены, не вызывая модель.
+        thematicAnalysis = nil
+        stagedEssayPlan = nil
         confirmLongformConceptInternal(
             concept,
             confirmedMovieTitle: movieTitle,
             audioSettings: stagedAudioSettings ?? LongformAudioSettings(),
-            essayPlan: stagedEssayPlan ?? thematicAnalysis?.essayPlan,
+            essayPlan: nil,
             modelManager: modelManager,
             settings: settings
         )
@@ -883,27 +946,46 @@ final class WorkspaceModel {
         )
     }
 
+    func improveLongform(existingResult: LongformBuildResult, modelManager: ModelManager, settings: AppSettings) {
+        startLongformRebuild(concept: existingResult.arc.concept, existingArc: existingResult.arc,
+            modelManager: modelManager, settings: settings,
+            initialStep: "Редакторская проверка диалогов и границ сцен...",
+            errorPrefix: "Ошибка редакторской пересборки", editorialPass: true)
+    }
+
     private func startLongformRebuild(
         concept: ThematicConcept,
         existingArc: LongformNarrativeArc,
         modelManager: ModelManager,
         settings: AppSettings,
         initialStep: String,
-        errorPrefix: String
+        errorPrefix: String,
+        editorialPass: Bool = false
     ) {
         guard let currentJob = job, let transcript = storedTranscript else { return }
         pipelineTask?.cancel()
 
         let finalMovieTitle = detectedMovie?.title ?? (currentJob.effectiveTitle.isEmpty ? "Фильм" : currentJob.effectiveTitle)
-        let audioSettings = stagedAudioSettings ?? LongformAudioSettings()
-        let workDir = settings.workingDirectory ?? currentJob.url.deletingLastPathComponent()
+        let audioSettings = stagedAudioSettings ?? longformResult?.audioSettings ?? LongformAudioSettings()
+        let workDir = settings.outputDirectory ?? settings.workingDirectory ?? currentJob.url.deletingLastPathComponent()
 
         phase = .buildingLongform(fraction: 0.10, step: initialStep)
 
         pipelineTask = Task {
             do {
+                var renderArc = existingArc
+                if editorialPass {
+                    try await modelManager.requireDirector(profile: settings.copywriterModel.directorProfile)
+                    let gateway = makeDirectorGateway(modelManager: modelManager)
+                    renderArc = await makeEditorialReview(model: gateway)
+                        .review(arc: existingArc, transcript: transcript, coldOpenEnabled: audioSettings.coldOpenEnabled)
+                    let titled = await LongformActTitleService(model: gateway).applyTitles(to: renderArc,
+                        transcript: transcript, movieTitle: finalMovieTitle, progress: nil)
+                    renderArc = titled.arc
+                    try Task.checkCancellation()
+                }
                 // Пробрасываем модель в LongformActTitleService через DirectorChatGateway
-                let coordinator = self.makeLongformCoordinator(modelManager: modelManager)
+                let coordinator = self.makeLongformCoordinator(modelManager: modelManager, settings: settings)
                 let selectedMoments = self.thematicAnalysis?.selectedMoments ?? []
                 let result = try await coordinator.buildLongformVideo(
                     sourceURL: currentJob.url,
@@ -913,7 +995,7 @@ final class WorkspaceModel {
                     selectedMoments: selectedMoments,
                     essayPlan: stagedEssayPlan ?? thematicAnalysis?.essayPlan,
                     audioSettings: audioSettings,
-                    existingArc: existingArc,
+                    existingArc: renderArc,
                     workingDirectory: workDir,
                     channelLogoEnabled: settings.channelLogoWatermarkEnabled
                 ) { [weak self] frac, step in
@@ -939,18 +1021,15 @@ final class WorkspaceModel {
         confirmedMovieTitle: String? = nil,
         audioSettings: LongformAudioSettings,
         essayPlan: EssayPlan? = nil,
+        approvedArc: LongformNarrativeArc? = nil,
         modelManager: ModelManager,
         settings: AppSettings
     ) {
         guard let currentJob = job, let transcript = storedTranscript else { return }
+        errorMessage = nil
         self.selectedConcept = concept
         self.stagedAudioSettings = audioSettings
         self.stagedEssayPlan = essayPlan
-        if let essayPlan {
-            self.thematicAnalysis?.essayPlan = essayPlan
-            self.currentProject?.thematicAnalysis = self.thematicAnalysis
-            Task { await persistThemeState(reason: "essay-plan") }
-        }
 
         let candidate = (confirmedMovieTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let finalMovieTitle: String
@@ -983,26 +1062,32 @@ final class WorkspaceModel {
             )
         }
 
-        // Запоминаем тему в историю созданных эссе фильма
-        LongformHistoryService.shared.markConceptGenerated(movieTitle: finalMovieTitle, conceptWord: concept.word)
-
         phase = .buildingLongform(fraction: 0.05, step: "Подготовка видеомонтажа...")
 
-        let workDir = settings.workingDirectory ?? currentJob.url.deletingLastPathComponent()
+        let workDir = settings.outputDirectory ?? settings.workingDirectory ?? currentJob.url.deletingLastPathComponent()
 
+        pipelineTask?.cancel()
         pipelineTask = Task {
             do {
-                // Пробрасываем модель в LongformActTitleService через DirectorChatGateway
-                let coordinator = self.makeLongformCoordinator(modelManager: modelManager)
-                let selectedMoments = self.thematicAnalysis?.selectedMoments ?? []
+                let analysis = try await resolveLongformAnalysis(
+                    for: concept, transcript: transcript, movieTitle: finalMovieTitle,
+                    userPlan: essayPlan, modelManager: modelManager, settings: settings)
+                await persistThemeState(reason: "selected-theme-analysis")
+                try Task.checkCancellation()
+                if approvedArc == nil {
+                    self.phase = .buildingLongform(fraction: 0.08, step: "Подготовка редакторской проверки сцен...")
+                    try await modelManager.requireDirector(profile: settings.copywriterModel.directorProfile)
+                }
+                let coordinator = self.makeLongformCoordinator(modelManager: modelManager, settings: settings)
                 let result = try await coordinator.buildLongformVideo(
                     sourceURL: currentJob.url,
                     movieTitle: finalMovieTitle,
                     transcript: transcript,
-                    concept: concept,
-                    selectedMoments: selectedMoments,
-                    essayPlan: essayPlan,
+                    concept: analysis.primaryConcept,
+                    selectedMoments: analysis.selectedMoments,
+                    essayPlan: analysis.essayPlan,
                     audioSettings: audioSettings,
+                    existingArc: approvedArc,
                     workingDirectory: workDir,
                     channelLogoEnabled: settings.channelLogoWatermarkEnabled
                 ) { [weak self] frac, step in
@@ -1011,7 +1096,10 @@ final class WorkspaceModel {
                         self?.phase = .buildingLongform(fraction: frac, step: step)
                     }
                 }
+                try Task.checkCancellation()
                 self.longformResult = result
+                LongformHistoryService.shared.markConceptGenerated(
+                    movieTitle: finalMovieTitle, conceptWord: analysis.primaryConcept.word)
                 await self.persistThemeState(reason: "longform-render")
                 self.phase = .longformResults
             } catch is CancellationError {
@@ -1021,7 +1109,7 @@ final class WorkspaceModel {
             } catch {
                 if Task.isCancelled { return }
                 self.errorMessage = "Ошибка монтажа длинного ролика: \(error.localizedDescription)"
-                self.phase = .empty
+                self.phase = .selectingLongformConcept
             }
         }
     }
@@ -1041,7 +1129,7 @@ final class WorkspaceModel {
         defer { isRegeneratingConcepts = false }
         let effectiveTitle = detectedMovie?.title ?? job?.effectiveTitle ?? "Фильм"
         let overview = detectedMovie?.overview
-        let thematicService = LongformThematicService()
+        let projectID = currentProject?.id
 
         do {
             let freshAnalysis = try await thematicService.discoverThematicAnalysis(
@@ -1051,6 +1139,13 @@ final class WorkspaceModel {
                 modelManager: modelManager,
                 directorProfile: directorProfile
             )
+            guard currentProject?.id == projectID,
+                  storedTranscript.flatMap({ ThematicAnalysisCache.fingerprint(of: $0) })
+                    == ThematicAnalysisCache.fingerprint(of: transcript) else { return }
+            guard ThematicAnalysisCache.isReusable(freshAnalysis, transcript: transcript) else {
+                throw ThematicDiscoveryError.noGroundedTheme("анализ не подтверждён текущим транскриптом")
+            }
+            self.longformResult = nil
             self.thematicAnalysis = freshAnalysis
             self.selectedConcept = freshAnalysis.primaryConcept
             Self.log("Director regenerated themes for '\(effectiveTitle)': \(freshAnalysis.primaryConcept.word) (source=\(freshAnalysis.source.rawValue))")
@@ -1070,8 +1165,7 @@ final class WorkspaceModel {
         } else {
             self.thematicAnalysis = nil
             self.selectedConcept = nil
-            cleanUpTempInput()
-            self.phase = .empty
+                self.phase = .empty
         }
     }
 
@@ -1082,684 +1176,7 @@ final class WorkspaceModel {
         self.stagedEssayPlan = nil
         self.storedTranscript = nil
         self.detectedMovie = nil
-        cleanUpTempInput()
         self.phase = .empty
-    }
-
-    /// Запускает генерацию вирусных вертикальных Shorts из текущего загруженного фильма,
-    /// повторно используя готовую транскрипцию Whisper без дублирования расшифровки.
-    func generateShortsFromCurrentMovie(modelManager: ModelManager, settings: AppSettings) {
-        guard let currentJob = job, let transcript = storedTranscript ?? currentProject?.transcript else { return }
-        cleanupClipTempFiles()
-        self.clips = []
-        self.variants = []
-        self.pipelineError = nil
-        self.phase = .findingMoments
-
-        pipelineTask = Task {
-            await continueShortsPipeline(
-                job: currentJob,
-                transcript: transcript,
-                movie: self.detectedMovie ?? self.currentProject?.tmdbMetadata,
-                modelManager: modelManager,
-                settings: settings
-            )
-        }
-    }
-
-    // MARK: - Single-video flow (unchanged behaviour)
-
-    private func processSingleVideo(job newJob: VideoJob, modelManager: ModelManager, settings: AppSettings) async {
-        guard let engine = modelManager.engine else {
-            errorMessage = "The model is still getting ready — give it a moment, then drop the video again."
-            return
-        }
-
-        job = newJob
-        variants = []
-        detectedLanguage = nil
-        phase = .processing
-
-        do {
-            let result = try await GemmaService.generate(
-                job: newJob,
-                engine: engine,
-                languageOverride: settings.languageOverride,
-                styleExamples: settings.styleExamples)
-            variants = result.variants
-            detectedLanguage = result.detectedLanguage
-            phase = .results
-        } catch {
-            errorMessage = "Couldn't generate posts for that video. \(error.localizedDescription)"
-            job = nil
-            phase = .empty
-        }
-    }
-
-    // MARK: - Pre-cut short flow (ready-made short, no moment-finding)
-
-    private func processPrecutShort(job: VideoJob, modelManager: ModelManager, settings: AppSettings) async {
-        cleanupClipTempFiles()
-        self.job = job
-        clips = []
-        variants = []
-        pipelineError = nil
-
-        let needsTranscription = settings.transcriptionEnabled
-
-        // If transcription is disabled, open the editor INSTANTLY!
-        if needsTranscription {
-            phase = .transcribing
-        } else {
-            phase = .shortsResults
-        }
-
-        pipelineTask = Task {
-            do {
-                // 1. Transcribe (for subtitle segments + captioning).
-                let transcript: Transcript?
-                if needsTranscription {
-                    transcript = try await transcription.transcript(
-                        for: job.url, languageHint: settings.languageOverride,
-                        modelCacheDir: settings.workingDirectory?.appendingPathComponent("huggingface"))
-                } else {
-                    transcript = nil
-                }
-                let captionLanguage: String? = transcript.flatMap { $0.contentLanguage ?? $0.language }
-
-                try Task.checkCancellation()
-
-                // 2. Create one clip from the full video (skips moment-finding).
-                let segs = transcript.map { t in
-                    t.segments.map { SubtitleSegment(
-                        start: $0.start, end: $0.end, text: $0.text.trimmed, words: $0.words) }
-                } ?? []
-                let candidate = ClipCandidate(
-                    start: 0, end: job.durationSeconds, why: "", hook: "", overlay: "")
-                var appearance = settings.subtitleAppearance
-                // Force premium cinema styling (override old saved defaults)
-                appearance.fontChoiceRaw = SubtitleAppearance.FontChoice.russoOne.rawValue
-                appearance.maxWordsPerCaption = 2
-                appearance.textBorderWidth = 3.5
-                appearance.fontSizeScale = 0.085
-                appearance.moodProfile = candidate.mood
-                let clip = ShortClip(
-                    candidate: candidate,
-                    transcriptSlice: transcript?.fullText ?? "",
-                    subtitleSegments: segs,
-                    sourceMetadata: job.sourceMetadata,
-                    overlayEnabled: settings.burnHookOverlay,
-                    reframeEnabled: false,
-                    burnSubtitles: needsTranscription && settings.burnSubtitles,
-                    subtitleAppearance: appearance,
-                    watermarkEnabled: settings.watermarkEnabled,
-                    watermarkText: settings.watermarkText,
-                    watermarkAppearance: settings.watermarkAppearance,
-                    promoOverlayEnabled: settings.promoOverlayEnabled,
-                    promoCode: settings.promoCode,
-                    promoDurationSeconds: settings.promoDurationSeconds)
-
-                clip.clipJob = job
-                clip.isLandscape = await VerticalReframer.isLandscape(url: job.url)
-                clip.antiCopyrightEnabled = settings.antiCopyrightEnabled
-                clip.antiCopyrightPreset = settings.antiCopyrightPreset
-                clip.antiCopyrightConfig = settings.antiCopyrightPreset.config
-
-                // Instant title & year extraction from source metadata
-                if let meta = job.sourceMetadata {
-                    let sourceText = [meta.title, meta.description].filter { !$0.trimmed.isEmpty }.joined(separator: " ")
-                    if let guess = CinemaContentGenerator.movieTitleGuess(from: sourceText) {
-                        clip.detectedMovieTitle = guess.title
-                        clip.detectedMovieYear = guess.year ?? ""
-                    }
-                }
-
-                clips = [clip]
-
-                // Switch phase to results as soon as clip is created
-                phase = .shortsResults
-
-                // 3. Caption via the copywriter model (only when transcription ran).
-                if needsTranscription {
-                    clip.stage = .captioning
-                    do {
-                        let result = try await ClipRenderingService.generateCaption(
-                            clip: clip, modelManager: modelManager, settings: settings,
-                            transcriptLanguage: captionLanguage)
-                        clip.applyGeneratedCopy(result, detectedLanguage: result.detectedLanguage)
-                        saveProcessedRecord(for: clip, settings: settings)
-                    } catch {
-                        Self.log("precut caption fallback: \(error.localizedDescription)")
-                        clip.applyGeneratedCopy(
-                            fallbackGeneration(for: clip, language: captionLanguage),
-                            detectedLanguage: captionLanguage)
-                        saveProcessedRecord(for: clip, settings: settings)
-                    }
-                } else {
-                    clip.applyGeneratedCopy(
-                        fallbackGeneration(for: clip, language: captionLanguage),
-                        detectedLanguage: captionLanguage)
-                }
-
-                clip.stage = .ready
-
-                // 4. Auto-apply cinema metadata in the background so editor is not blocked.
-                Task {
-                    await self.applyCinemaContentForGeneratedClip(
-                        clip: clip, movie: nil, modelManager: modelManager,
-                        language: captionLanguage, settings: settings)
-                }
-
-                Self.log("precut short ready — \(job.durationLabel), language=\(captionLanguage ?? "?")")
-
-            } catch is CancellationError {
-                cleanupClipTempFiles()
-                clips = []
-                self.job = nil
-                cleanUpTempInput()
-                phase = .empty
-            } catch {
-                if Self.isMetadataPermissionError(error) {
-                    Self.log("ignoring metadata permission error: \(error.localizedDescription)")
-                } else {
-                    pipelineError = error.localizedDescription
-                    errorMessage = "Couldn't process that short. \(error.localizedDescription)"
-                    self.job = nil
-                    clips = []
-                    cleanUpTempInput()
-                    phase = .empty
-                }
-            }
-        }
-    }
-
-
-
-    // MARK: - Shorts flow (long video → moment-finding → clips)
-
-    private func startShortsPipeline(job newJob: VideoJob, modelManager: ModelManager, settings: AppSettings) {
-        cleanupClipTempFiles()
-        job = newJob
-        clips = []
-        variants = []
-        pipelineError = nil
-        phase = .transcribing
-
-        pipelineTask = Task {
-            await self.runShortsPipeline(job: newJob, modelManager: modelManager, settings: settings)
-        }
-    }
-
-    func regenerateShorts(modelManager: ModelManager, settings: AppSettings) {
-        guard let currentJob = job else { return }
-        startShortsPipeline(job: currentJob, modelManager: modelManager, settings: settings)
-    }
-
-    private func runShortsPipeline(job: VideoJob, modelManager: ModelManager, settings: AppSettings) async {
-        let pipelineStart = Date()
-        progressTracker.reset(totalVideoDuration: job.durationSeconds)
-        Self.log("pipeline start — copywriter=\(settings.copywriterModel.rawValue)")
-        do {
-            // 0. Stage 1: Identify movie & ratings (0% -> 5%)
-            let initialCandidate = job.effectiveTitle
-            var movie = self.detectedMovie ?? self.currentProject?.tmdbMetadata
-            if movie == nil {
-                movie = await movieMetadata.resolveMovie(
-                    filename: initialCandidate,
-                    sourceTitle: job.sourceMetadata?.title,
-                    apiKey: settings.tmdbAPIKey)
-                self.detectedMovie = movie
-            }
-            if let movie {
-                progressTracker.updateMovieDetection(
-                    title: movie.title,
-                    year: movie.year,
-                    imdb: movie.imdbRating,
-                    rottenTomatoes: movie.rottenTomatoesScore)
-            }
-
-            // 1. Stage 2: Transcript (5% -> 45%)
-            let transcript: Transcript
-            if let cached = self.storedTranscript ?? self.currentProject?.transcript {
-                transcript = cached
-                self.storedTranscript = cached
-                Self.log("Using cached transcript for shorts: \(cached.segments.count) segments")
-            } else {
-                phase = .transcribing
-                progressTracker.startTranscription(totalSeconds: job.durationSeconds)
-                let t0 = Date()
-                transcript = try await transcription.transcript(
-                    for: job.url, languageHint: settings.languageOverride,
-                    modelCacheDir: settings.workingDirectory?.appendingPathComponent("huggingface")) { @Sendable [weak self] sec in
-                        Task { @MainActor in
-                            self?.progressTracker.updateTranscriptionProgress(processedSeconds: sec)
-                        }
-                    }
-                self.storedTranscript = transcript
-                self.currentProject?.transcript = transcript
-                if let project = self.currentProject {
-                    try? await filmProjectService.saveProject(project)
-                }
-                Self.log("transcript ready in \(Self.elapsed(since: t0)) — whisper=\(transcript.language ?? "?")")
-            }
-            // Trust the language of the actual text over Whisper's 30s auto-detect.
-            let captionLanguage = transcript.contentLanguage ?? transcript.language
-            progressTracker.updateTranscriptionProgress(processedSeconds: job.durationSeconds)
-            try Task.checkCancellation()
-
-            // 1.5. If movie was not detected from filename, use transcript sample with AI + TMDB
-            if movie == nil {
-                await modelManager.prepareDirectorIfNeeded()
-                let sampleText = transcript.segments.prefix(60).map(\.text).joined(separator: " ")
-                if let detected = await modelManager.momentFinder.detectMovieFromMetadata(
-                    title: job.sourceMetadata?.title ?? initialCandidate,
-                    description: sampleText,
-                    language: captionLanguage) {
-                    if !detected.title.isEmpty {
-                        let q = CinemaContentGenerator.MovieSearchQuery(
-                            title: detected.title,
-                            year: detected.year.isEmpty ? nil : detected.year)
-                        if let candidates = try? await TMDBService(apiKey: settings.tmdbAPIKey).searchMovies(by: q.title, year: q.year),
-                           let best = candidates.first {
-                            movie = await movieMetadata.enrichMovieIdentity(movie: best)
-                        } else {
-                            movie = MovieIdentity(
-                                id: detected.title,
-                                title: detected.title,
-                                originalTitle: nil,
-                                year: detected.year,
-                                imdbRating: nil,
-                                rottenTomatoesScore: nil,
-                                posterURL: nil,
-                                backdropURL: nil,
-                                overview: "",
-                                characters: [],
-                                director: nil,
-                                genres: [])
-                        }
-                        self.detectedMovie = movie
-                        if let m = movie {
-                            progressTracker.updateMovieDetection(
-                                title: m.title,
-                                year: m.year,
-                                imdb: m.imdbRating,
-                                rottenTomatoes: m.rottenTomatoesScore)
-                        }
-                    }
-                }
-            }
-
-            // 2. Stage 3 & 4: Поиск кульминационных моментов и нарезка Shorts
-            await continueShortsPipeline(
-                job: job,
-                transcript: transcript,
-                movie: movie,
-                modelManager: modelManager,
-                settings: settings
-            )
-        } catch is CancellationError {
-            cleanupClipTempFiles()
-            clips = []
-            self.job = nil
-            cleanUpTempInput()
-            phase = .empty
-        } catch {
-            pipelineError = error.localizedDescription
-            errorMessage = "Couldn't make shorts from that video. \(error.localizedDescription)"
-            self.job = nil
-            clips = []
-            cleanUpTempInput()
-            phase = .empty
-        }
-    }
-
-    private func continueShortsPipeline(
-        job: VideoJob,
-        transcript: Transcript,
-        movie: MovieIdentity?,
-        modelManager: ModelManager,
-        settings: AppSettings
-    ) async {
-        let pipelineStart = Date()
-        let captionLanguage = transcript.contentLanguage ?? transcript.language ?? settings.languageOverride ?? "en"
-
-        // Stage 3: Find narrative & character arcs (45% -> 65%)
-        phase = .findingMoments
-        progressTracker.startStoryAnalysis()
-        let t1 = Date()
-        await modelManager.prepareDirector(profile: settings.copywriterModel.directorProfile)
-        Self.log("director ready in \(Self.elapsed(since: t1)) — \(settings.copywriterModel.directorProfile.displayName)")
-
-        let movieTitle = movie?.title ?? job.fileName
-        let useInlineCaptions = settings.copywriterModel.usesInlineCaptions
-
-        // Scene detection — analyze video for scene boundaries or use cached scenes
-        var sceneMap: String?
-        var scenes: [DetectedScene] = currentProject?.scenes ?? []
-        if scenes.isEmpty {
-            do {
-                scenes = try await SceneDetectionService.detectScenes(in: job.url)
-                currentProject?.scenes = scenes
-                if let project = currentProject {
-                    try? await filmProjectService.saveProject(project)
-                }
-                Self.log("scene detection: found \(scenes.count) scenes")
-            } catch {
-                Self.log("scene detection skipped: \(error.localizedDescription)")
-            }
-        } else {
-            Self.log("scene detection: using \(scenes.count) cached scenes")
-        }
-
-        if scenes.count > 1 {
-            sceneMap = SceneDetectionService.formatForPrompt(
-                scenes: scenes, transcriptDuration: job.durationSeconds)
-        }
-
-        let isComedy: Bool = {
-            switch settings.cinemaGenreMode {
-            case .comedy:
-                return true
-            case .drama:
-                return false
-            case .auto:
-                return movie?.isComedy ?? false
-            }
-        }()
-
-        do {
-            let t2 = Date()
-            let candidates = try await modelManager.momentFinder.findMoments(
-                transcript: transcript.srtLike(),
-                includeCaptions: useInlineCaptions,
-                language: captionLanguage,
-                styleExamples: settings.styleExamples,
-                videoTitle: movieTitle,
-                videoDescription: movie?.overview ?? (job.sourceMetadata?.description ?? ""),
-                sceneMap: sceneMap,
-                isComedy: isComedy)
-            
-            // Извлечение реплик из транскрипта для каждого клипа
-            let candidatesWithDialogue = DialogueExtractor.extractDialogueForAll(
-                clips: candidates,
-                transcript: transcript
-            )
-            
-            self.currentProject?.candidates = candidatesWithDialogue
-            if let project = self.currentProject {
-                try? await filmProjectService.saveProject(project)
-            }
-
-            progressTracker.updateStoryAnalysis(fraction: 1.0, arcFound: candidates.first?.overlay)
-            Self.log("found \(candidates.count) moment(s) in \(Self.elapsed(since: t2)), captions inline=\(useInlineCaptions), isComedy=\(isComedy)")
-            try Task.checkCancellation()
-
-            // Seed cards; they fill in as each clip is cut + captioned.
-            clips = candidates.map { candidate in
-                let clipStart = candidate.start
-                let clipEnd = candidate.end
-                
-                var mappedSegs: [SubtitleSegment] = []
-                if let cSegs = candidate.segments, cSegs.count > 1 {
-                    var timelineOffset: Double = 0
-                    for cSeg in cSegs.sorted(by: { $0.start < $1.start }) {
-                        let inside = transcript.segments.filter { $0.end > cSeg.start && $0.start < cSeg.end }
-                        for seg in inside {
-                            let sStart = max(0, seg.start - cSeg.start) + timelineOffset
-                            let sEnd = max(sStart, seg.end - cSeg.start) + timelineOffset
-                            let wordTimings = seg.words.map {
-                                WordTimestamp(
-                                    word: $0.word,
-                                    start: max(0, $0.start - cSeg.start) + timelineOffset,
-                                    end: max(0, $0.end - cSeg.start) + timelineOffset
-                                )
-                            }
-                            mappedSegs.append(SubtitleSegment(start: sStart, end: sEnd, text: seg.text.trimmed, words: wordTimings))
-                        }
-                        timelineOffset += (cSeg.end - cSeg.start)
-                    }
-                } else {
-                    mappedSegs = transcript.segments
-                        .filter { $0.end > clipStart && $0.start < clipEnd }
-                        .map { seg in
-                            let wordTimings = seg.words.map {
-                                WordTimestamp(word: $0.word, start: max(0, $0.start - clipStart), end: max(0, $0.end - clipStart))
-                            }
-                            return SubtitleSegment(
-                                start: max(0, seg.start - clipStart),
-                                end: max(0, seg.end - clipStart),
-                                text: seg.text.trimmed,
-                                words: wordTimings
-                            )
-                        }
-                }
-                
-                var appearance = SubtitleAppearance.cinemaPremium
-                if let candidateMood = candidate.mood {
-                    appearance.moodProfile = candidateMood
-                } else if isComedy {
-                    appearance.moodProfile = CinematicMoodProfile(mood: .eccentricComedy)
-                }
-                let newClip = ShortClip(
-                    candidate: candidate,
-                    transcriptSlice: transcript.slice(start: clipStart, end: clipEnd),
-                    subtitleSegments: mappedSegs,
-                    sourceMetadata: job.sourceMetadata,
-                    overlayEnabled: false,
-                    reframeEnabled: true,
-                    burnSubtitles: true,
-                    subtitleAppearance: appearance,
-                    watermarkEnabled: settings.watermarkEnabled,
-                    watermarkText: settings.watermarkText,
-                    watermarkAppearance: settings.watermarkAppearance,
-                    promoOverlayEnabled: false,
-                    promoCode: "",
-                    promoDurationSeconds: 0)
-                newClip.antiCopyrightEnabled = settings.antiCopyrightEnabled
-                newClip.antiCopyrightPreset = settings.antiCopyrightPreset
-                newClip.antiCopyrightConfig = settings.antiCopyrightPreset.config
-                newClip.descriptionMode = .movie
-                let m = self.detectedMovie ?? movie
-                if let m {
-                    newClip.detectedMovieTitle = m.title
-                    newClip.detectedMovieYear = m.year
-                    newClip.imdbRating = m.imdbRating
-                    newClip.rottenTomatoesScore = m.rottenTomatoesScore
-                    let channel = settings.telegramChannelId.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !channel.isEmpty {
-                        newClip.overlayText = "🍿 Название в Telegram: \(channel)"
-                    }
-                }
-                return newClip
-            }
-            phase = .shortsResults
-
-            // On tight RAM, free the Director before the Gemma E4B clip-watcher.
-            if settings.copywriterModel.watchesClips {
-                modelManager.freeDirectorIfMemoryTight()
-            }
-
-            // Stage 4: Cut, then caption, each clip in turn (65% -> 100%)
-            progressTracker.startRendering(totalClips: clips.count)
-
-            for (index, clip) in clips.enumerated() {
-                try Task.checkCancellation()
-                progressTracker.updateRenderingProgress(
-                    clipIndex: index,
-                    totalClips: clips.count,
-                    clipName: clip.candidate.overlay.isEmpty ? "Эдит \(index + 1)" : clip.candidate.overlay)
-                do {
-                    let tCut = Date()
-                    try await ClipRenderingService.renderAndCaption(
-                        clip: clip,
-                        jobURL: job.url,
-                        transcript: transcript,
-                        captionLanguage: captionLanguage,
-                        modelManager: modelManager,
-                        settings: settings,
-                        transcription: transcription
-                    )
-                    await self.applyCinemaContentForGeneratedClip(
-                        clip: clip,
-                        movie: self.detectedMovie ?? movie,
-                        modelManager: modelManager,
-                        language: captionLanguage,
-                        settings: settings
-                    )
-                    saveProcessedRecord(for: clip, settings: settings)
-                    Self.log("clip \(index + 1)/\(clips.count) ready in \(Self.elapsed(since: tCut))")
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    clip.stage = .failed(error.localizedDescription)
-                    Self.log("clip \(index + 1)/\(clips.count) failed: \(error.localizedDescription)")
-                    
-                    // Fallback captioning
-                    Self.log("clip \(index + 1)/\(clips.count) caption fallback due to failure: \(error.localizedDescription)")
-                    clip.applyGeneratedCopy(
-                        fallbackGeneration(for: clip, language: captionLanguage),
-                        detectedLanguage: captionLanguage)
-                    saveProcessedRecord(for: clip, settings: settings)
-                }
-            }
-            progressTracker.finish()
-            Self.log("pipeline done — \(clips.count) clip(s) in \(Self.elapsed(since: pipelineStart)) total")
-        } catch is CancellationError {
-            cleanupClipTempFiles()
-            clips = []
-            phase = .empty
-        } catch {
-            pipelineError = error.localizedDescription
-            errorMessage = "Couldn't make shorts from that video. \(error.localizedDescription)"
-            clips = []
-            phase = .empty
-        }
-    }
-
-    /// Uses the on-device model to read the film title + year out of the source
-    /// metadata, storing them on the clip and defaulting the burned hook to
-    /// "Title (Year)". Best-effort: silently no-ops if nothing is identified.
-    private func detectAndApplyMovie(for clip: ShortClip, modelManager: ModelManager, language: String?) async {
-        guard let meta = clip.sourceMetadata,
-              !(meta.title.trimmed.isEmpty && meta.description.trimmed.isEmpty) else { return }
-
-        await modelManager.prepareDirectorIfNeeded()
-        guard let detected = await modelManager.momentFinder.detectMovieFromMetadata(
-            title: meta.title, description: meta.description, language: language) else { return }
-
-        clip.detectedMovieTitle = detected.title
-        clip.detectedMovieYear = detected.year
-        let titleYear = detected.year.isEmpty ? detected.title : "\(detected.title) (\(detected.year))"
-        Self.log("detected movie: \(titleYear)")
-    }
-
-    /// Full cinema pipeline for generated shorts and precut YouTube Shorts:
-    /// detects/applies the film metadata (TMDB + on-device AI model fallback),
-    /// then applies the viral cinema hook, description, and hashtags automatically
-    /// for TikTok, Instagram Reels, and YouTube Shorts.
-    private func applyCinemaContentForGeneratedClip(
-        clip: ShortClip,
-        movie: MovieIdentity?,
-        modelManager: ModelManager,
-        language: String?,
-        settings: AppSettings
-    ) async {
-        let meta = clip.sourceMetadata
-        var sourceText = [meta?.title, meta?.description]
-            .compactMap { $0?.trimmed }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-
-        if sourceText.isEmpty && !clip.transcriptSlice.trimmed.isEmpty {
-            sourceText = clip.transcriptSlice.trimmed
-        }
-
-        var query: CinemaContentGenerator.MovieSearchQuery?
-
-        // 1. If movie was resolved, use its title and year directly
-        let effectiveTitle = (movie?.title ?? clip.detectedMovieTitle).trimmed
-        let effectiveYear = (movie?.year ?? clip.detectedMovieYear).trimmed
-        if !effectiveTitle.isEmpty {
-            query = CinemaContentGenerator.MovieSearchQuery(
-                title: effectiveTitle,
-                year: effectiveYear.isEmpty ? nil : effectiveYear)
-        }
-
-        // 2. Try regex title guessing
-        if query == nil, !sourceText.isEmpty {
-            query = CinemaContentGenerator.movieTitleGuess(from: sourceText)
-        }
-
-        // 3. Fallback to AI model
-        if query == nil || (query?.year ?? "").isEmpty {
-            await modelManager.prepareDirectorIfNeeded()
-            if let detected = await modelManager.momentFinder.detectMovieFromMetadata(
-                title: meta?.title ?? "", description: meta?.description ?? sourceText, language: language) {
-                let title = detected.title.isEmpty ? (query?.title ?? "") : detected.title
-                let year = detected.year.isEmpty ? (query?.year ?? "") : detected.year
-                if !title.isEmpty {
-                    query = CinemaContentGenerator.MovieSearchQuery(
-                        title: title,
-                        year: year.isEmpty ? nil : year)
-                }
-            }
-        }
-
-        guard let searchQuery = query, !searchQuery.title.trimmed.isEmpty else {
-            Self.log("applyCinemaContentForGeneratedClip: could not resolve movie title")
-            return
-        }
-
-        Self.log("applyCinemaContentForGeneratedClip: querying TMDB & generating viral content for \"\(searchQuery.title)\" \(searchQuery.year ?? "")")
-
-        let result = await CinemaContentGenerator.generate(
-            query: searchQuery,
-            sourceText: sourceText,
-            tmdbAPIKey: settings.tmdbAPIKey,
-            descriptionMode: .movie,   // show the movie synopsis in the description
-            textAd: settings.textAdEnabled,
-            sceneDescriptionProvider: nil,
-            fallbackMovieProvider: {
-                await modelManager.prepareDirectorIfNeeded()
-                return await modelManager.momentFinder.inferMovie(query: searchQuery, sourceText: sourceText)
-            })
-
-        guard !result.content.isEmpty else { return }
-
-        // Store the detected title/year so the manual editor field is pre-filled.
-        clip.detectedMovieTitle = result.query.title
-        clip.detectedMovieYear = result.query.year ?? ""
-        clip.descriptionMode = .movie
-
-        CinemaContentGenerator.apply(
-            content: result.content,
-            to: clip,
-            replaceHook: true,       // write the cinema hook into variant.hook + overlayText
-            saveToHistory: false,
-            settings: nil)
-
-        Self.log("applyCinemaContentForGeneratedClip: successfully applied viral cinema content for \"\(result.query.title)\" (\(result.query.year ?? ""))")
-    }
-
-
-
-
-
-    private func fallbackGeneration(for clip: ShortClip, language: String?) -> GenerationResult {
-        let hook = clip.sourceMetadata?.title.trimmed ?? ""
-        let summary = clip.sourceMetadata?.description.trimmed ?? ""
-        let variants = SocialPlatform.allCases.map {
-            PostVariant(platform: $0, hook: hook, summary: summary, hashtags: [], pinnedComment: "")
-        }
-        return GenerationResult(variants: variants, detectedLanguage: language)
-    }
-
-    /// macOS creates `.metadata` sidecar files (CoreSpotlight) and CoreML cache
-    /// files that the app often can't delete. These permission errors are system-
-    /// level, not app-level — ignore them gracefully.
-    private static func isMetadataPermissionError(_ error: Error) -> Bool {
-        let msg = error.localizedDescription.lowercased()
-        return msg.contains(".metadata") || msg.contains("coremldata")
     }
 
     func cancelPipeline() {
@@ -1798,7 +1215,6 @@ final class WorkspaceModel {
                 try? FileManager.default.removeItem(at: copy)
             }
             try FileManager.default.copyItem(at: url, to: copy)
-            tempInputURLs.insert(copy)
             return copy
         } catch {
             throw InputCopyError.failed(error.localizedDescription)
@@ -1821,13 +1237,7 @@ final class WorkspaceModel {
     /// Returns to the empty drop state and cleans up temp files.
     func startOver() {
         pipelineTask?.cancel()
-        cleanupClipTempFiles()
         job = nil
-        variants = []
-        clips = []
-        detectedLanguage = nil
-        publishReport = nil
-        publishError = nil
         errorMessage = nil
         pipelineError = nil
         // Состояние эссе чистим обязательно: иначе второй фильм стартует с темой,
@@ -1844,174 +1254,12 @@ final class WorkspaceModel {
         detectedMovie = nil
         isRegeneratingConcepts = false
         currentProject = nil
-        cleanUpTempInput()
         phase = .empty
     }
 
-    private func cleanupClipTempFiles() {
-        for clip in clips {
-            if let url = clip.clipJob?.url {
-                try? FileManager.default.removeItem(at: url)
-            }
-        }
-    }
 
-    private func cleanUpTempInput() {
-        for url in tempInputURLs {
-            // Сохраняем кэш нормализованных видео
-            if url.lastPathComponent.hasPrefix("shortcast-normalized-") {
-                continue
-            }
-            try? FileManager.default.removeItem(at: url)
-        }
-        tempInputURLs.removeAll()
-    }
-
-    func cleanUpOrphanedInputFiles(settings: AppSettings) {
-        guard let workDir = settings.workingDirectory else { return }
-        let inputDir = workDir.appendingPathComponent("input", isDirectory: true)
-        let didAccess = workDir.startAccessingSecurityScopedResource()
-        defer { if didAccess { workDir.stopAccessingSecurityScopedResource() } }
-
-        guard let contents = try? FileManager.default.contentsOfDirectory(at: inputDir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
-        for url in contents {
-            // Сохраняем кэш нормализованных видео (удаляем только если старше 7 дней)
-            if url.lastPathComponent.hasPrefix("shortcast-normalized-") {
-                let modDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
-                if Date().timeIntervalSince(modDate) < 7 * 86400 {
-                    continue
-                }
-            }
-            if !tempInputURLs.contains(url) {
-                try? FileManager.default.removeItem(at: url)
-            }
-        }
-    }
-
-    // MARK: - Publishing (single-video flow)
-
-    func publish(settings: AppSettings) async {
-        guard let job, !isPublishing else { return }
-        publishError = nil
-        publishReport = nil
-        isPublishing = true
-        defer { isPublishing = false }
-
-        let client = UploadPostClient(
-            apiKey: settings.apiKey,
-            profileName: settings.profileName)
-        do {
-            var videoURL = job.url
-            var isWatermarked = false
-
-            if settings.watermarkFullVideoEnabled && !settings.watermarkText.isEmpty {
-                let wmURL = try await WatermarkRenderer.render(
-                    videoURL: job.url,
-                    text: settings.watermarkText,
-                    appearance: settings.watermarkAppearance)
-                videoURL = wmURL
-                isWatermarked = true
-            }
-
-            defer {
-                if isWatermarked { try? FileManager.default.removeItem(at: videoURL) }
-            }
-
-            publishReport = try await client.publish(
-                videoURL: videoURL,
-                variants: variants,
-                tiktokAsDraft: settings.tiktokAsDraft)
-        } catch {
-            publishError = error.localizedDescription
-        }
-    }
-
-    func dismissPublishResult() {
-        publishReport = nil
-        publishError = nil
-    }
-
-    // MARK: - Publishing (shorts flow)
-
-    var approvedReadyCount: Int {
-        clips.filter { $0.isApproved && $0.isReadyToPublish }.count
-    }
-
-    /// Publishes every approved, ready clip in turn. Each clip keeps its own
-    /// status, so a partial batch is reflected per card. Stops early if a clip
-    /// hits the Upload-Post monthly limit.
-    func publishAllApproved(settings: AppSettings) async {
-        guard !isPublishingAll else { return }
-        applyCurrentSubtitleSettings(settings)
-        applyCurrentWatermarkSettings(settings)
-        applyCurrentPromoSettings(settings)
-        isPublishingAll = true
-        defer { isPublishingAll = false }
-
-        for clip in clips where clip.isApproved && clip.isReadyToPublish {
-            await clip.publish(settings: settings)
-            if let error = clip.publishError, error.localizedCaseInsensitiveContains("limit") {
-                break
-            }
-        }
-    }
-
-    /// True while "Schedule all" runs.
-    private(set) var isSchedulingAll = false
-
-    /// The dates each approved, ready clip would be scheduled to: the first at
-    /// `start`, then one every `intervalDays`. Used for the schedule preview.
-    func schedulePlan(start: Date, intervalDays: Int) -> [(clip: ShortClip, date: Date)] {
-        let cal = Calendar.current
-        var date = start
-        var plan: [(ShortClip, Date)] = []
-        for clip in clips where clip.isApproved && clip.isReadyToPublish {
-            plan.append((clip, date))
-            date = cal.date(byAdding: .day, value: max(1, intervalDays), to: date) ?? date
-        }
-        return plan
-    }
-
-    /// Schedules every approved, ready clip: the first at `start`, then one every
-    /// `intervalDays`. Sequential; stops cleanly on the monthly limit.
-    func scheduleAllApproved(start: Date, intervalDays: Int, settings: AppSettings) async {
-        guard !isSchedulingAll else { return }
-        applyCurrentSubtitleSettings(settings)
-        applyCurrentWatermarkSettings(settings)
-        applyCurrentPromoSettings(settings)
-        isSchedulingAll = true
-        defer { isSchedulingAll = false }
-
-        for (clip, date) in schedulePlan(start: start, intervalDays: intervalDays) {
-            await clip.publish(settings: settings, scheduledDate: date)
-            if let error = clip.publishError, error.localizedCaseInsensitiveContains("limit") {
-                break
-            }
-        }
-    }
-
-    // MARK: - History
-
-    private func saveProcessedRecord(for clip: ShortClip, settings: AppSettings) {
-        guard let url = clip.sourceMetadata?.webpageURL else { return }
-        let videoID = url.pathComponents.last ?? url.lastPathComponent
-        let tiktok = clip.variants.first(where: { $0.platform == .tiktok })
-        let record = ProcessedVideoRecord(
-            youtubeURL: url,
-            videoID: videoID,
-            title: clip.sourceMetadata?.title ?? clip.displayTitle,
-            dateProcessed: Date(),
-            hook: tiktok?.hook ?? "",
-            description: tiktok?.summary ?? "",
-            hashtags: tiktok?.hashtagLine ?? ""
-        )
-        var history = settings.processedVideoHistory
-        history.append(record)
-        settings.processedVideoHistory = history
-    }
 }
-
-private enum InputCopyError: LocalizedError {
+enum InputCopyError: LocalizedError {
     case missingWorkingDirectory
     case failed(String)
 

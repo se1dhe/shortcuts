@@ -31,6 +31,10 @@ struct BrowserUploadJob: Sendable, Codable, Equatable {
     var hashtags: [String]
     var isPublic: Bool
     var headless: Bool
+    var isShort: Bool? = nil
+    var action: String? = nil
+    var targetVideoURL: String? = nil
+    var pinnedComment: String? = nil
 
     init(
         videoURL: URL,
@@ -41,7 +45,11 @@ struct BrowserUploadJob: Sendable, Codable, Equatable {
         caption: String,
         hashtags: [String] = [],
         isPublic: Bool = true,
-        headless: Bool = true
+        headless: Bool = true,
+        isShort: Bool = false,
+        action: String? = nil,
+        targetVideoURL: String? = nil,
+        pinnedComment: String? = nil
     ) {
         self.videoPath = videoURL.path
         self.thumbnailPath = thumbnailURL?.path
@@ -52,23 +60,25 @@ struct BrowserUploadJob: Sendable, Codable, Equatable {
         self.hashtags = hashtags
         self.isPublic = isPublic
         self.headless = headless
+        self.isShort = isShort
+        self.action = action
+        self.targetVideoURL = targetVideoURL
+        self.pinnedComment = pinnedComment
     }
 }
 
 /// Status of account sessions in the local Chrome profile.
 struct BrowserAuthStatus: Sendable, Codable, Equatable {
     var tiktok: Bool
-    var instagram: Bool
     var youtube: Bool
 
-    init(tiktok: Bool = false, instagram: Bool = false, youtube: Bool = false) {
+    init(tiktok: Bool = false, youtube: Bool = false) {
         self.tiktok = tiktok
-        self.instagram = instagram
         self.youtube = youtube
     }
 
     var hasAnyConnected: Bool {
-        tiktok || instagram || youtube
+        tiktok || youtube
     }
 }
 

@@ -2,7 +2,6 @@ import { chromium } from 'playwright-core';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import { execFileSync } from 'child_process';
 
 const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEFAULT_PROFILE_DIR = path.join(
@@ -24,23 +23,26 @@ export function getProfileDirectory() {
 }
 
 /**
- * Automatically releases any stale Chromium ProcessSingleton locks and terminates
- * orphaned browser processes holding the profile.
+ * Release only a proven stale local lock. Never terminate an active browser:
+ * a second auth check must not kill a video that is still uploading.
  */
 export function cleanStaleLocks(profileDir = getProfileDirectory()) {
+  const lock = path.join(profileDir, 'SingletonLock');
+  let target;
   try {
-    const stdout = execFileSync('pgrep', ['-f', profileDir], { encoding: 'utf8' }).trim();
-    if (stdout) {
-      const pids = stdout.split(/\s+/).map((p) => parseInt(p, 10)).filter(Boolean);
-      for (const pid of pids) {
-        if (pid !== process.pid) {
-          try {
-            process.kill(pid, 'SIGKILL');
-          } catch {}
-        }
-      }
-    }
-  } catch {}
+    target = fs.readlinkSync(lock);
+  } catch (error) {
+    if (error.code === 'ENOENT') return;
+    throw new Error('Профиль Chrome занят или его блокировку нельзя проверить. Завершите текущее окно браузера перед новым запуском.');
+  }
+  const match = target.match(/^(.*)-(\d+)$/);
+  if (!match || match[1] !== os.hostname()) {
+    throw new Error('Профиль Chrome занят. Его блокировка не удалялась.');
+  }
+  let alive = true;
+  try { process.kill(Number(match[2]), 0); }
+  catch (error) { if (error.code === 'ESRCH') alive = false; }
+  if (alive) throw new Error('Профиль Chrome уже используется. Дождитесь текущей загрузки или закройте окно входа. Видео не прерывалось.');
 
   const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
   for (const file of lockFiles) {
@@ -67,7 +69,7 @@ export async function launchBrowser({ headless = true, profileDir = getProfileDi
     throw new Error(`Google Chrome not found at ${CHROME_PATH}. Please install Google Chrome.`);
   }
 
-  // Ensure no stale locks prevent Chromium from starting
+  // An active profile is an error, never a reason to kill its process.
   cleanStaleLocks(profileDir);
 
   const args = [
@@ -82,8 +84,6 @@ export async function launchBrowser({ headless = true, profileDir = getProfileDi
     executablePath: CHROME_PATH,
     headless: headless,
     viewport: null, // use actual window size
-    userAgent:
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
     args,
     ignoreDefaultArgs: ['--enable-automation'],
   });

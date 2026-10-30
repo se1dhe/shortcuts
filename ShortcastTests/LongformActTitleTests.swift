@@ -423,19 +423,15 @@ struct LongformActTitleTests {
         #expect(long.hasSuffix("…"))
     }
 
-    @Test("Metadata title selection is stable across processes (no hashValue reseeding)")
+    @Test("Metadata title comes from the model and never from a template")
     func testMetadataTitleIsDeterministic() {
-        let first = LongformMetadataGenerator.stableHash("Иллюзия")
-        let second = LongformMetadataGenerator.stableHash("Иллюзия")
-        #expect(first == second)
-        #expect(first >= 0)
-        #expect(LongformMetadataGenerator.stableHash("Жадность") != first)
-
         let arc = fixture().arc
         let concept = Self.concept(word: "Иллюзия")
         let a = LongformMetadataGenerator.generate(movieTitle: "X", concept: concept, arc: arc)
         let b = LongformMetadataGenerator.generate(movieTitle: "X", concept: concept, arc: arc)
         #expect(a.title == b.title)
+        // Полное название модели сохраняется без шаблонной приписки темы.
+        #expect(a.title.hasPrefix(concept.suggestedTitle + " | "))
         // Чаптеры уже используют act.title — названию акта больше не нужно быть константой
         #expect(a.description.contains(arc.acts[0].title))
     }

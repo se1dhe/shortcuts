@@ -253,7 +253,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             .font: captionFont(k: k),
             .foregroundColor: String.legibleAccent(hex: accentHex),
             .strokeColor: NSColor.black,
-            .strokeWidth: CGFloat(-3.6 * k),
+            .strokeWidth: CGFloat(-4.8 * k),
             .paragraphStyle: centerParagraph(),
             .shadow: cinematicShadow(blur: 10.0 * k, offsetY: -2.0 * k, alpha: 0.95),
             .kern: CGFloat(1.0 * k)
@@ -372,7 +372,8 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
 
         let hook = hookText?.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasHook = !(hook ?? "").isEmpty
-        let introEnd = hasHook ? Self.hookFadeOutDuration : 4.5
+        // Первые реплики не скрываем; пока виден хук, оставляем им место ниже него.
+        let introEnd = 0.0
 
         // 1. Центральное якорное слово концепта (висит весь фильм, плавно растворяется в финале)
         let (conceptLayer, conceptY, _) = buildCentralConceptLayer(
@@ -383,6 +384,11 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         )
         rootLayer.addSublayer(conceptLayer)
 
+        let introTaglineLayer = buildIntroTaglineLayer(
+            renderSize: renderSize, k: k, concept: concept, conceptY: conceptY,
+            totalDuration: calculatedTotalDuration, hookText: hasHook ? hook : nil)
+        let introBottom = introTaglineLayer.sublayers?.map(\.frame.minY).min()
+
         // 2. Плавные синхронные субтитры реплик персонажей прямо под концептом
         let (subtitlePhrasesLayer, subtitleBottom) = buildSynchronizedSubtitlesLayer(
             renderSize: renderSize,
@@ -391,19 +397,13 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
             conceptY: conceptY,
             timedPhrases: timedPhrases,
             totalDuration: calculatedTotalDuration,
-            introEnd: introEnd
+            introEnd: introEnd,
+            introCaptionTop: introBottom.map { $0 - CGFloat(24 * k) },
+            introCaptionEnd: hasHook ? Self.hookFadeOutDuration : 4.2
         )
         rootLayer.addSublayer(subtitlePhrasesLayer)
 
         // 3. Вступительная золотая линия и хук/философский слоган (с хуком — до 6.0с)
-        let introTaglineLayer = buildIntroTaglineLayer(
-            renderSize: renderSize,
-            k: k,
-            concept: concept,
-            conceptY: conceptY,
-            totalDuration: calculatedTotalDuration,
-            hookText: hasHook ? hook : nil
-        )
         rootLayer.addSublayer(introTaglineLayer)
 
         // 4. Финальный CTA — только когда задан; иначе слой-состав остаётся прежним (3 подслоя)
@@ -604,11 +604,15 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
     /// Рамка слоя реплики: та же формула, что в цикле раскладки. Вынесена, чтобы полоса,
     /// из которой считается место под знак, и реальная раскладка не могли разъехаться.
     static func captionRect(textWidth: CGFloat, textHeight: CGFloat, renderSize: CGSize,
-                            conceptY: CGFloat, k: Double) -> CGRect {
+                            conceptY: CGFloat, k: Double, maximumTop: CGFloat? = nil) -> CGRect {
         let W = renderSize.width
         let subW = min(W * 0.85, max(CGFloat(120.0 * k), ceil(textWidth) + CGFloat(36.0 * k)))
         let subH = max(CGFloat(44.0 * k), ceil(textHeight) + CGFloat(16.0 * k))
-        return CGRect(x: (W - subW) / 2.0, y: conceptY - subH - 18.0, width: subW, height: subH)
+        // Верх реплики привязан к теме; длинный текст растёт вниз и не наезжает
+        // на неё. Вступительный хук при необходимости задаёт более низкую границу.
+        let top = min(conceptY - CGFloat(40 * k), maximumTop ?? .greatestFiniteMagnitude)
+        let bottom = top - subH
+        return CGRect(x: (W - subW) / 2.0, y: bottom, width: subW, height: subH)
     }
 
     /// Полоса субтитров при заданном числе строк — тот же путь, что и в рендере.
@@ -642,7 +646,9 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         conceptY: CGFloat,
         timedPhrases: [TimedSubtitlePhrase],
         totalDuration: Double,
-        introEnd: Double = 4.5
+        introEnd: Double = 4.5,
+        introCaptionTop: CGFloat? = nil,
+        introCaptionEnd: Double = 0
     ) -> (layer: CALayer, subtitleBottom: CGFloat) {
         let container = CALayer()
         container.frame = CGRect(origin: .zero, size: renderSize)
@@ -679,7 +685,8 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
 
             // Размещаем прямо под концептом (вниз от conceptY с безопасным отступом)
             let captionFrame = Self.captionRect(textWidth: boundingRect.width, textHeight: boundingRect.height,
-                                                 renderSize: renderSize, conceptY: conceptY, k: k)
+                renderSize: renderSize, conceptY: conceptY, k: k,
+                maximumTop: phrase.start < introCaptionEnd ? introCaptionTop : nil)
 
             let phraseLayer = CALayer()
             phraseLayer.frame = captionFrame
@@ -844,14 +851,14 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         let textStr = NSAttributedString(string: ctaText.uppercased(), attributes: textAttrs)
         let maxTextW = min(W * 0.78, CGFloat(1100.0 * k))
         let bounding = textStr.boundingRect(
-            with: CGSize(width: maxTextW, height: CGFloat(4.0 * Self.ctaPointSize(k: k) * 1.6)),
+            with: CGSize(width: maxTextW, height: CGFloat(6.0 * Self.ctaPointSize(k: k) * 1.6)),
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         )
         let textW = min(W * 0.88, ceil(bounding.width) + CGFloat(24.0 * k))
         let textH = ceil(bounding.height) + CGFloat(12.0 * k)
 
         // Нижняя треть кадра: не спорит с якорным словом по центру
-        let blockY = H * 0.30
+        let blockY = H * 0.17
         let textY = blockY
         let lineY = textY + textH + CGFloat(14.0 * k)
 
@@ -871,7 +878,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         container.addSublayer(textLayer)
 
         // Появляется за 4.2с до конца, держится до -0.7с, гаснет ровно к концу
-        let ctaStart = max(0.0, totalDuration - 4.2)
+        let ctaStart = max(0.0, totalDuration - LongformEditorialSupport.finalCardDuration(text: ctaText))
         let ctaHold = max(ctaStart, totalDuration - 0.7)
         let k0 = max(0.0, (ctaStart - 0.01) / t)
         let k1 = min(1.0, (ctaStart + 0.40) / t)
@@ -905,6 +912,17 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         currentPhrase: String?,
         layout: LongformOverlayLayout = LongformOverlayLayout()
     ) -> CGImage? {
+        renderPreviewImage(renderSize: renderSize, concept: concept, currentPhrase: currentPhrase,
+                           layout: layout, backgroundImage: nil)
+    }
+
+    func renderPreviewImage(
+        renderSize: CGSize,
+        concept: ThematicConcept,
+        currentPhrase: String?,
+        layout: LongformOverlayLayout = LongformOverlayLayout(),
+        backgroundImage: CGImage?
+    ) -> CGImage? {
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
 
@@ -921,6 +939,14 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         // Темный кинематографичный фон для превью
         context.setFillColor(CGColor(gray: 0.08, alpha: 1.0))
         context.fill(CGRect(origin: .zero, size: renderSize))
+        if let backgroundImage {
+            let scale = min(renderSize.width / CGFloat(backgroundImage.width),
+                            renderSize.height / CGFloat(backgroundImage.height))
+            let size = CGSize(width: CGFloat(backgroundImage.width) * scale,
+                              height: CGFloat(backgroundImage.height) * scale)
+            context.draw(backgroundImage, in: CGRect(x: (renderSize.width - size.width) / 2,
+                y: (renderSize.height - size.height) / 2, width: size.width, height: size.height))
+        }
 
         let nsContext = NSGraphicsContext(cgContext: context, flipped: false)
         NSGraphicsContext.saveGraphicsState()
@@ -948,27 +974,28 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
 
         // 2. Плавный субтитр диалога прямо под концептом (акцент WCAG-легible, Russo One 32pt·k, обводка)
         let phraseText = currentPhrase?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "ВСЕ ВТРАТИШ"
+        let conceptY = Self.conceptBottomY(renderSize: renderSize, textSize: conceptSize, k: k)
+        var previewSubtitleBottom = Self.essaySubtitleBand(renderSize: renderSize, conceptY: conceptY, lines: 1).minY
         if !phraseText.isEmpty {
             let subAttrs = Self.captionAttributes(k: k, accentHex: concept.accentColorHex)
             let subStr = NSAttributedString(string: phraseText.uppercased(), attributes: subAttrs)
-            let subSize = subStr.size()
-            let subOrigin = NSPoint(
-                x: (renderSize.width - subSize.width) / 2.0,
-                y: conceptOrigin.y - subSize.height - 12.0
-            )
-            subStr.draw(at: subOrigin)
+            let bounds = subStr.boundingRect(
+                with: CGSize(width: min(renderSize.width * 0.78, CGFloat(1240 * k)), height: 200),
+                options: [.usesLineFragmentOrigin, .usesFontLeading])
+            let frame = Self.captionRect(textWidth: bounds.width, textHeight: bounds.height,
+                renderSize: renderSize, conceptY: conceptY, k: k)
+            previewSubtitleBottom = frame.minY
+            if let image = renderAttributedText(subStr, size: frame.size) { context.draw(image, in: frame) }
         }
 
         // 3. Знак канала — ровно та же цепочка раскладки, что в видео, иначе превью разойдётся с рендером.
         if let style = layout.channelLogo {
-            let conceptY = Self.conceptBottomY(renderSize: renderSize, textSize: conceptSize, k: k)
-            let logoRect = Self.essayLogoBand(renderSize: renderSize, conceptY: conceptY, lines: 1,
-                                              bottomBarHeight: layout.bottomBarHeight, style: style)
+            let logoRect = ChannelLogoPlacement.essay(renderSize: renderSize, subtitleBottom: previewSubtitleBottom,
+                bottomBarHeight: layout.bottomBarHeight, style: style)
             if let logoRect {
                 ChannelLogo.composite(in: context, rect: logoRect, opacity: CGFloat(style.opacity))
             } else {
-                let subtitleBottom = Self.essaySubtitleBand(renderSize: renderSize, conceptY: conceptY, lines: 1).minY
-                Self.reportMissingLogoRoom(renderSize: renderSize, subtitleBottom: max(0, subtitleBottom),
+                Self.reportMissingLogoRoom(renderSize: renderSize, subtitleBottom: max(0, previewSubtitleBottom),
                                            bottomBarHeight: layout.bottomBarHeight, style: style)
             }
         }

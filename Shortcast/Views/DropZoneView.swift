@@ -1,179 +1,146 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The idle state: a big drag-and-drop target for a short video.
 struct DropZoneView: View {
-
     let isDropTargeted: Bool
     let onChooseFile: (URL, VideoSourceMetadata?) -> Void
-
     @Environment(WorkspaceModel.self) private var workspace
-    @Environment(AppSettings.self) private var settings
-    @Environment(LanguageManager.self) private var languageManager
-    @State private var showingImporter = false
-    @State private var showRestartAlert = false
+    @State private var projects: [FilmProject] = []
+    @State private var unsupported = false
 
     var body: some View {
-        @Bindable var workspace = workspace
-        @Bindable var settings = settings
-
-
-        VStack(spacing: 18) {
-            Spacer()
-
-            Picker("Mode", selection: $workspace.inputMode) {
-                ForEach(WorkspaceModel.InputMode.allCases) { mode in
-                    Label(mode.title, systemImage: mode.symbol).tag(mode)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 32) {
+                HStack(alignment: .center, spacing: 54) {
+                    VStack(alignment: .leading, spacing: 22) {
+                        Text("ОДИН ФИЛЬМ. ЦЕЛЫЙ ВЫПУСК.")
+                            .font(.system(size: 10, weight: .bold)).tracking(2.4).foregroundStyle(StudioTheme.accent)
+                        Text("У каждого фильма\nесть что сказать.")
+                            .font(.system(size: 44, weight: .medium, design: .serif)).lineSpacing(2)
+                        Text("Найдите свою тему. Соберите эссе, создайте два шортса и подготовьте публикации — в одном проекте.")
+                            .font(.system(size: 15)).lineSpacing(6).foregroundStyle(StudioTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(spacing: 8) {
+                            formatBadge("16:9", label: "эссе")
+                            formatBadge("9:16", label: "шортсы")
+                            formatBadge("UA", label: "озвучка")
+                        }.padding(.top, 4)
+                    }.frame(maxWidth: 470, alignment: .leading)
+                    dropArea
                 }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: 620)
-
-            if workspace.inputMode == .youtube {
-                YouTubeContainerView(onVideoReady: onChooseFile)
-            } else {
-                HStack(spacing: 20) {
-                    Toggle(isOn: $settings.transcriptionEnabled) {
-                        Label("Транскрибация (WhisperKit)", systemImage: "captions.bubble")
-                            .font(.callout.weight(.medium))
-                    }
-                    .toggleStyle(.switch)
-                    .help("Выключите транскрибацию, чтобы редактор открывался мгновенно без ожидания Whisper.")
-
-                    if workspace.inputMode == .shorts {
-                        Picker("Жанр моментов", selection: $settings.cinemaGenreMode) {
-                            ForEach(CinemaGenreMode.allCases) { mode in
-                                Label(mode.title, systemImage: mode.symbol).tag(mode)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .help(settings.cinemaGenreMode.subtitle)
-                    } else if workspace.inputMode == .longform {
-                        HStack(spacing: 6) {
-                            Image(systemName: "film.fill")
-                                .foregroundStyle(.yellow)
-                            Text("16:9 YouTube (5–8 мин)")
-                                .font(.callout.weight(.semibold))
-                                .foregroundStyle(.yellow)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(Color.yellow.opacity(0.12)))
-                    }
+                if let error = workspace.errorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.callout).foregroundStyle(.orange).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading).studioPanel(padding: 16)
                 }
-                .frame(maxWidth: 580)
-
-                dropArea
-            }
-
-
-            if let error = workspace.errorMessage {
-                Label(error, systemImage: "exclamationmark.triangle")
-                    .font(.callout)
-                    .foregroundStyle(.orange)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 460)
-                    .textSelection(.enabled)
-            }
-
-            Spacer()
-
-            Text("Everything runs on your Mac. Your video is never uploaded until you press Publish.")
-                .font(.footnote)
-                .foregroundStyle(.tertiary)
-
-            HStack(spacing: 8) {
-                ForEach(AppLanguage.allCases) { lang in
-                    Button {
-                        languageManager.selectedLanguage = lang
-                        showRestartAlert = true
-                    } label: {
-                        Text(lang.flag)
-                            .font(.title3)
-                            .opacity(languageManager.selectedLanguage == lang ? 1.0 : 0.4)
-                    }
-                    .buttonStyle(.plain)
-                    .help(lang.label)
+                HStack(spacing: 22) {
+                    feature("text.alignleft", title: "Тема и драматургия", text: "Анализ диалогов и пять актов эссе")
+                    feature("slider.horizontal.3", title: "Ваш монтаж", text: "Сцены, хуки и субтитры можно изменить")
+                    feature("paperplane", title: "Один выпуск", text: "YouTube, TikTok и Telegram")
                 }
-            }
-            .padding(.top, 4)
+                if !projects.isEmpty { recentProjects }
+                HStack(spacing: 6) {
+                    Image(systemName: "externaldrive")
+                    Text("Фильм и обработка остаются на Mac. Публикация запускается отдельно.")
+                }.font(.system(size: 11)).foregroundStyle(StudioTheme.muted)
+            }.frame(maxWidth: 1120).padding(40).frame(maxWidth: .infinity)
         }
-        .padding(44)
-        .alert("Restart required", isPresented: $showRestartAlert) {
-            Button("Restart now") { restartApp() }
-            Button("Later", role: .cancel) { }
-        } message: {
-            Text("The language change will take effect after the app restarts.")
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .fileImporter(
-            isPresented: $showingImporter,
-            allowedContentTypes: [.movie, .video, .mpeg4Movie, .quickTimeMovie] + [UTType(filenameExtension: "mkv"), UTType(filenameExtension: "webm"), UTType(filenameExtension: "avi")].compactMap { $0 }
-        ) { result in
-            if case .success(let url) = result { onChooseFile(url, nil) }
-        }
+        .alert("Выберите видеофайл", isPresented: $unsupported) {
+            Button("Понятно", role: .cancel) {}
+        } message: { Text("Поддерживаются MP4, MOV, M4V, MKV, WebM и AVI.") }
+        .task { projects = Array(((try? await workspace.filmProjectService.listRecentProjects()) ?? []).prefix(3)) }
     }
 
     private var dropArea: some View {
-        VStack(spacing: 14) {
-            Image(systemName: workspace.inputMode.symbol)
-                .font(.system(size: 46, weight: .light))
-                .foregroundStyle(isDropTargeted ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-
-            Text(workspace.inputMode.dropTitle)
-                .font(.title2.weight(.semibold))
-
-            Text(workspace.inputMode.dropSubtitle)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 480)
-
-            Button {
-                showingImporter = true
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: workspace.inputMode.symbol)
-                    Text(buttonTitle)
-                }
-                .font(.headline)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
+        VStack(spacing: 18) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 18).fill(StudioTheme.accent.opacity(0.05))
+                    .frame(width: 100, height: 76).rotationEffect(.degrees(-10)).offset(x: -10, y: -5)
+                RoundedRectangle(cornerRadius: 18).fill(StudioTheme.raised)
+                    .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(StudioTheme.accent.opacity(0.25)))
+                    .frame(width: 100, height: 76)
+                Image(systemName: "film").font(.system(size: 30, weight: .light)).foregroundStyle(StudioTheme.accent)
+            }.frame(height: 96)
+            VStack(spacing: 8) {
+                Text(isDropTargeted ? "Отпустите фильм здесь" : "Перетащите фильм сюда")
+                    .font(.system(size: 18, weight: .semibold))
+                Text("Оригинал фильма и выбранная аудиодорожка")
+                    .font(.system(size: 12)).foregroundStyle(StudioTheme.muted)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(workspace.inputMode == .longform ? .yellow : .accentColor)
-            .controlSize(.large)
-            .padding(.top, 4)
+            Button(action: chooseVideoFile) {
+                Label("Выбрать фильм", systemImage: "plus")
+            }.buttonStyle(StudioPrimaryButtonStyle())
+            Text("MP4 · MOV · MKV · WEBM").font(.system(size: 9, weight: .medium, design: .monospaced))
+                .tracking(1.5).foregroundStyle(StudioTheme.muted)
         }
-        .frame(maxWidth: 560, minHeight: 320)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 22)
-                .fill(isDropTargeted ? AnyShapeStyle(Color.accentColor.opacity(0.08))
-                                     : AnyShapeStyle(Color.clear))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 22)
-                .strokeBorder(
-                    isDropTargeted ? Color.accentColor : Color.secondary.opacity(0.4),
-                    style: StrokeStyle(lineWidth: 2, dash: [9, 7]))
-        )
-        .animation(.easeInOut(duration: 0.15), value: isDropTargeted)
+        .frame(maxWidth: .infinity).padding(.vertical, 32).padding(.horizontal, 18)
+        .background(StudioTheme.panel, in: RoundedRectangle(cornerRadius: 22))
+        .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(
+            StudioTheme.accent.opacity(isDropTargeted ? 0.9 : 0.25), style: StrokeStyle(lineWidth: 1, dash: [6, 5])))
+        .animation(.easeInOut(duration: 0.2), value: isDropTargeted)
     }
 
-    private var buttonTitle: String {
-        switch workspace.inputMode {
-        case .longform: return "Выбрать фильм для эссе…"
-        case .shorts:   return "Выбрать фильм для шортсов…"
-        case .caption:  return "Выбрать видеоклип…"
-        case .youtube:  return "Найти на YouTube…"
+    private func formatBadge(_ value: String, label: String) -> some View {
+        HStack(spacing: 6) {
+            Text(value).foregroundStyle(StudioTheme.accent).fontWeight(.semibold)
+            Text(label).foregroundStyle(StudioTheme.muted)
+        }.font(.system(size: 11)).padding(.horizontal, 11).padding(.vertical, 7)
+            .background(StudioTheme.raised, in: Capsule())
+    }
+
+    private func feature(_ icon: String, title: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon).font(.system(size: 16)).foregroundStyle(StudioTheme.accent)
+                .frame(width: 22).padding(.top, 2)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title).font(.system(size: 12, weight: .semibold))
+                Text(text).font(.system(size: 11)).foregroundStyle(StudioTheme.muted)
+            }
+            Spacer(minLength: 0)
+        }.frame(maxWidth: .infinity, alignment: .leading).studioPanel(padding: 18)
+    }
+
+    private var recentProjects: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Продолжить работу").font(.system(size: 16, weight: .semibold))
+                Spacer()
+                Text("НЕДАВНИЕ ПРОЕКТЫ").font(.system(size: 9, weight: .medium)).tracking(1.6).foregroundStyle(StudioTheme.muted)
+            }
+            HStack(spacing: 14) {
+                ForEach(projects) { project in
+                    let exists = FileManager.default.fileExists(atPath: project.sourceMovieURL.path)
+                    Button {
+                        if exists { onChooseFile(project.sourceMovieURL, nil) } else { chooseVideoFile() }
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "film.stack").foregroundStyle(StudioTheme.accent).font(.system(size: 20))
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(project.tmdbMetadata?.title ?? MovieMetadataService.parseCandidate(project.movieTitle).title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                                Text(exists ? project.updatedAt.formatted(date: .abbreviated, time: .omitted) : "Укажите исходный файл")
+                                    .font(.system(size: 10)).foregroundStyle(StudioTheme.muted)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "arrow.up.right").font(.system(size: 11)).foregroundStyle(StudioTheme.muted)
+                        }.frame(maxWidth: .infinity).studioPanel(padding: 16)
+                    }.buttonStyle(.plain)
+                }
+            }
         }
     }
 
-    private func restartApp() {
-        let url = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/Short Generator")
-        _ = try? Process.run(url, arguments: [])
-        NSApplication.shared.terminate(nil)
+    private func chooseVideoFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+        panel.message = "Выберите исходный фильм"
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            let ext = url.pathExtension.lowercased(), type = UTType(filenameExtension: url.pathExtension)
+            guard ["mp4", "mov", "m4v", "mkv", "webm", "avi"].contains(ext) || type?.conforms(to: .movie) == true else {
+                unsupported = true; return
+            }
+            onChooseFile(url, nil)
+        }
     }
 }

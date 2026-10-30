@@ -324,8 +324,9 @@ struct SentenceBoundaryTests {
             targetDuration: 520.0
         )
         let report = try #require(arc.durationReport)
-        // Цель выводится из длины фильма: 6% от 7949.6с
-        #expect(report.effectiveTarget > 470.0 && report.effectiveTarget < 480.0)
+        // effectiveTarget — чистый контент: из 480 с вычтены склейки,
+        // 9.7 с постоянного padding; внутри актов — прямые стыки без пауз.
+        #expect(abs(report.effectiveTarget - 470.3) < 0.001)
 
         for (act, actType) in zip(arc.acts, LongformActType.allCases) {
             #expect(act.type == actType)
@@ -398,7 +399,7 @@ struct SentenceBoundaryTests {
         let director = LongformNarrativeDirector()
         let cases: [(film: Double, expected: Double)] = [
             (3_600.0, 300.0),   // 6% = 216с -> нижний кламп 300с
-            (9_828.0, 520.0),   // 6% = 590с -> верхний кламп запроса 520с
+            (9_828.0, 470.3),   // потолок чистого контента с прямыми стыками внутри актов
             (1_200.0, 300.0)    // 6% = 72с  -> нижний кламп 300с
         ]
         for item in cases {
@@ -420,9 +421,33 @@ struct SentenceBoundaryTests {
             )
             let report = try #require(arc.durationReport)
             #expect(report.filmDuration == item.film)
+            // Отчёт показывает честный запрос, даже когда он вне коридора
             #expect(report.ask == 520.0)
             #expect(report.effectiveTarget == item.expected)
         }
+    }
+
+    @Test("A legacy 11-minute ask is reported honestly and its content budget is clamped")
+    func testLegacyOverlongAskIsReportedHonestlyAndClamped() async throws {
+        let transcript = Transcript(
+            segments: [
+                TranscriptSegment(start: 600.0, end: 640.0, text: "\(Self.syntheticLineBase) 1.", words: []),
+                TranscriptSegment(start: 900.0, end: 940.0, text: "\(Self.syntheticLineBase) 2.", words: []),
+                TranscriptSegment(start: 9_240.0, end: 9_828.0, text: "\(Self.syntheticLineBase) 3.", words: [])
+            ],
+            language: "ru"
+        )
+        let arc = try await LongformNarrativeDirector().buildArc(
+            from: transcript,
+            concept: syntheticConcept(),
+            selectedMoments: [],
+            movieTitle: "Синтетический полный метр",
+            targetDuration: 660.0
+        )
+        let report = try #require(arc.durationReport)
+        #expect(report.ask == 660.0, "старый проект просил 11 минут — отчёт обязан это показать")
+        #expect(abs(report.effectiveTarget - 470.3) < 0.001)
+        #expect(arc.legacyAskSeconds == 660)
     }
 
     @Test("Incomplete but admissible catharsis run is taken only when no complete run exists")

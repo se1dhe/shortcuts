@@ -9,37 +9,41 @@ struct LongformResultsView: View {
     let movieTitle: String
     let onChooseAnotherTheme: () -> Void
     let onStartNewMovie: () -> Void
+    let onOpenShorts: () -> Void
 
     @Environment(WorkspaceModel.self) private var workspace
     @Environment(ModelManager.self) private var modelManager
     @Environment(AppSettings.self) private var settings
 
     @State private var player: AVPlayer? = nil
+    @State private var actPlaybackObserver: Any?
+    @State private var activeActID: String?
     @State private var copiedTitle = false
     @State private var copiedDescription = false
     @State private var copiedTags = false
     @State private var copiedComment = false
 
-    @State private var showYouTubePublishSheet = false
     @State private var showSubtitleEditor = false
     @State private var showActEditor = false
-    @State private var isPostingToTelegram = false
-    @State private var telegramPostSuccess = false
-    @State private var telegramError: String? = nil
+    @State private var editingShort: EssayShort?
+    private var publicationMetadata: LongformYouTubeMetadata {
+        LongformMetadataGenerator.updatingTelegram(in: result.metadata, channelID: settings.telegramChannelId)
+    }
 
     var body: some View {
         HStack(spacing: 0) {
             // Левая колонка: 16:9 Видеоплеер
             VStack(spacing: 16) {
-                HStack {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
                             Text(result.arc.concept.word.uppercased())
                                 .font(.caption.weight(.black))
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
-                                .background(Capsule().fill(Color(hex: result.arc.concept.accentColorHex).opacity(0.2)))
-                                .foregroundStyle(Color(hex: result.arc.concept.accentColorHex))
+                                .background(Capsule().fill(StudioTheme.accent.opacity(0.18)))
+                                .foregroundStyle(StudioTheme.accent)
 
                             Text("«\(movieTitle)»")
                                 .font(.headline)
@@ -52,10 +56,15 @@ struct LongformResultsView: View {
 
                     Spacer()
 
-                    HStack(spacing: 10) {
                         Label(formatDuration(result.duration), systemImage: "clock")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.secondary)
+                            .font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+                    }
+                    ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        Button("Редакторский проход", systemImage: "wand.and.stars") {
+                            workspace.improveLongform(existingResult: result, modelManager: modelManager, settings: settings)
+                        }
+                        .help("Проверить диалоги с соседним контекстом, уточнить границы сцен и пересобрать эссе на той же теме")
 
                         Button {
                             showSubtitleEditor = true
@@ -66,7 +75,8 @@ struct LongformResultsView: View {
                             }
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(.yellow)
+                        .tint(StudioTheme.accent)
+                        .disabled(workspace.isRefreshingLongformPackaging)
                         .help("Исправить неточности в субтитрах и перерендерить видео с тем же монтажом")
 
                         Button {
@@ -78,8 +88,21 @@ struct LongformResultsView: View {
                             }
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(.purple)
+                        .tint(StudioTheme.accent)
                         .help("Обрезать начало и конец актов — титры и музыка подстроятся автоматически")
+
+                        Menu("Монтаж шортсов", systemImage: "scissors") {
+                            if let release = workspace.currentEssayRelease, !release.shorts.isEmpty {
+                                ForEach(release.shorts) { short in
+                                    Button(short.title) { editingShort = short }
+                                        .disabled(!EssayShortEditing.canEdit(short, in: release))
+                                }
+                            } else {
+                                Button("Подготовить два шортса") { onOpenShorts() }
+                            }
+                        }
+                        .disabled(workspace.isWorkingOnEssayRelease)
+                        .help("Сцены, хук, тексты и субтитры каждого шортса")
 
                         Button {
                             NSWorkspace.shared.activateFileViewerSelecting([result.outputURL])
@@ -87,12 +110,24 @@ struct LongformResultsView: View {
                             Label("В Finder", systemImage: "folder")
                         }
                         .buttonStyle(.bordered)
+                    }.fixedSize(horizontal: true, vertical: false)
                     }
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 16)
 
-                // Баннер деградации если LLM не справился
+                if let notes = result.arc.editorialNotes, !notes.isEmpty {
+                    DisclosureGroup("Замечания к монтажу (\(notes.count))") {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 5) {
+                                ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
+                                    Text("• " + note).font(.caption).frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                        }.frame(maxHeight: 140)
+                    }.padding(.horizontal, 20)
+                }
+                // Сообщение о проблеме плана; причину показывает проверка.
                 if let reason = result.arc.degradationReason {
                     HStack(spacing: 10) {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -100,7 +135,7 @@ struct LongformResultsView: View {
                             .font(.title3)
                         
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Использована эвристика вместо LLM")
+                            Text("План требует внимания")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.primary)
                             Text(reason)
@@ -113,6 +148,30 @@ struct LongformResultsView: View {
                     .padding(12)
                     .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.1)))
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.orange.opacity(0.3), lineWidth: 1))
+                    .padding(.horizontal, 20)
+                }
+
+                // Честный след хронометража: коридор 4:00–8:00 не обсуждается, но
+                // молча подрезать заказ из сохранённого плана нельзя.
+                if let legacyAsk = result.arc.legacyAskSeconds {
+                    HStack(spacing: 10) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .foregroundStyle(.secondary)
+                            .font(.title3)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Хронометраж скорректирован")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text("Проект просил \(EssayDurationPolicy.format(legacyAsk)) — длина эссе рождается из материала темы и ограничена коридором 4:00–8:00.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+                    }
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.12)))
                     .padding(.horizontal, 20)
                 }
 
@@ -131,118 +190,138 @@ struct LongformResultsView: View {
                 .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
                 .padding(.horizontal, 20)
 
-                // 4-актная временная шкала
+                // Интерактивные главы эссе
                 HStack(spacing: 8) {
-                    ForEach(result.arc.acts) { act in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(act.type.displayName)
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(.primary)
-
-                            // Отчётность за название акта: тут, в UI, а не на кадре ролика
-                            Text(act.title)
+                    ForEach(Array(result.arc.acts.indices), id: \.self) { index in
+                        let act = result.arc.acts[index]
+                        Button {
+                            seekToAct(at: index)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack(spacing: 5) {
+                                    if activeActID == act.id {
+                                        Image(systemName: "speaker.wave.2.fill")
+                                            .font(.system(size: 9, weight: .bold))
+                                            .foregroundStyle(StudioTheme.accent)
+                                    }
+                                    Text(act.type.displayName)
+                                        .font(.caption2.weight(.bold))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(2)
+                                }
+                                Text(act.title)
+                                    .font(.caption2)
+                                    .lineLimit(2)
+                                    .foregroundStyle(.primary)
+                                HStack(spacing: 3) {
+                                    Image(systemName: act.effectiveTitleSource.isTrustworthy
+                                          ? "checkmark.seal" : "exclamationmark.seal")
+                                    Text(act.effectiveTitleSource.displayCaption).lineLimit(1)
+                                }
                                 .font(.caption2)
-                                .lineLimit(2)
-                                .foregroundStyle(.primary)
-                            HStack(spacing: 3) {
-                                Image(systemName: act.effectiveTitleSource.isTrustworthy
-                                      ? "checkmark.seal" : "exclamationmark.seal")
-                                Text(act.effectiveTitleSource.displayCaption)
+                                .foregroundStyle(.tertiary)
+                                .help(Self.titleSourceHelp(for: act))
+                                HStack(spacing: 5) {
+                                    Image(systemName: "play.fill").font(.system(size: 8, weight: .bold))
+                                    Text(formatDuration(act.duration)).font(.caption2.monospacedDigit())
+                                }
+                                .foregroundStyle(activeActID == act.id ? StudioTheme.accent : .secondary)
                             }
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .help(act.titleProvenance?.evidence ?? "Источник названия не зафиксирован")
-
-                            Text(formatDuration(act.duration))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, minHeight: 112, alignment: .leading)
+                            .padding(10)
+                            .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(activeActID == act.id ? StudioTheme.accent.opacity(0.12) : Color.secondary.opacity(0.1)))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .strokeBorder(activeActID == act.id ? StudioTheme.accent.opacity(0.65) : StudioTheme.line,
+                                                  lineWidth: activeActID == act.id ? 1.5 : 1)
+                            }
                         }
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.1)))
+                        .buttonStyle(.plain)
+                        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .help("Перейти к акту «\(act.type.displayName)» в эссе")
                     }
                 }
                 .padding(.horizontal, 20)
+                HStack(spacing: 6) {
+                    Image(systemName: "cursorarrow.click")
+                    Text(activeActTitle.map { "Сейчас: \($0)" } ?? "Нажмите на акт, чтобы перейти к его сценам")
+                }
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(StudioTheme.muted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 22)
                 .padding(.bottom, 16)
             }
-            .frame(minWidth: 640)
+            .frame(minWidth: 500)
 
             Divider()
 
             // Правая колонка: Упаковка, публикация и экспорт
             VStack(alignment: .leading, spacing: 14) {
-                Text("Упаковка и Публикация")
+                Text("Финальный монтаж")
                     .font(.headline)
 
-                // Блок быстрых действий (YouTube / Shorts / Telegram)
+                // One explicit editorial approval hands the final essay to the
+                // short generator and opens the complete publication package.
                 VStack(spacing: 8) {
+                    Text("Проверьте монтаж и реплики. Когда эссе готово, переходите к двум шортсам на его основе.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Button {
-                        showYouTubePublishSheet = true
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "play.rectangle.fill")
-                                .font(.subheadline)
-                            Text("Опубликовать на YouTube")
-                                .font(.subheadline.weight(.bold))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.red)
-
-                    Button {
-                        workspace.generateShortsFromCurrentMovie(modelManager: modelManager, settings: settings)
+                        player?.pause()
+                        onOpenShorts()
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "sparkles.tv")
                                 .font(.subheadline)
-                            Text("Сгенерировать Shorts по фильму")
+                            Text(workspace.currentEssayRelease?.hasReadyShorts == true
+                                 ? "Перейти к шортсам"
+                                 : "Эссе готово — к шортсам")
                                 .font(.subheadline.weight(.semibold))
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 6)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.yellow)
-
-                    Button {
-                        Task { await publishToTelegram() }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "paperplane.fill")
-                            if isPostingToTelegram {
-                                ProgressView().controlSize(.small)
-                                Text("Отправка...")
-                            } else if telegramPostSuccess {
-                                Image(systemName: "checkmark")
-                                Text("Опубликовано в Telegram ✓")
-                            } else {
-                                Text("Пост в Telegram (\(settings.telegramChannelId.isEmpty ? "@telonyx_club" : settings.telegramChannelId))")
-                            }
-                        }
-                        .font(.caption.weight(.medium))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 4)
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(telegramPostSuccess ? .green : .secondary)
-                    .disabled(isPostingToTelegram)
-
-                    if let err = telegramError {
-                        Text(err)
-                            .font(.caption2)
-                            .foregroundStyle(.red)
-                    }
+                    .tint(StudioTheme.accent)
+                    .disabled(workspace.isBusy)
+                    Text("Следом: два шортса → постинг выпуска")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 .padding(10)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.08)))
 
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 14) {
-                        // 0. Кинематографическая обложка (YouTube Thumbnail 1920x1080 в стиле @prrodan)
+                        HStack {
+                            Text("Оформление публикации").font(.headline)
+                            Spacer()
+                            Button {
+                                Task { await workspace.refreshLongformPackaging(modelManager: modelManager) }
+                            } label: {
+                                if workspace.isRefreshingLongformPackaging {
+                                    ProgressView().controlSize(.small)
+                                    Text("Проверка героя и обложки…")
+                                } else {
+                                    Label("Обновить всё", systemImage: "arrow.clockwise")
+                                }
+                            }
+                            .disabled(workspace.isBusy)
+                            .accessibilityLabel("Обновить всё оформление публикации")
+                            .help("Обновить обложку и тексты публикации. Видео повторно не рендерится.")
+                        }
+                        if let warning = workspace.longformPackagingError ?? result.packagingWarning {
+                            Label(warning, systemImage: "exclamationmark.triangle")
+                                .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                        }
+                        // Обложка по визуальному языку «Кадр & Сенс».
                         if let thumbURL = result.thumbnailURL, let nsImage = NSImage(contentsOf: thumbURL) {
                             thumbnailCard(image: nsImage, fileURL: thumbURL)
+                            if let subject = result.thumbnailSubject {
+                                Text("Ведущий герой • исходник \(Int(subject.sourceTime) / 60):\(String(format: "%02d", Int(subject.sourceTime) % 60)) • проверка модели")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                    .help("Проверка по ведущему составу: " + subject.leadingCast.joined(separator: ", "))
+                            }
                         }
 
                         // 1. Заголовок
@@ -258,24 +337,24 @@ struct LongformResultsView: View {
 
                         // 2. Описание
                         metadataCard(
-                            title: "Описание (манифест + Fair Use)",
-                            content: result.metadata.description,
+                            title: "Описание эссе",
+                            content: publicationMetadata.description,
                             copied: copiedDescription,
-                            lineLimit: 5
+                            lineLimit: nil
                         ) {
-                            copyToClipboard(result.metadata.description)
+                            copyToClipboard(publicationMetadata.description)
                             copiedDescription = true
                             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copiedDescription = false }
                         }
 
                         // 3. Теги
                         metadataCard(
-                            title: "Теги",
-                            content: result.metadata.tags.joined(separator: ", "),
+                            title: "Хештеги YouTube",
+                            content: result.metadata.hashtagText,
                             copied: copiedTags,
                             lineLimit: 3
                         ) {
-                            copyToClipboard(result.metadata.tags.joined(separator: ", "))
+                            copyToClipboard(result.metadata.hashtagText)
                             copiedTags = true
                             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copiedTags = false }
                         }
@@ -283,11 +362,11 @@ struct LongformResultsView: View {
                         // 4. Закрепленный комментарий
                         metadataCard(
                             title: "Закрепленный комментарий",
-                            content: result.metadata.pinnedComment,
+                            content: publicationMetadata.pinnedComment,
                             copied: copiedComment,
-                            lineLimit: 2
+                            lineLimit: nil
                         ) {
-                            copyToClipboard(result.metadata.pinnedComment)
+                            copyToClipboard(publicationMetadata.pinnedComment)
                             copiedComment = true
                             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copiedComment = false }
                         }
@@ -307,7 +386,7 @@ struct LongformResultsView: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.yellow)
+                    .tint(StudioTheme.accent)
                     .help("Выбрать или ввести другую тему без повторного анализа фильма")
 
                     Button {
@@ -319,14 +398,14 @@ struct LongformResultsView: View {
                         )
                     } label: {
                         HStack(spacing: 6) {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                            Text("Пересобрать с нуля")
+                            Image(systemName: "sparkles")
+                            Text("Пересчитать сцены с AI")
                                 .fontWeight(.semibold)
                         }
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.green)
-                    .help("Полностью пересобрать монтаж и нарратив на ту же тему")
+                    .help("Попросить модель заново выбрать сцены и распределить их по актам на той же теме")
 
                     Button(role: .destructive) {
                         onStartNewMovie()
@@ -357,8 +436,12 @@ struct LongformResultsView: View {
             .padding(18)
             .frame(width: 400)
         }
-        .sheet(isPresented: $showYouTubePublishSheet) {
-            LongformYouTubePublishSheet(result: result, movieTitle: movieTitle, movie: workspace.detectedMovie)
+        .sheet(item: $editingShort) { short in
+            if let source = workspace.job?.url, let transcript = workspace.storedTranscript ?? workspace.currentProject?.transcript {
+                EssayShortEditorView(short: short, result: result, transcript: transcript, sourceURL: source) { edited in
+                    try await workspace.rebuildEssayShort(edited, settings: settings)
+                }
+            }
         }
         .sheet(isPresented: $showSubtitleEditor) {
             if let transcript = workspace.storedTranscript {
@@ -367,6 +450,9 @@ struct LongformResultsView: View {
                     concept: result.arc.concept,
                     movieTitle: movieTitle,
                     allSegments: transcript.segments,
+                    correctionFilmKey: workspace.subtitleCorrectionFilmKey,
+                    correctionLanguage: workspace.subtitleCorrectionLanguage,
+                    sourceURL: workspace.job?.url,
                     confirmButtonTitle: "Перерендерить с исправленными субтитрами",
                     backButtonTitle: "Отмена",
                     onConfirm: { updatedSegments in
@@ -393,6 +479,7 @@ struct LongformResultsView: View {
                     movieTitle: movieTitle,
                     transcriptSegments: transcript.segments,
                     sourceURL: workspace.job?.url,
+                    coldOpenEnabled: result.audioSettings?.coldOpenEnabled ?? true,
                     onApply: { modifiedArc in
                         showActEditor = false
                         workspace.rebuildLongformWithModifiedArc(
@@ -409,43 +496,65 @@ struct LongformResultsView: View {
             }
         }
         .onAppear {
-            player = AVPlayer(url: result.outputURL)
+            let next = AVPlayer(url: result.outputURL)
+            player = next
+            observeActPlayback(on: next)
         }
         .onChange(of: result.outputURL) { _, newURL in
+            removeActPlaybackObserver()
             player?.pause()
-            player = AVPlayer(url: newURL)
+            let next = AVPlayer(url: newURL)
+            player = next
+            activeActID = nil
+            observeActPlayback(on: next)
         }
         .onDisappear {
+            removeActPlaybackObserver()
             player?.pause()
             player = nil
         }
+        .background(StudioTheme.background)
+        .preferredColorScheme(.dark)
+        .tint(StudioTheme.accent)
     }
 
-    private func publishToTelegram() async {
-        isPostingToTelegram = true
-        telegramError = nil
-        defer { isPostingToTelegram = false }
+    private var activeActTitle: String? {
+        guard let activeActID else { return nil }
+        return result.arc.acts.first(where: { $0.id == activeActID })?.type.displayName
+    }
 
-        let botToken = settings.telegramBotToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        let channelId = settings.telegramChannelId.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func seekToAct(at index: Int) {
+        guard result.arc.acts.indices.contains(index),
+              let start = LongformTimeline(
+                arc: result.arc,
+                coldOpenEnabled: result.audioSettings?.coldOpenEnabled ?? true
+              ).start(ofAct: index) else { return }
+        activeActID = result.arc.acts[index].id
+        player?.seek(to: CMTime(seconds: start, preferredTimescale: 600),
+                     toleranceBefore: .zero, toleranceAfter: .zero)
+    }
 
-        guard !botToken.isEmpty, !channelId.isEmpty else {
-            telegramError = "Токен Telegram или ID канала не заданы в Настройках."
-            return
+    private func observeActPlayback(on player: AVPlayer) {
+        let timeline = LongformTimeline(
+            arc: result.arc,
+            coldOpenEnabled: result.audioSettings?.coldOpenEnabled ?? true)
+        let acts = result.arc.acts
+        actPlaybackObserver = player.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { time in
+                let seconds = CMTimeGetSeconds(time)
+                let index = timeline.placements.first(where: { seconds >= $0.start && seconds < $0.end })?.actIndex
+                let id = index.flatMap { acts.indices.contains($0) ? acts[$0].id : nil }
+                Task { @MainActor in
+                    if activeActID != id { activeActID = id }
+                }
+            }
+    }
+
+    private func removeActPlaybackObserver() {
+        if let actPlaybackObserver, let player {
+            player.removeTimeObserver(actPlaybackObserver)
         }
-
-        do {
-            _ = try await TelegramPublishingService.shared.publishLongformPost(
-                result: result,
-                movieTitle: movieTitle,
-                movie: workspace.detectedMovie,
-                botToken: botToken,
-                channelId: channelId
-            )
-            telegramPostSuccess = true
-        } catch {
-            telegramError = error.localizedDescription
-        }
+        actPlaybackObserver = nil
     }
 
     private func thumbnailCard(image: NSImage, fileURL: URL) -> some View {
@@ -458,13 +567,29 @@ struct LongformResultsView: View {
                 Spacer()
 
                 Button {
+                    Task { await workspace.regenerateLongformCover(modelManager: modelManager) }
+                } label: {
+                    if workspace.isRegeneratingLongformCover {
+                        ProgressView().controlSize(.small)
+                        Text("Подбираем кадр…")
+                    } else {
+                        Label("Другой кадр", systemImage: "arrow.clockwise")
+                    }
+                }
+                .font(.caption)
+                .buttonStyle(.borderless)
+                .foregroundStyle(StudioTheme.accent)
+                .disabled(workspace.isBusy)
+                .help("Сгенерировать отдельный вариант обложки с другим кадром подтверждённого главного актёра")
+
+                Button {
                     NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                 } label: {
                     Label("В Finder", systemImage: "folder")
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)
-                .foregroundStyle(.yellow)
+                .foregroundStyle(StudioTheme.accent)
 
                 Button {
                     NSWorkspace.shared.open(fileURL)
@@ -473,7 +598,7 @@ struct LongformResultsView: View {
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)
-                .foregroundStyle(.yellow)
+                .foregroundStyle(StudioTheme.accent)
             }
 
             Image(nsImage: image)
@@ -512,7 +637,8 @@ struct LongformResultsView: View {
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)
-                .foregroundStyle(copied ? .green : .yellow)
+                .foregroundStyle(copied ? StudioTheme.success : StudioTheme.accent)
+                .accessibilityLabel((copied ? "Скопировано: " : "Копировать: ") + title)
             }
 
             Text(content)
@@ -522,6 +648,21 @@ struct LongformResultsView: View {
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+        }
+    }
+
+    /// Подсказка под бейджем: «источник не зафиксирован» — только когда его
+    /// действительно не записали. У шаблонного названия источник зафиксирован
+    /// (это формула темы), и врать про незафиксированность он не имеет права.
+    static func titleSourceHelp(for act: LongformAct) -> String {
+        switch act.effectiveTitleSource {
+        case .llm, .transcriptLine:
+            return act.titleProvenance?.evidence
+                ?? "Реплика-основание не записана: метка есть, доказать её нечем"
+        case .template:
+            return "Название дала формула темы — ни модель, ни реплика акта его не выводили"
+        case .unknown:
+            return "Источник названия не зафиксирован"
         }
     }
 

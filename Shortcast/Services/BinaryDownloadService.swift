@@ -3,7 +3,6 @@ import Foundation
 enum BinaryDownloadError: LocalizedError {
     case missingWorkingDirectory
     case downloadFailed(String)
-    case extractionFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -11,8 +10,6 @@ enum BinaryDownloadError: LocalizedError {
             return String(localized: "No working directory set. Choose one in Settings first.")
         case .downloadFailed(let detail):
             return String(localized: "Download failed: \(detail)")
-        case .extractionFailed(let detail):
-            return String(localized: "Extraction failed: \(detail)")
         }
     }
 }
@@ -30,27 +27,16 @@ enum BinaryDownloadService {
     private static let ffprobeURL = URL(
         string: "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffprobe-darwin-arm64"
     )!
-    private static let rifeURL = URL(
-        string: "https://github.com/nihui/rife-ncnn-vulkan/releases/download/20221029/rife-ncnn-vulkan-20221029-macos.zip"
-    )!
-    private static let realsrURL = URL(
-        string: "https://github.com/nihui/realsr-ncnn-vulkan/releases/download/20220728/realsr-ncnn-vulkan-20220728-macos.zip"
-    )!
-
     // MARK: - Binary descriptor
 
     enum Binary: String, Sendable, CaseIterable {
         case ffmpeg
         case ffprobe
-        case rife
-        case realsr
 
         var executableName: String {
             switch self {
             case .ffmpeg:  return "ffmpeg"
             case .ffprobe: return "ffprobe"
-            case .rife:    return "rife-ncnn-vulkan"
-            case .realsr:  return "realsr-ncnn-vulkan"
             }
         }
 
@@ -58,8 +44,6 @@ enum BinaryDownloadService {
             switch self {
             case .ffmpeg:  return "ffmpeg"
             case .ffprobe: return "ffprobe"
-            case .rife:    return "rife-ncnn-vulkan/rife-ncnn-vulkan"
-            case .realsr:  return "realsr-ncnn-vulkan/realsr-ncnn-vulkan"
             }
         }
     }
@@ -96,10 +80,6 @@ enum BinaryDownloadService {
             return try await installRawBinary(from: ffmpegURL, to: bin, name: "ffmpeg")
         case .ffprobe:
             return try await installRawBinary(from: ffprobeURL, to: bin, name: "ffprobe")
-        case .rife:
-            return try await installRIFE(to: bin)
-        case .realsr:
-            return try await installRealSR(to: bin)
         }
     }
 
@@ -140,40 +120,6 @@ enum BinaryDownloadService {
         return dest
     }
 
-    private static func installRIFE(to bin: URL) async throws -> URL {
-        let zipFile = bin.appendingPathComponent("rife-download.zip")
-        let extractDir = bin.appendingPathComponent("rife-ncnn-vulkan")
-        try await downloadFile(from: rifeURL, to: zipFile)
-        try await unzip(zipFile, into: bin)
-        let extracted = bin.appendingPathComponent("rife-ncnn-vulkan-20221029-macos")
-        if FileManager.default.fileExists(atPath: extractDir.path) {
-            try? FileManager.default.removeItem(at: extractDir)
-        }
-        try FileManager.default.moveItem(at: extracted, to: extractDir)
-        try? FileManager.default.removeItem(at: zipFile)
-        let binary = extractDir.appendingPathComponent("rife-ncnn-vulkan")
-        try makeExecutable(binary)
-        Self.log("rife-ncnn-vulkan installed → \(binary.path)")
-        return binary
-    }
-
-    private static func installRealSR(to bin: URL) async throws -> URL {
-        let zipFile = bin.appendingPathComponent("realsr-download.zip")
-        let extractDir = bin.appendingPathComponent("realsr-ncnn-vulkan")
-        try await downloadFile(from: realsrURL, to: zipFile)
-        try await unzip(zipFile, into: bin)
-        let extracted = bin.appendingPathComponent("realsr-ncnn-vulkan-20220728-macos")
-        if FileManager.default.fileExists(atPath: extractDir.path) {
-            try? FileManager.default.removeItem(at: extractDir)
-        }
-        try FileManager.default.moveItem(at: extracted, to: extractDir)
-        try? FileManager.default.removeItem(at: zipFile)
-        let binary = extractDir.appendingPathComponent("realsr-ncnn-vulkan")
-        try makeExecutable(binary)
-        Self.log("realsr-ncnn-vulkan installed → \(binary.path)")
-        return binary
-    }
-
     // MARK: - Helpers
 
     private static func downloadFile(from url: URL, to destination: URL) async throws {
@@ -185,18 +131,6 @@ enum BinaryDownloadService {
         }
         try? FileManager.default.removeItem(at: destination)
         try FileManager.default.moveItem(at: tmpURL, to: destination)
-    }
-
-    private static func unzip(_ zipFile: URL, into directory: URL) async throws {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        task.arguments = ["-o", "-q", zipFile.path, "-d", directory.path]
-        try task.run()
-        task.waitUntilExit()
-        guard task.terminationStatus == 0 else {
-            throw BinaryDownloadError.extractionFailed(
-                "unzip exited with \(task.terminationStatus)")
-        }
     }
 
     private static func makeExecutable(_ url: URL) throws {

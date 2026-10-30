@@ -1,234 +1,128 @@
 import Foundation
 
-/// Генератор авторской вирусной упаковки для YouTube в стиле канала @prrodan и Shortcast Cinema (SOLID)
+/// Упаковка конкретного эссе: тексты модели, название фильма и фактический таймлайн.
 enum LongformMetadataGenerator {
+    static let currentVersion = 2
 
-    /// Формирует полный пакет осмысленных метаданных для ролика
-    static func generate(
-        movieTitle: String,
-        concept: ThematicConcept,
-        arc: LongformNarrativeArc
-    ) -> LongformYouTubeMetadata {
-        let safeMovieTitle = MovieMetadataService.isGarbageTitle(movieTitle) ? "фільму" : "фільму «\(movieTitle)»"
-        let displayMovieTitle = MovieMetadataService.isGarbageTitle(movieTitle) ? "" : "«\(movieTitle)»"
+    /// Publication destinations come from current channel settings. Updating
+    /// this footer must not rebuild the essay or change its approved arc.
+    static func updatingTelegram(in metadata: LongformYouTubeMetadata, channelID: String) -> LongformYouTubeMetadata {
+        guard let url = LongformEditorialSupport.telegramURL(channelID: channelID) else { return metadata }
+        var updated = metadata
+        if let footer = updated.description.range(of: #"(?m)^Telegram:[ \t]*https://t\.me/[^\s]+[ \t]*$"#, options: .regularExpression) {
+            let old = String(updated.description[footer]).replacingOccurrences(of: "Telegram:", with: "").trimmed
+            updated.description.replaceSubrange(footer, with: "Telegram: " + url)
+            updated.pinnedComment = updated.pinnedComment.replacingOccurrences(of: old, with: url)
+        } else {
+            updated.description += "\n\nTelegram: " + url
+        }
+        if !updated.pinnedComment.contains(url) {
+            updated.pinnedComment += "\n\nОбговорення та нові есе: " + url
+        }
+        return updated
+    }
 
-        // 1. Адаптивный кинематографический заголовок в стиле @prrodan (ударная фраза от 2-го лица)
-        let title = buildPrrodanTitle(movieTitle: movieTitle, concept: concept)
-
-        // 2. Таймкоды YouTube по адаптивным актам
-        let chaptersText = buildChapters(acts: arc.acts, concept: concept)
-
-        // 3. Строфическое описание-манифест в стиле @prrodan
-        let desc = buildPrrodanDescription(
-            movieTitle: movieTitle,
-            safeMovieTitle: safeMovieTitle,
-            concept: concept,
-            chaptersText: chaptersText,
-            hook: arc.hookText,
-            thesis: arc.thesis
-        )
-
-        // 4. Глубокие смысловые теги
-        let tags = buildPrrodanTags(movieTitle: movieTitle, concept: concept)
-
-        // 5. Провокационный закрепленный комментарий
-        let pinnedComment = buildPrrodanPinnedComment(
-            movieTitle: displayMovieTitle, concept: concept, cta: arc.ctaText)
-        
-        // 6. Telegram poll из CTA если содержит вопрос
-        let telegramPoll = buildTelegramPoll(from: arc.ctaText, concept: concept)
-
-        var metadata = LongformYouTubeMetadata(
-            title: title,
-            description: desc,
-            tags: tags,
-            pinnedComment: pinnedComment
-        )
-        metadata.telegramPoll = telegramPoll
+    static func generate(movieTitle: String, concept: ThematicConcept, arc: LongformNarrativeArc,
+                         timeline: LongformTimeline? = nil) -> LongformYouTubeMetadata {
+        let film = canonicalMovieTitle(movieTitle, arc: arc)
+        let essayTitle = clean(arc.publicationTitle ?? concept.suggestedTitle)
+        let title = publicationTitle(essay: essayTitle, film: film)
+        let thesis = clean(arc.thesis ?? concept.philosophicalPremise)
+        let hook = clean(arc.hookText ?? "")
+        let conclusion = clean(arc.conclusionText ?? "")
+        let keywords = unique([film.lowercased(), concept.word.lowercased(), "кіноесе", "розбір фільму", "Кадр і Сенс"])
+        let hashtags = unique([film, concept.word, "Кіноесе", "КадрІСенс"].compactMap(hashtag))
+        var paragraphs = ["«\(film)» — \(essayTitle.isEmpty ? concept.word : essayTitle)."]
+        paragraphs += unique([hook, thesis, conclusion].filter { !$0.isEmpty })
+        if thesis.isEmpty && !concept.tagline.trimmed.isEmpty { paragraphs.append(clean(concept.tagline)) }
+        let chapters = buildChapters(acts: arc.acts, concept: concept, timeline: timeline ?? LongformTimeline(arc: arc))
+        var footer = "Таймкоди:\n" + chapters
+        if let url = LongformEditorialSupport.telegramURL(channelID: arc.discussionURL ?? "") {
+            footer += "\n\nTelegram: " + url
+        }
+        footer += "\n\n" + LongformYouTubeMetadata.standardFairUseDisclaimer
+        footer += "\n\n" + hashtags.joined(separator: " ")
+        let body = paragraphs.joined(separator: "\n\n")
+        let description = utf8Prefix(body, limit: max(0, 5_000 - footer.utf8.count - 2)) + "\n\n" + footer
+        let cta = clean(LongformEditorialSupport.actionableCTA(arc.ctaText, destination: arc.discussionURL) ?? "")
+        var comment = "«\(film)» — \(essayTitle.isEmpty ? concept.word : essayTitle)."
+        if !cta.isEmpty { comment += "\n\n" + cta }
+        else if !hook.isEmpty { comment += "\n\n" + hook }
+        var metadata = LongformYouTubeMetadata(title: title, description: description,
+                                               tags: keywords, pinnedComment: comment)
+        metadata.hashtagTokens = hashtags
+        metadata.packagingVersion = currentVersion
         return metadata
     }
-    
-    /// Генерирует Telegram poll из CTA если он содержит вопрос
-    private static func buildTelegramPoll(from cta: String?, concept: ThematicConcept) -> LongformYouTubeMetadata.TelegramPoll? {
-        guard let cta = cta, !cta.isEmpty else { return nil }
-        
-        // Ищем вопросительное предложение в CTA
-        let sentences = cta.components(separatedBy: CharacterSet(charactersIn: ".!?"))
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { $0.hasSuffix("?") || $0.contains("?") }
-        
-        guard let question = sentences.first else { return nil }
-        
-        // Генерируем варианты ответа на основе темы
-        let options = generatePollOptions(for: concept)
-        guard options.count >= 2 else { return nil }
-        
-        return LongformYouTubeMetadata.TelegramPoll(question: question, options: options)
-    }
-    
-    /// Генерирует варианты ответа для опроса на основе темы фильма
-    private static func generatePollOptions(for concept: ThematicConcept) -> [String] {
-        let word = concept.word
-        return [
-            "Так, це геніально",
-            "Ні, це помилка",
-            "Не впевнений, потрібен перегляд",
-            "Байдуже, головне — візуал"
-        ]
+
+    static func canonicalMovieTitle(_ supplied: String, arc: LongformNarrativeArc) -> String {
+        let proposed = clean(supplied)
+        if !MovieMetadataService.isGarbageTitle(proposed), !looksLikeReleaseName(proposed) { return proposed }
+        let saved = clean(arc.movieTitle)
+        if !MovieMetadataService.isGarbageTitle(saved), !looksLikeReleaseName(saved) { return saved }
+        return proposed.isEmpty ? saved : proposed
     }
 
-    // MARK: - Вспомогательные генераторы
-
-    /// Устойчивый хеш слова (djb2 по UTF-16). `String.hashValue` пересевается на каждый
-    /// запуск процесса, поэтому выбор шаблона заголовка молча менялся между рендерами
-    /// одного и того же ролика — YouTube-тайтл переименовывал сам себя.
-    static func stableHash(_ text: String) -> Int {
-        var hash: UInt64 = 5381
-        for unit in text.utf16 {
-            hash = (hash &* 33) &+ UInt64(unit)
-        }
-        return Int(hash & 0x7FFF_FFFF_FFFF_FFFF)
+    static func publicationTitle(essay: String, film: String) -> String {
+        let essay = clean(essay)
+        let film = clean(film)
+        guard !film.isEmpty else { return String(essay.prefix(100)) }
+        if normalized(essay).contains(normalized(film)), !normalized(film).isEmpty, essay.count <= 100 { return essay }
+        // Сначала резервируем имя фильма, затем сокращаем только заголовок эссе.
+        let suffix = " | " + film
+        guard suffix.count < 100 else { return String(film.prefix(100)) }
+        let budget = 100 - suffix.count
+        let heading = ellipsis(essay, limit: budget)
+        return heading.isEmpty ? film : heading + suffix
     }
 
-    private static func buildPrrodanTitle(movieTitle: String, concept: ThematicConcept) -> String {
-        let hook = concept.suggestedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let word = concept.word.capitalized
-
-        // Если заголовок концепта уже отточен и содержит сильную мысль
-        if hook.lowercased().contains("ти") || hook.lowercased().contains("коли") || hook.lowercased().contains("чому") {
-            if hook.contains("|") {
-                return hook
-            } else {
-                return "\(hook) | \(word)"
-            }
-        }
-
-        // Адаптивные формулы в стиле prrodan
-        let templates = [
-            "Ти програєш, поки віриш у це | \(word)",
-            "Одного разу ти зрозумієш, чому все сталося саме так | \(word)",
-            "Іноді, щоб перемогти, потрібно відпустити контроль | \(word)",
-            "Ти ніколи не будеш вільним, поки не усвідоміш це | \(word)",
-            "Найнебезпечніша брехня — та, в яку ти віриш сам | \(word)"
-        ]
-
-        let selectedTemplate = templates[stableHash(concept.word) % templates.count]
-        return selectedTemplate
+    static func hashtag(_ input: String) -> String? {
+        let normalized = input.precomposedStringWithCanonicalMapping
+        let allowed = normalized.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) || $0 == "_" }
+        let body = String(String.UnicodeScalarView(allowed))
+        guard body.unicodeScalars.contains(where: CharacterSet.letters.contains) else { return nil }
+        return "#" + String(body.prefix(64))
     }
 
-    private static func buildChapters(acts: [LongformAct], concept: ThematicConcept) -> String {
+    static func buildChapters(acts: [LongformAct], concept: ThematicConcept, timeline: LongformTimeline) -> String {
         var lines: [String] = []
-        lines.append("00:00 — Вступ: \(concept.word.capitalized)")
-
-        var currentOffset: Double = 2.5
-        let romanNumerals = ["I", "II", "III", "IV", "V", "VI"]
-
+        if timeline.introDuration > 0 { lines.append("00:00 — Вступ: \(concept.word.capitalized)") }
+        let roman = ["I", "II", "III", "IV", "V", "VI"]
         for (index, act) in acts.enumerated() {
-            let mins = Int(currentOffset) / 60
-            let secs = Int(currentOffset) % 60
-            let timeStr = String(format: "%02d:%02d", mins, secs)
-            let roman = index < romanNumerals.count ? romanNumerals[index] : "\(index + 1)"
-            lines.append("\(timeStr) — Акт \(roman): \(act.title)")
-
-            currentOffset += act.duration
+            guard let offset = timeline.start(ofAct: index) else { continue }
+            let time = String(format: "%02d:%02d", Int(offset) / 60, Int(offset) % 60)
+            lines.append("\(time) — Акт \(index < roman.count ? roman[index] : String(index + 1)): \(act.title)")
         }
-
         return lines.joined(separator: "\n")
     }
 
-    private static func buildPrrodanDescription(
-        movieTitle: String,
-        safeMovieTitle: String,
-        concept: ThematicConcept,
-        chaptersText: String,
-        hook: String?,
-        thesis: String?
-    ) -> String {
-        let isKnownMovie = !MovieMetadataService.isGarbageTitle(movieTitle)
-        let movieRef = isKnownMovie ? "фільму «\(movieTitle)»" : "цієї історії"
-        let cleanHook = hook?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let cleanThesis = thesis?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        let opening: String
-        if !cleanHook.isEmpty {
-            opening = cleanHook
-        } else {
-            opening = "Це відео — про інший бік \(movieRef)."
-        }
-        let thesisBlock = (!cleanThesis.isEmpty && cleanThesis != cleanHook)
-            ? "\n\n\(cleanThesis)"
-            : ""
-
-        return """
-        \(opening)\(thesisBlock)
-
-        Не про зовнішні декорації.
-        Не про слова на поверхні.
-        А про те, що насправді керує нашими рішеннями.
-
-        \(concept.philosophicalPremise)
-
-        \(concept.tagline)
-
-        Іноді ілюзія настільки щільно зростається з реальністю, що людина приймає чужі правила за свій власний вибір. До тих пір, поки ціна цього вибору не стає надто високою.
-
-        Таймкоди:
-        \(chaptersText)
-
-        ───────────────────────────────────────
-        Disclaimer: This video is an analytical cinema essay intended for commentary, educational, and transformative artistic reflection. All footage used belongs to its respective copyright owners and is used under Fair Use principles (Section 107 of the Copyright Act).
-
-        #кіноеесе #сенсфільму #психологія #\(concept.word.lowercased()) #усвідомленість #саморозвиток #розбіркіно
-        """
+    private static func clean(_ text: String) -> String {
+        text.replacingOccurrences(of: "<", with: "").replacingOccurrences(of: ">", with: "")
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
-
-    private static func buildPrrodanTags(movieTitle: String, concept: ThematicConcept) -> [String] {
-        var tags: [String] = [
-            concept.word.lowercased(),
-            "кіноеесе",
-            "сенс фільму",
-            "розбір фільму",
-            "психологія кіно",
-            "самообман",
-            "ілюзія контролю",
-            "усвідомленість",
-            "характер",
-            "мислення",
-            "філософія кіно",
-            "мотивація",
-            "prrodan стиль",
-            "shortcast cinema",
-            "кінематограф"
-        ]
-
-        if !MovieMetadataService.isGarbageTitle(movieTitle) {
-            let lower = movieTitle.lowercased()
-            tags.insert("\(lower) сенс", at: 0)
-            tags.insert("\(lower) розбір", at: 0)
-            tags.insert(lower, at: 0)
-        }
-
-        return tags
+    private static func normalized(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "uk_UA"))
+            .unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
     }
-
-    private static func buildPrrodanPinnedComment(
-        movieTitle: String,
-        concept: ThematicConcept,
-        cta: String?
-    ) -> String {
-        let movieStr = movieTitle.isEmpty ? "цього фільму" : movieTitle
-        let cleanCTA = cta?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !cleanCTA.isEmpty {
-            return """
-            \(cleanCTA)
-
-            Який момент з \(movieStr) змусив тебе по-справжньому засумніватися в тому, хто насправді робить вибір у твоєму житті? Напиши свої думки в коментарях 👇
-            """
+    private static func unique(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.filter { !$0.isEmpty && seen.insert(normalized($0)).inserted }
+    }
+    private static func looksLikeReleaseName(_ text: String) -> Bool {
+        text.range(of: #"(?i)(1080p|2160p|720p|bluray|x26[45]|\.mkv|\.mp4)"#, options: .regularExpression) != nil
+    }
+    private static func ellipsis(_ text: String, limit: Int) -> String {
+        guard limit > 0 else { return "" }
+        guard text.count > limit else { return text }
+        return String(text.prefix(max(0, limit - 1))).trimmed + "…"
+    }
+    private static func utf8Prefix(_ text: String, limit: Int) -> String {
+        var result = "", bytes = 0
+        for character in text {
+            let size = String(character).utf8.count
+            guard bytes + size <= limit else { break }
+            result.append(character); bytes += size
         }
-        return """
-        Найнебезпечніший ворог — той, хто ховається там, де ти найменше будеш його шукати: всередині твоєї власної голови.
-
-        Який момент з \(movieStr) змусив тебе по-справжньому засумніватися в тому, хто насправді робить вибір у твоєму житті? Напиши свої думки в коментарях 👇
-        """
+        return result
     }
 }

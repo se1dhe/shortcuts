@@ -65,7 +65,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.shortcast.Shortcast
-        PRODUCT_NAME: Short Generator
+        PRODUCT_NAME: КАДР & СЕНС
         PRODUCT_MODULE_NAME: Shortcast
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"
@@ -112,12 +112,19 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         MACOSX_DEPLOYMENT_TARGET: "15.0"
         SWIFT_VERSION: "6.0"
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Short Generator.app/Contents/MacOS/Short Generator"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/КАДР & СЕНС.app/Contents/MacOS/КАДР & СЕНС"
         BUNDLE_LOADER: "$(TEST_HOST)"
 
 schemes:
   Shortcast:
     build:
+      postActions:
+        - name: Register only installed application
+          script: |
+            if [ -z "${CI:-}" ] && [ "${SHORTCAST_SKIP_INSTALL:-0}" != "1" ]; then
+              /usr/bin/python3 "${SRCROOT}/scripts/register-installed-app.py"
+            fi
+          settingsTarget: Shortcast
       targets:
         Shortcast: all
         ShortcastTests: [test]
@@ -128,11 +135,9 @@ schemes:
       targets:
         - ShortcastTests
       postActions:
-        - name: Deregister DerivedData from LaunchServices
+        - name: Register only installed application
           script: |
-            LS="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-            if [ -x "$LS" ]; then
-              "$LS" -u "${TARGET_BUILD_DIR}/${FULL_PRODUCT_NAME}" 2>/dev/null || true
-              "$LS" -f -trusted "/Applications/Short Generator.app" 2>/dev/null || true
+            if [ -z "${CI:-}" ] && [ "${SHORTCAST_SKIP_INSTALL:-0}" != "1" ]; then
+              /usr/bin/python3 "${SRCROOT}/scripts/register-installed-app.py"
             fi
           settingsTarget: Shortcast

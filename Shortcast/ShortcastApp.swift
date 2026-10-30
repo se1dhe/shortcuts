@@ -20,8 +20,6 @@ struct ShortcastApp: App {
     @State private var settings = AppSettings()
     @State private var modelManager = ModelManager()
     @State private var workspace = WorkspaceModel()
-    @State private var languageManager = LanguageManager()
-    @State private var movieShorts = MovieShortsBrowserModel()
 
     var body: some Scene {
         WindowGroup {
@@ -29,14 +27,11 @@ struct ShortcastApp: App {
                 .environment(settings)
                 .environment(modelManager)
                 .environment(workspace)
-                .environment(languageManager)
-                .environment(movieShorts)
                 .task {
-                    workspace.cleanUpOrphanedInputFiles(settings: settings)
                     await FontDownloadService.shared.ensureFontsInstalled()
-                    await modelManager.prepareIfNeeded()
                 }
         }
+        .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
         .defaultSize(width: 1180, height: 880)
         .commands {
@@ -47,7 +42,7 @@ struct ShortcastApp: App {
             SettingsView()
                 .environment(settings)
                 .environment(modelManager)
-                .environment(languageManager)
+                .environment(workspace)
         }
     }
 }

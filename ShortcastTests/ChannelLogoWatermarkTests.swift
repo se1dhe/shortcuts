@@ -63,7 +63,7 @@ struct ChannelLogoWatermarkTests {
         }
     }
 
-    @Test("четыре строки + летбокс: знак остаётся номинальным и не трогает субтитры")
+    @Test("четыре строки + летбокс: знак уменьшается в свободную полосу и не трогает субтитры")
     func testFourLinesKeepNominalLogoAboveLetterbox() throws {
         let y = conceptY("ТЕРПІННЯ", renderSize: essay)
         let bottomBar = 0.135 * essay.height // реальный летбокс 16:9-исходника в 9:16-монтаже
@@ -71,19 +71,20 @@ struct ChannelLogoWatermarkTests {
             renderSize: essay, conceptY: y, lines: 4, bottomBarHeight: bottomBar, style: style
         ))
         let nominal = style.sizeFraction * essay.height
-        #expect(abs(rect.height - nominal) < 0.001, "места у нижнего края хватает на полный знак")
+        #expect(rect.height <= nominal, "знак не должен превышать номинальный размер")
+        #expect(rect.height >= style.minSizeFraction * essay.height - 0.001)
         #expect(abs(rect.minY - (bottomBar + style.edgeInset)) < 0.001)
         #expect(!rect.intersects(band(4, renderSize: essay, y: y)))
     }
 
-    @Test("пять строк + летбокс: знак ужимается, но не ниже пола 0.06·H")
+    @Test("нижняя треть оставляет место знаку даже при пяти строках")
     func testFiveLinesShrinkLogoToAvailableRoom() throws {
         let y = conceptY("ТЕРПІННЯ", renderSize: essay)
         let bottomBar = 0.135 * essay.height
         let rect = try #require(LongformSubtitleRenderer.essayLogoBand(
             renderSize: essay, conceptY: y, lines: 5, bottomBarHeight: bottomBar, style: style
         ))
-        #expect(rect.height < style.sizeFraction * essay.height, "при нехватке места знак обязан ужаться")
+        #expect(rect.height <= style.sizeFraction * essay.height, "знак не должен превышать номинальный размер")
         #expect(rect.height >= style.minSizeFraction * essay.height - 0.001)
         #expect(abs(rect.minY - (bottomBar + style.edgeInset)) < 0.001)
         #expect(!rect.intersects(band(5, renderSize: essay, y: y)))
@@ -115,91 +116,6 @@ struct ChannelLogoWatermarkTests {
     }
 
     // MARK: - Шортсы
-
-    @Test("шортс: пустые snapRects дают полосу по умолчанию 0.12·H")
-    func testEmptySnapRectsUseDefaultBand() throws {
-        #expect(SubtitleRenderer.shortSubtitleBottom(captionRects: [], renderSize: short916)
-                    == 0.12 * short916.height)
-        let rect = try #require(SubtitleRenderer.shortChannelLogoBand(renderSize: short916, captionRects: []))
-        let inset = max(16, short916.width * 0.02)
-        let gap = 0.012 * short916.height
-        // Левый нижний угол, верх полосы — ровно под запасом от субтитров по умолчанию.
-        #expect(abs(rect.minX - inset) < 0.001)
-        #expect(abs(rect.minY - inset) < 0.001)
-        #expect(abs(rect.maxY - (0.12 * short916.height - gap)) < 0.001)
-        #expect(abs(rect.width - rect.height) < 0.001)
-    }
-
-    @Test("шортс: худший случай (капт прижат к полу, minY = 40) — знак не рисуем")
-    func testShortsWorstCaseDrops() {
-        // buildKineticSubtitleLayer зажимает snap Y снизу до 40 px — ниже уже некуда.
-        // x = 100 внутри левой колонки, иначе капт не считается вообще.
-        let floorCaption = CGRect(x: 100, y: 40, width: 600, height: 220)
-        #expect(ChannelLogoPlacement.short(renderSize: short916, subtitleSnapRects: [floorCaption], style: shortStyle) == nil)
-        #expect(SubtitleRenderer.shortChannelLogoBand(renderSize: short916, captionRects: [floorCaption]) == nil)
-    }
-
-    @Test("шортс: капт выше 0.12·H оставляет знак номинальным")
-    func testShortsNominalAboveDefaultBand() throws {
-        // Капт должен перекрывать левую колонку (x < 0.11·H + inset), иначе он не считается.
-        let elevated = CGRect(x: 100, y: 0.25 * short916.height, width: 600, height: 200)
-        let rect = try #require(SubtitleRenderer.shortChannelLogoBand(renderSize: short916, captionRects: [elevated]))
-        let nominal = shortStyle.sizeFraction * short916.height // 211.2 px при 1920
-        #expect(abs(rect.width - nominal) < 0.001)
-        #expect(!rect.intersects(elevated))
-        // Площадочный рельс actions (правый нижний угол) не задет: знак в левом.
-        #expect(rect.maxX < short916.width * 0.84)
-    }
-
-    @Test("шортс: квадратный кадр остаётся в долях — без пиксельных констант")
-    func testShortsSquareFrameUsesFractions() throws {
-        let square = CGSize(width: 1080, height: 1080)
-        let rect = try #require(SubtitleRenderer.shortChannelLogoBand(renderSize: square, captionRects: []))
-        #expect(rect.width <= shortStyle.sizeFraction * square.height + 0.001)
-        #expect(rect.minY >= max(16, square.width * 0.02) - 0.001)
-        #expect(rect.maxX < square.width * 0.84, "вертикальный рельс actions занят не знаком")
-    }
-
-    // MARK: - Настройки и деградация
-
-    @Test("настройка шортсов: без нового ключа — фолбэк на старый watermarkEnabled")
-    func testShortsSettingFallsBackToLegacyFlag() {
-        let defaults = UserDefaults(suiteName: "app.shortcast.tests.\(UUID().uuidString)")!
-        // Ключей нет вовсе: бренд остаётся включённым (молча незабрендрованный клип — худший вариант).
-        #expect(ChannelLogoWatermarkSettings.isEnabled(for: .shorts, defaults: defaults))
-        defaults.set(false, forKey: ChannelLogoWatermarkSettings.legacyWatermarkKey)
-        #expect(!ChannelLogoWatermarkSettings.isEnabled(for: .shorts, defaults: defaults))
-        // Новый ключ важнее старого.
-        defaults.set(true, forKey: ChannelLogoWatermarkSettings.shortsKey)
-        #expect(ChannelLogoWatermarkSettings.isEnabled(for: .shorts, defaults: defaults))
-        defaults.set(false, forKey: ChannelLogoWatermarkSettings.shortsKey)
-        defaults.set(true, forKey: ChannelLogoWatermarkSettings.legacyWatermarkKey)
-        #expect(!ChannelLogoWatermarkSettings.isEnabled(for: .shorts, defaults: defaults))
-        // Явный флаг клипа имеет приоритет над настройкой (будущее поле ShortClip).
-        #expect(ChannelLogoWatermarkSettings.isEnabled(for: .shorts, clipWants: true, defaults: defaults))
-        defaults.set(true, forKey: ChannelLogoWatermarkSettings.shortsKey)
-        #expect(!ChannelLogoWatermarkSettings.isEnabled(for: .shorts, clipWants: false, defaults: defaults))
-    }
-
-    @Test("шортс: чужая полоса в левом нижнем углу выключает знак, а не сдвигает его на неё")
-    func testShortsHonorExcludedRects() throws {
-        let elevated = CGRect(x: 100, y: 0.25 * short916.height, width: 600, height: 200)
-        let nominal = try #require(SubtitleRenderer.shortChannelLogoBand(
-            renderSize: short916, captionRects: [elevated]
-        ))
-        // Рельс actions, дотянувший до левого угла: пересечения быть не может — ничего не рисуем.
-        let rail = CGRect(x: 0, y: 0, width: short916.width, height: nominal.maxY)
-        #expect(SubtitleRenderer.shortChannelLogoBand(
-            renderSize: short916, captionRects: [elevated], excludedRects: [rail]
-        ) == nil)
-        // Полоса выше знака не мешает.
-        let above = CGRect(x: 0, y: nominal.maxY + 1, width: short916.width, height: 100)
-        #expect(SubtitleRenderer.shortChannelLogoBand(
-            renderSize: short916, captionRects: [elevated], excludedRects: [above]
-        ) == nominal)
-    }
-
-    // MARK: - Порядок полос в собранном оверлее
 
     @Test("оверлей эссе: постоянный почти прозрачный знак — последним, по центру у низа")
     func testOverlayAppendsPersistentChannelLogoLast() async throws {
@@ -304,8 +220,8 @@ struct ChannelLogoWatermarkTests {
         #expect(withoutTexts.sublayers?.count == 3)
     }
 
-    @Test("под хуком субтитры молчат до 6.2с")
-    func subtitlesStayHiddenUnderHookUntilSixSeconds() async throws {
+    @Test("ранние реплики не пропадают под хуком и занимают отдельную полосу")
+    func subtitlesRemainVisibleUnderHook() async throws {
         let renderer = LongformSubtitleRenderer()
         let concept = ThematicConcept(
             word: "КОНТРОЛЬ",
@@ -322,6 +238,12 @@ struct ChannelLogoWatermarkTests {
             hookText: "Хук", ctaText: nil
         )
         let subtitleBand = try #require(root.sublayers?[1])
-        #expect(subtitleBand.sublayers?.isEmpty ?? true)
+        let phrase = try #require(subtitleBand.sublayers?.first)
+        let fade = try #require(phrase.animation(forKey: "smoothPhraseFade") as? CAKeyframeAnimation)
+        let start = try #require(fade.keyTimes?[1]).doubleValue * fade.duration
+        #expect(abs(start - 1) < 0.01)
+        #expect(phrase.frame.maxY < (try #require(root.sublayers?.first)).frame.minY)
+        let hookBottom = try #require(root.sublayers?[2].sublayers?.map(\.frame.minY).min())
+        #expect(phrase.frame.maxY <= hookBottom - 24)
     }
 }

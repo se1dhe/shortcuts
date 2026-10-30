@@ -22,7 +22,7 @@ struct AudioTrackSelectionSheet: View {
                 HStack(spacing: 14) {
                     Image(systemName: "waveform.badge.magnifyingglass")
                         .font(.system(size: 32))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(StudioTheme.accent)
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Выбор аудиодорожки озвучки")
@@ -97,6 +97,9 @@ struct AudioTrackSelectionSheet: View {
                 .padding(.vertical, 16)
             }
             .frame(width: 580, height: 480)
+            .background(StudioTheme.background)
+            .preferredColorScheme(.dark)
+            .tint(StudioTheme.accent)
             .onAppear {
                 if let initial = workspace.pendingAudioSelection?.selectedTrackId {
                     selectedTrackId = initial
@@ -112,7 +115,7 @@ struct AudioTrackSelectionSheet: View {
             HStack(spacing: 14) {
                 Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
                     .font(.title3)
-                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.6))
+                    .foregroundStyle(isSelected ? StudioTheme.accent : Color.secondary.opacity(0.6))
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
@@ -150,11 +153,11 @@ struct AudioTrackSelectionSheet: View {
             .padding(14)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(isSelected ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.04))
+                    .fill(isSelected ? StudioTheme.accent.opacity(0.10) : StudioTheme.panel)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(isSelected ? Color.accentColor : Color.secondary.opacity(0.2), lineWidth: isSelected ? 1.5 : 1)
+                .strokeBorder(isSelected ? StudioTheme.accent : StudioTheme.line, lineWidth: isSelected ? 1.5 : 1)
             )
         }
         .buttonStyle(.plain)

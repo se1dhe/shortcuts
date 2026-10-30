@@ -1,240 +1,173 @@
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { UPLOAD_DIALOG, normalizedText, readYouTubeStatus, waitForYouTubePhase, setVerifiedYouTubeField, waitEnabled, requireReadyToPublish } from './youtube-waits.js';
+import { openYouTubeFilePicker, selectYouTubeVideoFile } from './youtube-picker.js';
+import { thumbnailState, waitForThumbnailPreview } from './youtube-thumbnail.js';
 
-/**
- * Automation module for publishing videos and Shorts to YouTube Studio.
- *
- * @param {import('playwright-core').Page} page
- * @param {Object} postData
- * @param {string} postData.videoPath - Absolute path to the .mp4 file
- * @param {string} [postData.thumbnailPath] - Absolute path to the thumbnail image file (1920x1080)
- * @param {string} postData.title - Video title
- * @param {string} postData.caption - Description text
- * @param {string[]} postData.hashtags - Array of hashtags
- * @param {boolean} [postData.isPublic=true] - Whether to publish Public
- * @param {boolean} [postData.isShort=false] - Whether this is a 9:16 Short
- */
-export async function uploadToYouTube(page, { videoPath, thumbnailPath, title, caption, hashtags = [], isPublic = true, isShort = false }) {
-  console.log(JSON.stringify({ type: 'progress', platform: 'youtube', message: 'Открытие YouTube Studio...' }));
+const TITLE = '#title-textarea #textbox, #title-textarea [contenteditable="true"]';
+const DESCRIPTION = '#description-textarea #textbox, #description-textarea [contenteditable="true"]';
+const CHECKS = 'ytcp-video-checks:visible, ytcp-video-checks-section:visible, ytcp-checks-step:visible, #checks-step:visible, #checks-container:visible, #checks-status:visible';
+const PUBLIC = '[name="PUBLIC"]';
+const UNLISTED = '[name="UNLISTED"]';
+const progress = message => console.log(JSON.stringify({ type: 'progress', platform: 'youtube', message }));
 
-  await page.goto('https://studio.youtube.com', {
-    waitUntil: 'domcontentloaded',
-    timeout: 60000,
+export function youtubeDescription(caption, hashtags = [], isShort = false) {
+  const tags = [...new Set(hashtags.map(h => h.startsWith('#') ? h : '#' + h))];
+  if (isShort && !tags.some(h => h.toLowerCase() === '#shorts') && !/#shorts\b/i.test(caption)) tags.push('#Shorts');
+  return [caption.trim(), tags.filter(h => !caption.includes(h)).join(' ')].filter(Boolean).join('\n\n');
+}
+
+export async function assertYouTubeMetadata(dialog, title, description) {
+  const actualTitle = await dialog.locator(TITLE).first().innerText();
+  const actualDescription = await dialog.locator(DESCRIPTION).first().innerText();
+  if (normalizedText(actualTitle) !== normalizedText(title) || normalizedText(actualDescription) !== normalizedText(description)) {
+    throw new Error('Название или описание YouTube изменилось после заполнения. Публикация остановлена.');
+  }
+}
+
+async function uploadThumbnail(dialog, thumbnailPath, isShort) {
+  if (!thumbnailPath || !fs.existsSync(thumbnailPath)) throw new Error('Обложка видео отсутствует. Публикация остановлена.');
+  // Scope to the thumbnail editor: a generic #file-loader may be the VIDEO
+  // input and selecting a JPG there can replace/interrupt the current upload.
+  const editor = dialog.locator('ytcp-thumbnails-compact-editor, ytcp-video-thumbnail-editor, #thumbnail-uploader').first();
+  await editor.waitFor({ state: 'visible', timeout: 30000 }).catch(() => {
+    throw new Error('YouTube не показал редактор обложки' + (isShort ? ' Shorts' : '')
+      + '. Проверьте доступ канала к пользовательским обложкам. Публикация остановлена.');
   });
+  const input = editor.locator('input[type="file"][accept*="image"], input[type="file"]').first();
+  await input.waitFor({ state: 'attached', timeout: 15000 });
+  const previous = (await thumbnailState(editor)).images;
+  await input.setInputFiles(thumbnailPath);
+  // Studio clears/replaces the file input after its change handler. Its empty
+  // files list is normal; verify the changed, decoded preview after uploading.
+  await waitForThumbnailPreview(editor, previous);
+  progress('Обложка передана редактору YouTube; предпросмотр доступен.');
+}
 
-  // Short pause for SPA hydration
-  await page.waitForTimeout(2500);
-
-  // Check login state
-  const isLoginPage = page.url().includes('accounts.google.com') ||
-    (await page.locator('a:has-text("Sign in"), a:has-text("Войти"), input[type="email"]').count()) > 0;
-
-  if (isLoginPage) {
-    throw new Error('Не авторизован в YouTube Studio. Выполните вход через кнопку "Войти в Google…".');
-  }
-
-  console.log(JSON.stringify({ type: 'progress', platform: 'youtube', message: 'Открытие меню загрузки видео...' }));
-
-  // Click Create button or Upload button
-  const createBtn = page.locator('#create-icon, ytcp-button#create-icon, #upload-button, ytcp-button#upload-button, button:has-text("Create"), button:has-text("Создать")').first();
-  await createBtn.waitFor({ state: 'visible', timeout: 30000 });
-  await createBtn.click();
-
-  // Click Upload videos if dropdown appeared
-  const uploadItem = page.locator('tp-yt-paper-item:has-text("Upload videos"), tp-yt-paper-item:has-text("Добавить видео"), [test-id="upload-videos"]').first();
-  if (await uploadItem.isVisible({ timeout: 4000 }).catch(() => false)) {
-    await uploadItem.click();
-  }
-
-  console.log(JSON.stringify({ type: 'progress', platform: 'youtube', message: 'Выбор видеофайла для загрузки...' }));
-
-  // File input
-  const fileInput = page.locator('input[type="file"]').first();
-  await fileInput.waitFor({ state: 'attached', timeout: 20000 });
-  await fileInput.setInputFiles(videoPath);
-
-  // Wait for details form to appear
-  await page.waitForSelector('#title-textarea, #textbox[aria-label*="title" i], #textbox[aria-label*="назван" i]', { timeout: 60000 });
-
-  // YouTube Studio asynchronously initializes title to the file name. Wait 3 seconds for this initial setup to settle.
-  await page.waitForTimeout(3000);
-
-  console.log(JSON.stringify({ type: 'progress', platform: 'youtube', message: 'Заполнение названия видео...' }));
-
-  // Format title (append #Shorts only if this is a short)
-  let formattedTitle = (title || 'Video').trim();
-  if (isShort && !formattedTitle.toLowerCase().includes('#shorts')) {
-    formattedTitle += ' #Shorts';
-  }
-  const cleanTitle = formattedTitle.slice(0, 100);
-
-  // Set Title (handle Polymer web-components and asynchronous filename injection)
-  const titleBox = page.locator('#title-textarea #textbox, ytcp-social-suggestions-textbox#title-textarea [contenteditable="true"], #title-textarea [contenteditable="true"], [aria-label*="title" i], [aria-label*="назван" i]').first();
-  await titleBox.waitFor({ state: 'visible', timeout: 30000 });
-  await titleBox.scrollIntoViewIfNeeded().catch(() => {});
-  await titleBox.click();
-  await page.waitForTimeout(300);
-
-  // Select all and clear
-  await titleBox.press('ControlOrMeta+a').catch(() => {});
-  await titleBox.press('Backspace').catch(() => {});
-  await page.waitForTimeout(200);
-
-  // Force DOM clear and set via evaluate to guarantee custom Polymer event dispatch
-  await page.evaluate(({ el, text }) => {
-    if (el) {
-      el.innerText = text;
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
+async function goToChecks(dialog) {
+  for (let step = 0; step < 4; step++) {
+    const current = await studioStep(dialog);
+    if (current === 'checks') return;
+    if (current === 'visibility') {
+      throw new Error('YouTube перешёл к доступу без подтверждённого экрана проверки контента. Публикация остановлена.');
     }
-  }, { el: await titleBox.elementHandle(), text: cleanTitle }).catch(() => {});
-
-  // Also type text to trigger synthetic keyboard events if needed
-  await page.waitForTimeout(300);
-  const currentTitle = await titleBox.innerText().catch(() => '');
-  if (!currentTitle || currentTitle !== cleanTitle) {
-    await titleBox.click();
-    await titleBox.press('ControlOrMeta+a').catch(() => {});
-    await titleBox.press('Backspace').catch(() => {});
-    await page.keyboard.type(cleanTitle, { delay: 15 });
+    await advanceStudioStep(dialog);
   }
+  throw new Error('Экран проверки контента YouTube не найден.');
+}
 
-  // Set Description
-  console.log(JSON.stringify({ type: 'progress', platform: 'youtube', message: 'Заполнение описания видео...' }));
-  const descParts = [
-    caption,
-    hashtags.map((h) => (h.startsWith('#') ? h : `#${h}`)).join(' '),
-  ];
-  if (isShort) {
-    descParts.push('#Shorts');
+export async function studioStep(dialog) {
+  // Studio changes component tag names; the selected accessible step is the
+  // actual navigation state, even while a previous component stays attached.
+  const selectedTab = dialog.getByRole('tab', { selected: true }).first();
+  if (await selectedTab.isVisible()) {
+    const label = normalizedText(await selectedTab.innerText());
+    if (/^(?:Details|Information|Информация|Інформація|Відомості)$/i.test(label)) return 'details';
+    if (/^(?:Video elements|Дополнения|Елементи відео|Доповнення)$/i.test(label)) return 'elements';
+    if (/^(?:Checks|Проверка|Предварительная проверка|Перевірки|Перевірка|Попередня перевірка)$/i.test(label)) return 'checks';
+    if (/^(?:Visibility|Доступ|Видимість)$/i.test(label)) return 'visibility';
   }
-  const fullDescription = descParts.filter(Boolean).join('\n\n');
-  const cleanDesc = fullDescription.slice(0, 4950);
+  if (await dialog.locator(PUBLIC).first().isVisible()) return 'visibility';
+  if (await dialog.locator(CHECKS).first().isVisible()) return 'checks';
+  if (await dialog.locator(TITLE).first().isVisible()) return 'details';
+  if (await dialog.locator('ytcp-video-elements:visible, #video-elements-step:visible, #elements-step:visible').first().isVisible()) return 'elements';
+  return null;
+}
 
-  const descBox = page.locator('#description-textarea #textbox, ytcp-social-suggestions-textbox#description-textarea [contenteditable="true"], #description-textarea [contenteditable="true"], [aria-label*="description" i], [aria-label*="описан" i]').first();
-  await descBox.scrollIntoViewIfNeeded().catch(() => {});
-  await descBox.waitFor({ state: 'visible', timeout: 25000 });
-  await descBox.click();
-  await page.waitForTimeout(300);
+export async function advanceStudioStep(dialog) {
+  const before = await studioStep(dialog);
+  if (!before) throw new Error('Текущий этап Studio не распознан. Публикация остановлена.');
+  await waitEnabled(dialog.locator('#next-button').first(), 'Далее');
+  const page = dialog.page();
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    const after = await studioStep(dialog);
+    if (after && after !== before) return after;
+    await page.waitForTimeout(250);
+  }
+  throw new Error('YouTube не завершил переход с этапа ' + before + '.');
+}
 
-  await descBox.press('ControlOrMeta+a').catch(() => {});
-  await descBox.press('Backspace').catch(() => {});
-  await page.waitForTimeout(200);
+async function captureFailure(page, stage, error) {
+  try {
+    const dir = path.join(os.homedir(), 'Library', 'Logs', 'Shortcast', 'browser-publisher', String(Date.now()));
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const status = await readYouTubeStatus(page).catch(() => ({}));
+    fs.writeFileSync(path.join(dir, 'youtube-state.json'), JSON.stringify({ stage, message: error.message, status }, null, 2));
+    await page.screenshot({ path: path.join(dir, 'youtube.png') }).catch(() => {});
+    progress('Диагностика YouTube сохранена: ' + dir);
+  } catch { /* Logging must not replace the original failure. */ }
+}
 
-  // Use DOM injection for instant and complete filling of large descriptions
-  await page.evaluate(({ el, text }) => {
-    if (el) {
-      el.innerText = text;
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
+/** Waits for actual transfer, processing and checks before making anything public. */
+export async function uploadToYouTube(page, { videoPath, thumbnailPath, title, caption, hashtags = [], isPublic = true, isShort = false }) {
+  let stage = 'Открытие Studio';
+  let fileSelected = false;
+  try {
+    if (!videoPath || !fs.existsSync(videoPath) || fs.statSync(videoPath).size === 0) throw new Error('Видеофайл отсутствует или пуст.');
+    let cleanTitle = (title || '').trim();
+    if (isShort && !/#shorts\b/i.test(cleanTitle)) cleanTitle += ' #Shorts';
+    const cleanDescription = youtubeDescription(caption || '', hashtags, isShort);
+    if (!cleanTitle || [...cleanTitle].length > 100 || [...cleanDescription].length > 5000) {
+      throw new Error('Название или описание не укладывается в ограничения YouTube. Текст не обрезался.');
     }
-  }, { el: await descBox.elementHandle(), text: cleanDesc }).catch(() => {});
-  await page.waitForTimeout(500);
-
-  // Upload Thumbnail if provided
-  if (thumbnailPath && fs.existsSync(thumbnailPath)) {
-    console.log(JSON.stringify({ type: 'progress', platform: 'youtube', message: 'Загрузка авторской обложки (1920x1080)...' }));
-    try {
-      const thumbInput = page.locator('input#file-loader, input[type="file"][accept*="image"]').first();
-      if ((await thumbInput.count()) > 0) {
-        await thumbInput.setInputFiles(thumbnailPath);
-        await page.waitForTimeout(3000);
-        console.log(JSON.stringify({ type: 'progress', platform: 'youtube', message: 'Обложка успешно загружена в YouTube Studio' }));
-      } else {
-        const thumbBtn = page.locator('#select-button, [aria-label*="thumbnail" i], [aria-label*="значок" i]').first();
-        await thumbBtn.scrollIntoViewIfNeeded().catch(() => {});
-        if (await thumbBtn.isVisible().catch(() => false)) {
-          const [fileChooser] = await Promise.all([
-            page.waitForEvent('filechooser', { timeout: 10000 }),
-            thumbBtn.click(),
-          ]);
-          await fileChooser.setFiles(thumbnailPath);
-          await page.waitForTimeout(3000);
-          console.log(JSON.stringify({ type: 'progress', platform: 'youtube', message: 'Обложка успешно передана через диалог' }));
-        }
-      }
-    } catch (thumbErr) {
-      console.log(JSON.stringify({ type: 'progress', platform: 'youtube', message: `Предупреждение по обложке: ${thumbErr.message}` }));
+    progress(stage);
+    await page.goto('https://studio.youtube.com', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    if (page.url().includes('accounts.google.com')) throw new Error('Выполните вход в YouTube через приложение.');
+    stage = 'Открытие выбора файла'; progress(stage);
+    const picker = await openYouTubeFilePicker(page);
+    const dialog = page.locator(UPLOAD_DIALOG);
+    stage = 'Передача видеофайла'; progress(stage + ' · ' + (fs.statSync(videoPath).size / 1000000).toFixed(1) + ' МБ');
+    await selectYouTubeVideoFile(page, picker, videoPath); fileSelected = true;
+    const titleBox = dialog.locator(TITLE).first();
+    const descriptionBox = dialog.locator(DESCRIPTION).first();
+    stage = 'Заполнение и проверка полей'; progress(stage);
+    await setVerifiedYouTubeField(page, titleBox, cleanTitle, 'Заголовок');
+    await setVerifiedYouTubeField(page, descriptionBox, cleanDescription, 'Описание');
+    await uploadThumbnail(dialog, thumbnailPath, isShort);
+    const audience = dialog.locator('[name="VIDEO_MADE_FOR_KIDS_NOT_MFK"]').first();
+    await waitEnabled(audience, 'Видео не для детей');
+    const selected = await audience.getAttribute('aria-checked');
+    const checked = await audience.getAttribute('checked');
+    if (selected !== 'true' && checked === null) throw new Error('YouTube не подтвердил выбор аудитории.');
+    await assertYouTubeMetadata(dialog, cleanTitle, cleanDescription);
+    stage = 'Ожидание завершения загрузки файла';
+    const uploadStatus = await waitForYouTubePhase(page, 'upload', { progress });
+    // Check again: asynchronous filename injection must not replace the title.
+    await assertYouTubeMetadata(dialog, cleanTitle, cleanDescription);
+    stage = 'Проверка контента'; progress(stage);
+    await goToChecks(dialog);
+    const checksStatus = await waitForYouTubePhase(page, 'checks', { progress });
+    stage = 'Настройка доступа'; progress(stage);
+    for (let step = 0; step < 3 && !(await dialog.locator(PUBLIC).first().isVisible()); step++) {
+      await advanceStudioStep(dialog);
     }
-  }
-
-  // Set Audience: "Not made for kids" (mandatory in YouTube Studio)
-  console.log(JSON.stringify({ type: 'progress', platform: 'youtube', message: 'Выбор аудитории (видео не для детей)...' }));
-  const notForKidsRadio = page.locator('tp-yt-paper-radio-button[name="VIDEO_MADE_FOR_KIDS_NOT_MFK"], [name="VIDEO_MADE_FOR_KIDS_NOT_MFK"], [aria-label*="не для детей" i], [aria-label*="not made for kids" i]').first();
-  await notForKidsRadio.scrollIntoViewIfNeeded().catch(() => {});
-  await notForKidsRadio.waitFor({ state: 'visible', timeout: 15000 });
-  await notForKidsRadio.click();
-  await page.waitForTimeout(800);
-
-  // Navigate through steps (Details -> Elements -> Checks -> Visibility)
-  console.log(JSON.stringify({ type: 'progress', platform: 'youtube', message: 'Переход к параметрам доступа...' }));
-  const publicRadio = page.locator('tp-yt-paper-radio-button[name="PUBLIC"], [name="PUBLIC"], [aria-label*="Открытый" i], [aria-label*="Public" i]').first();
-  const unlistedRadio = page.locator('tp-yt-paper-radio-button[name="UNLISTED"], [name="UNLISTED"], [aria-label*="Доступ по ссылке" i], [aria-label*="Unlisted" i]').first();
-
-  for (let step = 0; step < 5; step++) {
-    if ((await publicRadio.isVisible().catch(() => false)) || (await unlistedRadio.isVisible().catch(() => false))) {
-      break;
+    const visibility = dialog.locator(isPublic ? PUBLIC : UNLISTED).first();
+    await waitEnabled(visibility, 'Доступ');
+    if (await visibility.getAttribute('aria-checked') !== 'true' && await visibility.getAttribute('checked') === null) {
+      throw new Error('YouTube не подтвердил выбранный доступ.');
     }
-
-    const nextBtn = page.locator('#next-button, button:has-text("Next"), button:has-text("Далее")').first();
-    await nextBtn.scrollIntoViewIfNeeded().catch(() => {});
-    await nextBtn.waitFor({ state: 'visible', timeout: 12000 });
-
-    // Wait until Next button is enabled
-    for (let w = 0; w < 10; w++) {
-      if (await nextBtn.isEnabled().catch(() => false)) break;
-      await page.waitForTimeout(500);
-    }
-
-    await nextBtn.click();
-    await page.waitForTimeout(1500);
+    // Re-read scoped statuses immediately before the irreversible click.
+    requireReadyToPublish(uploadStatus, checksStatus, await readYouTubeStatus(page));
+    stage = 'Подтверждение публикации'; progress(stage);
+    await waitEnabled(dialog.locator('#done-button').first(), 'Опубликовать', 60000);
+    const videoUrl = await confirmedYouTubeURL(page);
+    console.log(JSON.stringify({ type: 'success', platform: 'youtube', message: isShort ? 'YouTube Shorts опубликован' : 'Эссе YouTube опубликовано', url: videoUrl }));
+  } catch (error) {
+    error.keepBrowserOpen = fileSelected && !page.isClosed();
+    await captureFailure(page, stage, error);
+    throw error;
   }
+}
 
-  // Set Visibility
-  console.log(JSON.stringify({
-    type: 'progress',
-    platform: 'youtube',
-    message: isPublic ? 'Установка открытого доступа (Public)...' : 'Установка доступа по ссылке (Unlisted)...',
-  }));
-
-  if (isPublic) {
-    await publicRadio.waitFor({ state: 'visible', timeout: 15000 });
-    await publicRadio.scrollIntoViewIfNeeded().catch(() => {});
-    await publicRadio.click();
-  } else {
-    await unlistedRadio.waitFor({ state: 'visible', timeout: 15000 });
-    await unlistedRadio.scrollIntoViewIfNeeded().catch(() => {});
-    await unlistedRadio.click();
+export async function confirmedYouTubeURL(page) {
+  await page.getByRole('heading', { name: /^(Video published|Видео опубликовано|Відео опубліковано)$/i }).first()
+    .waitFor({ state: 'visible', timeout: 180000 }).catch(() => { throw new Error('YouTube не подтвердил публикацию. Проверьте Studio перед повтором.'); });
+  const link = page.getByRole('link', { name: /^https:\/\/(?:youtu\.be\/|(?:www\.)?youtube\.com\/(?:watch\?v=|shorts\/))/i }).first();
+  if (await link.isVisible()) {
+    const url = (await link.getAttribute('href')) || (await link.innerText());
+    if (url && /^https:\/\/(?:youtu\.be\/|(?:www\.)?youtube\.com\/(?:watch\?v=|shorts\/))[A-Za-z0-9_-]{11}(?:[?&].*)?$/.test(url.trim())) return url.trim();
   }
-  await page.waitForTimeout(1000);
-
-  // Click Publish / Save (#done-button)
-  console.log(JSON.stringify({ type: 'progress', platform: 'youtube', message: 'Публикация видео на YouTube...' }));
-
-  const doneBtn = page.locator('#done-button, button:has-text("Save"), button:has-text("Опубликовать"), button:has-text("Publish")').first();
-  await doneBtn.waitFor({ state: 'visible', timeout: 20000 });
-
-  for (let w = 0; w < 10; w++) {
-    if (await doneBtn.isEnabled().catch(() => false)) break;
-    await page.waitForTimeout(500);
-  }
-  await doneBtn.click();
-
-  // Wait for upload completion confirmation dialog
-  await page.waitForSelector(
-    'ytcp-video-share-dialog, #share-url, a[href*="youtu.be"], text="Video published", text="Видео опубликовано", text="Processing", text="Обработка"',
-    { timeout: 60000 }
-  ).catch(() => {});
-
-  let videoUrl = null;
-  const shareLink = page.locator('a.ytcp-video-share-dialog, a[href*="youtu.be"], #share-url').first();
-  if (await shareLink.isVisible().catch(() => false)) {
-    videoUrl = (await shareLink.getAttribute('href')) || (await shareLink.innerText().catch(() => null));
-  }
-
-  console.log(JSON.stringify({
-    type: 'success',
-    platform: 'youtube',
-    message: isShort ? 'YouTube Shorts успешно опубликован!' : 'Видео успешно опубликовано на YouTube!',
-    url: videoUrl,
-  }));
+  throw new Error('YouTube подтвердил отправку, но не вернул ссылку. Найдите видео в Studio и сохраните адрес в выпуске.');
 }

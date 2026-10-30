@@ -46,11 +46,14 @@
 .editor-card.large .image-button{aspect-ratio:1.75}
 @media(max-width:900px){.editor-card.large .image-button{aspect-ratio:1.6}}
 @media(max-width:650px){.editor-card.large .image-button{aspect-ratio:auto}.editor-card.large .image-button img{height:auto}}
-.review-layout{grid-template-columns:minmax(0,1fr);gap:22px}
-.review-shot{max-width:100%;aspect-ratio:1.95}
+.review-layout{grid-template-columns:minmax(0,1.2fr) minmax(290px,.8fr);align-items:stretch;gap:24px;padding:22px}
+.review-shot{width:100%;max-width:100%;aspect-ratio:1.95;align-self:start;overflow:hidden}
 .review-shot img{width:100%;height:100%;object-fit:cover;object-position:top left}
-.review-copy{grid-template-columns:repeat(3,minmax(0,1fr));gap:22px;padding:4px 10px}
-.review-step{height:100%;grid-template-columns:36px 1fr;padding:10px 0 15px}
-.review-caption{grid-column:1/-1}
-@media(max-width:900px){.review-copy{grid-template-columns:1fr 1fr}.review-caption{grid-column:1/-1}}
-@media(max-width:650px){.review-copy{grid-template-columns:1fr}.review-caption{grid-column:auto}.review-shot{aspect-ratio:auto}.review-shot img{height:auto}}
+.review-copy{display:flex;flex-direction:column;justify-content:center;gap:9px;padding:0}
+.review-step{width:100%;height:auto;min-width:0;grid-template-columns:38px minmax(0,1fr);gap:12px;padding:14px;border:1px solid #ffffff10;border-radius:11px;background:linear-gradient(135deg,#202124,#18191b)}
+.review-step>span{width:32px;height:32px;background:#e8c37d0b}
+.review-step b{font-size:13px;line-height:1.45}
+.review-step small{font-size:11px;line-height:1.55}
+.review-caption{grid-column:auto;padding:8px 3px 0}
+@media(max-width:900px){.review-layout{grid-template-columns:1fr;gap:18px}.review-shot{aspect-ratio:2.1}.review-copy{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:stretch}.review-step{grid-template-columns:30px minmax(0,1fr);gap:9px;padding:12px}.review-step>span{width:28px;height:28px}.review-caption{grid-column:1/-1}}
+@media(max-width:650px){.review-layout{padding:12px}.review-copy{grid-template-columns:1fr;padding:0 4px}.review-step{grid-template-columns:34px minmax(0,1fr);padding:12px}.review-step>span{width:30px;height:30px}.review-caption{grid-column:auto}.review-shot{aspect-ratio:auto}.review-shot img{height:auto}}

@@ -246,84 +246,90 @@ struct LongformActEditorView: View {
     // MARK: - Header Bar
 
     private var headerBar: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 16) {
             Button {
                 onCancel()
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: 7) {
                     Image(systemName: "xmark")
                     Text("Отмена")
                 }
             }
             .buttonStyle(.bordered)
+            .controlSize(.regular)
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Text("МОНТАЖНАЯ · КИНО-ЭСЕ")
-                        .font(.system(size: 13, weight: .black)).tracking(1.1)
+            Rectangle()
+                .fill(StudioTheme.line)
+                .frame(width: 1, height: 38)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 7) {
+                    Text("МОНТАЖНЫЙ СТОЛ")
+                        .font(.system(size: 10, weight: .black)).tracking(1.05)
 
                     Text("«\(concept.word.uppercased())»")
-                        .font(.caption.weight(.bold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(StudioTheme.accent.opacity(0.18), in: Capsule())
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(StudioTheme.accent.opacity(0.16), in: Capsule())
                         .foregroundStyle(StudioTheme.accent)
 
                     if totalEditedCount > 0 {
-                        Text("Изменено актов: \(totalEditedCount)")
-                            .font(.caption2.bold())
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.green.opacity(0.2), in: Capsule())
-                            .foregroundStyle(.green)
+                        Label("Изменено актов: \(totalEditedCount)", systemImage: "pencil.line")
+                            .font(.system(size: 9, weight: .semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(StudioTheme.success.opacity(0.12), in: Capsule())
+                            .foregroundStyle(StudioTheme.success)
                     }
                 }
 
-                Text("\(movieTitle) · границы сцен, склейки, акты и предпросмотр")
-                    .font(.caption)
+                Text(movieTitle)
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
+            .layoutPriority(1)
 
             Spacer()
 
-            // Индикатор общего хронометража
-            HStack(spacing: 8) {
-                VStack(alignment: .trailing, spacing: 1) {
-                    HStack(spacing: 4) {
-                        Text("ИТОГОВЫЙ ХРОНОМЕТРАЖ")
-                            .font(.system(size: 8, weight: .bold)).tracking(0.8)
-                            .foregroundStyle(.secondary)
-                    }
-                    HStack(spacing: 4) {
-                        Text(formatDuration(totalDuration))
-                            .font(.system(size: 15, weight: .bold, design: .monospaced))
-                            .foregroundStyle(.primary)
-                    }
-
+            HStack(spacing: 10) {
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("ХРОНОМЕТРАЖ")
+                        .font(.system(size: 8, weight: .bold)).tracking(0.9)
+                        .foregroundStyle(StudioTheme.muted)
+                    Text(formatDuration(totalDuration))
+                        .font(.system(size: 16, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.primary)
                     if abs(totalDiffSeconds) > 0.1 {
-                        Text(String(format: "%@%.1fc к исходному", totalDiffSeconds > 0 ? "+" : "", totalDiffSeconds))
-                            .font(.caption2.monospacedDigit().weight(.semibold))
-                            .foregroundStyle(totalDiffSeconds >= 0 ? .green : .orange)
+                        Text(String(format: "%@%.1f с к исходному", totalDiffSeconds > 0 ? "+" : "", totalDiffSeconds))
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(totalDiffSeconds >= 0 ? StudioTheme.success : StudioTheme.warning)
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 8).fill(StudioTheme.raised))
+                .frame(minWidth: 124, alignment: .trailing)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 8)
+                .background(StudioTheme.raised, in: RoundedRectangle(cornerRadius: 10))
 
                 Button {
                     resetAllActs()
                 } label: {
-                    Label("Сбросить всё", systemImage: "arrow.counterclockwise")
-                        .font(.caption)
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 36, height: 36)
                 }
                 .buttonStyle(.bordered)
                 .disabled(totalEditedCount == 0)
+                .help("Сбросить все изменения")
+                .accessibilityLabel("Сбросить всё")
 
                 Button {
                     applyChangesAndProceed()
                 } label: {
-                    Label("Сохранить монтаж", systemImage: "arrow.triangle.2.circlepath")
+                    Label("Сохранить монтаж", systemImage: "checkmark")
                         .font(.system(size: 12, weight: .bold))
+                        .padding(.horizontal, 3)
                 }
                 .buttonStyle(StudioPrimaryButtonStyle())
                 .keyboardShortcut(.defaultAction)

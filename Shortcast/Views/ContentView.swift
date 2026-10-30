@@ -209,6 +209,16 @@ struct ContentView: View {
                     correctionFilmKey: workspace.subtitleCorrectionFilmKey,
                     correctionLanguage: workspace.subtitleCorrectionLanguage,
                     sourceURL: workspace.job?.url,
+                    onAutoCorrect: { input, progress in
+                        try await workspace.correctLongformSubtitleDraft(
+                            input,
+                            movieTitle: workspace.detectedMovie?.title ?? workspace.job?.effectiveTitle ?? "Фильм",
+                            language: workspace.subtitleCorrectionLanguage,
+                            modelManager: modelManager,
+                            settings: settings,
+                            progress: progress
+                        )
+                    },
                     onConfirm: { updatedSegments in
                         workspace.confirmLongformSubtitlesAndBuild(
                             updatedSegments: updatedSegments,

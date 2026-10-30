@@ -965,6 +965,19 @@ final class WorkspaceModel {
             arc: draft, transcript: transcript, coldOpenEnabled: coldOpenEnabled, progress: progress)
     }
 
+    func correctLongformSubtitleDraft(
+        _ input: [LongformSubtitleCorrectionInput],
+        movieTitle: String,
+        language: String,
+        modelManager: ModelManager,
+        settings: AppSettings,
+        progress: @Sendable (String) -> Void
+    ) async throws -> LongformSubtitleCorrectionOutcome {
+        try await modelManager.requireDirector(profile: settings.copywriterModel.directorProfile)
+        let service = LongformSubtitleCorrectionService(model: makeDirectorGateway(modelManager: modelManager))
+        return try await service.correct(input, movieTitle: movieTitle, language: language, progress: progress)
+    }
+
     func improveLongform(existingResult: LongformBuildResult, modelManager: ModelManager, settings: AppSettings) {
         startLongformRebuild(concept: existingResult.arc.concept, existingArc: existingResult.arc,
             modelManager: modelManager, settings: settings,

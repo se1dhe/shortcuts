@@ -50,6 +50,7 @@ struct LongformSubtitleEditorView: View {
     let sourceURL: URL?
     let confirmButtonTitle: String
     let backButtonTitle: String
+    let onAutoCorrect: ([LongformSubtitleCorrectionInput], @Sendable (String) -> Void) async throws -> LongformSubtitleCorrectionOutcome
     let onConfirm: ([TranscriptSegment]) -> Void
     let onBack: () -> Void
 
@@ -64,6 +65,12 @@ struct LongformSubtitleEditorView: View {
     @State private var rememberedCount = 0
     @State private var memoryWarning: String?
     @State private var pendingWithoutMemory: [TranscriptSegment]?
+    @State private var isModelCorrecting = false
+    @State private var modelCorrectionProgress = ""
+    @State private var modelCorrectionEvents: [String] = []
+    @State private var modelCorrectionSuggestions: [LongformSubtitleCorrectionSuggestion] = []
+    @State private var modelCorrectionStatus: String?
+    @State private var modelCorrectionStatusIsError = false
 
     init(
         arc: LongformNarrativeArc,
@@ -75,6 +82,7 @@ struct LongformSubtitleEditorView: View {
         sourceURL: URL? = nil,
         confirmButtonTitle: String = "Перерендерить кино-эссе",
         backButtonTitle: String = "Отмена",
+        onAutoCorrect: @escaping ([LongformSubtitleCorrectionInput], @Sendable (String) -> Void) async throws -> LongformSubtitleCorrectionOutcome,
         onConfirm: @escaping ([TranscriptSegment]) -> Void,
         onBack: @escaping () -> Void
     ) {
@@ -87,6 +95,7 @@ struct LongformSubtitleEditorView: View {
         self.sourceURL = sourceURL
         self.confirmButtonTitle = confirmButtonTitle
         self.backButtonTitle = backButtonTitle
+        self.onAutoCorrect = onAutoCorrect
         self.onConfirm = onConfirm
         self.onBack = onBack
     }
@@ -132,6 +141,10 @@ struct LongformSubtitleEditorView: View {
 
             // Панель фильтров по актам и поиска
             filterToolbar
+
+            if isModelCorrecting || !modelCorrectionEvents.isEmpty || !modelCorrectionSuggestions.isEmpty || modelCorrectionStatus != nil {
+                modelCorrectionPanel
+            }
 
             Divider()
 
@@ -271,10 +284,21 @@ struct LongformSubtitleEditorView: View {
                     resetAllToOriginal()
                 }
             } label: {
-                Label("Авто-исправление", systemImage: "sparkles")
+                Label("Текстовые инструменты", systemImage: "textformat")
             }
             .menuStyle(.borderedButton)
             .controlSize(.small)
+
+            Button {
+                runModelSubtitleCorrection()
+            } label: {
+                Label(isModelCorrecting ? "Модель проверяет…" : "Исправить моделью",
+                      systemImage: isModelCorrecting ? "hourglass" : "sparkles")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(StudioTheme.accent)
+            .controlSize(.small)
+            .disabled(isModelCorrecting || phrases.isEmpty)
 
             // Поле поиска
             HStack(spacing: 6) {
@@ -303,6 +327,97 @@ struct LongformSubtitleEditorView: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 8)
         .background(StudioTheme.panel)
+    }
+
+    private var modelCorrectionPanel: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                Image(systemName: isModelCorrecting ? "sparkles" : "checkmark.seal.fill")
+                    .foregroundStyle(StudioTheme.accent)
+                Text(isModelCorrecting ? "МОДЕЛЬНАЯ ПРОВЕРКА СУБТИТРОВ" : "ПРЕДЛОЖЕНИЯ МОДЕЛИ")
+                    .font(.system(size: 9, weight: .black)).tracking(0.8)
+                    .foregroundStyle(StudioTheme.accent)
+                Spacer()
+                if !modelCorrectionSuggestions.isEmpty {
+                    Text("Найдено: \(modelCorrectionSuggestions.count)")
+                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                }
+            }
+
+            if isModelCorrecting {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(modelCorrectionProgress.isEmpty ? "Подготавливаю контекст реплик…" : modelCorrectionProgress)
+                        .font(.caption.weight(.medium))
+                }
+            }
+
+            ForEach(Array(modelCorrectionEvents.suffix(4).enumerated()), id: \.offset) { _, event in
+                Label(event, systemImage: "arrow.turn.down.right")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+
+            if let modelCorrectionStatus, !isModelCorrecting {
+                Text(modelCorrectionStatus)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(modelCorrectionStatusIsError ? StudioTheme.warning
+                        : (modelCorrectionSuggestions.isEmpty ? StudioTheme.muted : StudioTheme.success))
+            }
+
+            ForEach(modelCorrectionSuggestions) { suggestion in
+                if let phrase = phrases.first(where: { $0.originalSegmentIndex == suggestion.id }) {
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("\(phrase.actTitle) · \(phrase.timecodeDisplay)")
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .foregroundStyle(StudioTheme.muted)
+                            Text(suggestion.original)
+                                .font(.caption).foregroundStyle(.secondary)
+                                .strikethrough(color: StudioTheme.warning)
+                            Text(suggestion.replacement)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.primary)
+                            Text(suggestion.reason)
+                                .font(.caption2).foregroundStyle(StudioTheme.muted)
+                        }
+                        Spacer(minLength: 8)
+                        Button(phrase.text == suggestion.original ? "Применить" : "Текст изменён") {
+                            applyModelSuggestion(suggestion)
+                        }
+                            .buttonStyle(.borderedProminent).tint(StudioTheme.accent)
+                        .disabled(phrase.text != suggestion.original)
+                        Button {
+                            modelCorrectionSuggestions.removeAll { $0.id == suggestion.id }
+                        } label: {
+                            Image(systemName: "xmark")
+                        }
+                        .buttonStyle(.bordered)
+                        .help("Отклонить предложение")
+                    }
+                    .padding(10)
+                    .background(StudioTheme.raised.opacity(0.7), in: RoundedRectangle(cornerRadius: 9))
+                }
+            }
+
+            if !modelCorrectionSuggestions.isEmpty {
+                HStack {
+                    Button("Применить все предложения", systemImage: "checkmark") {
+                        applyAllModelSuggestions()
+                    }
+                    .buttonStyle(.borderedProminent).tint(StudioTheme.accent)
+                    Button("Отклонить все") {
+                        modelCorrectionSuggestions = []
+                        modelCorrectionStatus = "Предложения отклонены; субтитры оставлены без изменений."
+                        modelCorrectionStatusIsError = false
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+        .padding(12)
+        .background(StudioTheme.raised.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
+        .padding(.horizontal, 18)
+        .padding(.vertical, 8)
     }
 
     private func actFilterButton(title: String, actIndex: Int?) -> some View {
@@ -562,6 +677,86 @@ struct LongformSubtitleEditorView: View {
     }
 
     // MARK: - Actions
+
+    private func runModelSubtitleCorrection() {
+        guard !isModelCorrecting, !phrases.isEmpty else { return }
+        isModelCorrecting = true
+        modelCorrectionProgress = "Готовлю фразы и соседний контекст…"
+        modelCorrectionEvents = []
+        modelCorrectionSuggestions = []
+        modelCorrectionStatus = nil
+        modelCorrectionStatusIsError = false
+
+        let input = phrases.enumerated().map { index, phrase in
+            LongformSubtitleCorrectionInput(
+                id: phrase.originalSegmentIndex,
+                act: phrase.actTitle,
+                timecode: phrase.timecodeDisplay,
+                before: index > 0 ? phrases[index - 1].text : "",
+                text: phrase.text,
+                after: index + 1 < phrases.count ? phrases[index + 1].text : ""
+            )
+        }
+
+        Task { @MainActor in
+            defer { isModelCorrecting = false }
+            do {
+                let outcome = try await onAutoCorrect(input) { message in
+                    Task { @MainActor in
+                        modelCorrectionProgress = message
+                        if modelCorrectionEvents.last != message {
+                            modelCorrectionEvents.append(message)
+                            if modelCorrectionEvents.count > 12 { modelCorrectionEvents.removeFirst() }
+                        }
+                    }
+                }
+                modelCorrectionSuggestions = outcome.suggestions
+                modelCorrectionStatus = outcome.suggestions.isEmpty
+                    ? "Проверено реплик: \(outcome.checkedCount). Уверенных исправлений не найдено."
+                    : "Модель проверила \(outcome.checkedCount) реплик. Сверьте предложения и примените подходящие."
+            } catch {
+                modelCorrectionStatus = "Проверка не завершена: \(error.localizedDescription)"
+                modelCorrectionStatusIsError = true
+            }
+        }
+    }
+
+    private func applyModelSuggestion(_ suggestion: LongformSubtitleCorrectionSuggestion) {
+        guard let index = phrases.firstIndex(where: { $0.originalSegmentIndex == suggestion.id }) else { return }
+        guard phrases[index].text == suggestion.original else {
+            modelCorrectionSuggestions.removeAll { $0.id == suggestion.id }
+            modelCorrectionStatus = "Реплика изменилась во время проверки; устаревшее предложение снято."
+            modelCorrectionStatusIsError = false
+            return
+        }
+        phrases[index].text = suggestion.replacement
+        modelCorrectionSuggestions.removeAll { $0.id == suggestion.id }
+        modelCorrectionStatusIsError = false
+        modelCorrectionStatus = modelCorrectionSuggestions.isEmpty
+            ? "Предложение применено. Проверьте текст и нажмите «\(confirmButtonTitle)» для пересборки."
+            : "Предложение применено. Осталось проверить: \(modelCorrectionSuggestions.count)."
+    }
+
+    private func applyAllModelSuggestions() {
+        let suggestions = modelCorrectionSuggestions
+        var appliedCount = 0
+        var skippedCount = 0
+        for suggestion in suggestions {
+            guard let index = phrases.firstIndex(where: { $0.originalSegmentIndex == suggestion.id }) else { continue }
+            guard phrases[index].text == suggestion.original else {
+                skippedCount += 1
+                continue
+            }
+            phrases[index].text = suggestion.replacement
+            appliedCount += 1
+        }
+        modelCorrectionSuggestions = []
+        modelCorrectionStatusIsError = false
+        modelCorrectionStatus = appliedCount == 0
+            ? "Предложения не применены; изменённые вручную реплики оставлены как есть."
+            : "Применено: \(appliedCount)." + (skippedCount > 0 ? " Пропущено устаревших предложений: \(skippedCount)." : "")
+                + " Проверьте текст и нажмите «\(confirmButtonTitle)» для пересборки."
+    }
 
     private func initializePhrases() {
         var items: [EditableSubtitlePhrase] = []

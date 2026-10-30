@@ -18,6 +18,9 @@ struct LongformResultsView: View {
     @State private var player: AVPlayer? = nil
     @State private var actPlaybackObserver: Any?
     @State private var activeActID: String?
+    @State private var playbackTime: Double = 0
+    @State private var isVideoPlaying = false
+    @State private var fullscreenPlayerWindow: NSWindow?
     @State private var copiedTitle = false
     @State private var copiedDescription = false
     @State private var copiedTags = false
@@ -175,20 +178,8 @@ struct LongformResultsView: View {
                     .padding(.horizontal, 20)
                 }
 
-                // 16:9 Контейнер плеера
-                ZStack {
-                    Color.black
-
-                    if let player {
-                        VideoPlayer(player: player)
-                            .aspectRatio(16/9, contentMode: .fit)
-                    } else {
-                        ProgressView()
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
-                .padding(.horizontal, 20)
+                playerPanel
+                    .padding(.horizontal, 20)
 
                 // Интерактивные главы эссе
                 HStack(spacing: 8) {
@@ -455,6 +446,16 @@ struct LongformResultsView: View {
                     sourceURL: workspace.job?.url,
                     confirmButtonTitle: "Перерендерить с исправленными субтитрами",
                     backButtonTitle: "Отмена",
+                    onAutoCorrect: { input, progress in
+                        try await workspace.correctLongformSubtitleDraft(
+                            input,
+                            movieTitle: movieTitle,
+                            language: workspace.subtitleCorrectionLanguage,
+                            modelManager: modelManager,
+                            settings: settings,
+                            progress: progress
+                        )
+                    },
                     onConfirm: { updatedSegments in
                         showSubtitleEditor = false
                         workspace.rebuildLongformWithUpdatedSubtitles(
@@ -509,6 +510,8 @@ struct LongformResultsView: View {
             player?.pause()
             let next = AVPlayer(url: newURL)
             player = next
+            playbackTime = 0
+            isVideoPlaying = false
             activeActID = nil
             observeActPlayback(on: next)
         }
@@ -520,6 +523,100 @@ struct LongformResultsView: View {
         .background(StudioTheme.background)
         .preferredColorScheme(.dark)
         .tint(StudioTheme.accent)
+    }
+
+    private var playerPanel: some View {
+        ZStack(alignment: .bottom) {
+            Color.black
+            if let player {
+                if fullscreenPlayerWindow == nil {
+                    StudioPlayerSurface(player: player)
+                }
+                playerControls
+                    .padding(14)
+            } else {
+                ProgressView()
+            }
+        }
+        .aspectRatio(16.0 / 9.0, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(StudioTheme.line, lineWidth: 1))
+        .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
+    }
+
+    private var playerControls: some View {
+        HStack(spacing: 12) {
+            Button {
+                guard let player else { return }
+                if isVideoPlaying { player.pause() } else { player.play() }
+                isVideoPlaying.toggle()
+            } label: {
+                Image(systemName: isVideoPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 14, weight: .bold))
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(StudioTheme.accent)
+            .help(isVideoPlaying ? "Пауза" : "Воспроизвести")
+
+            Text(formatDuration(playbackTime))
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.white)
+
+            Slider(value: Binding(
+                get: { playbackTime },
+                set: { value in
+                    playbackTime = value
+                    player?.seek(to: CMTime(seconds: value, preferredTimescale: 600),
+                                 toleranceBefore: .zero, toleranceAfter: .zero)
+                }
+            ), in: 0...max(result.duration, 0.1))
+            .tint(StudioTheme.accent)
+
+            Text(formatDuration(result.duration))
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.75))
+
+            Button {
+                openFullscreenPlayer()
+            } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .help("На весь экран")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 11))
+    }
+
+    private func openFullscreenPlayer() {
+        guard let player, fullscreenPlayerWindow == nil else { return }
+        let content = FullscreenEssayPlayerView(player: player, duration: result.duration) {
+            let window = fullscreenPlayerWindow
+            fullscreenPlayerWindow = nil
+            window?.close()
+        }
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1280, height: 760),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "КАДР & СЕНС · \(movieTitle)"
+        window.collectionBehavior = [.fullScreenPrimary]
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: content)
+        fullscreenPlayerWindow = window
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        DispatchQueue.main.async { window.toggleFullScreen(nil) }
     }
 
     private var activeActTitle: String? {
@@ -549,6 +646,9 @@ struct LongformResultsView: View {
                 let index = timeline.placements.first(where: { seconds >= $0.start && seconds < $0.end })?.actIndex
                 let id = index.flatMap { acts.indices.contains($0) ? acts[$0].id : nil }
                 Task { @MainActor in
+                    if seconds.isFinite { playbackTime = max(0, min(seconds, result.duration)) }
+                    let playing = player.timeControlStatus == .playing
+                    if isVideoPlaying != playing { isVideoPlaying = playing }
                     if activeActID != id { activeActID = id }
                 }
             }

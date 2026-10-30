@@ -108,13 +108,19 @@ enum EssaySceneEvidence {
                         && abs(moment.endTime - range.end) < 0.001
                     let approvedTrim = allowApprovedTrim && range.duration >= EssayDurationPolicy.sceneLength.lowerBound
                         && range.start >= moment.startTime && range.end <= moment.endTime
+                    let manualAddition = arc.sceneEdits?.contains(where: { edit in
+                        edit.role == act.type && edit.revised == range
+                            && edit.reason == LongformSceneEdit.manualAdditionReason
+                            && EssayDurationPolicy.sceneLength.contains(range.duration)
+                    }) ?? false
                     let approvedEdit = arc.sceneEdits?.contains(where: { edit in
                         edit.role == act.type && edit.original.start == moment.startTime
                             && edit.original.end == moment.endTime && edit.revised == range
                             && !edit.reason.trimmed.isEmpty
                             && LongformEditorialSupport.allowed(range, around: edit.original)
                     }) ?? false
-                    return moment.actRole == act.type && (sameRange || approvedTrim || approvedEdit)
+                    return (moment.actRole == act.type && (sameRange || approvedTrim || approvedEdit))
+                        || manualAddition
                 }) {
                     issues.append("в монтаж попала неподтверждённая сцена или изменена её роль")
                 }

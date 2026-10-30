@@ -6,14 +6,19 @@ import SwiftUI
 struct EditableSceneSegment: Identifiable, Equatable {
     let id: UUID
     let sceneIndex: Int
+    let isAdded: Bool
+    let manualSourceRange: TimeSegment?
     var start: Double
     var end: Double
     let originalStart: Double
     let originalEnd: Double
 
-    init(id: UUID = UUID(), sceneIndex: Int, start: Double, end: Double) {
+    init(id: UUID = UUID(), sceneIndex: Int, start: Double, end: Double,
+         isAdded: Bool = false, manualSourceRange: TimeSegment? = nil) {
         self.id = id
         self.sceneIndex = sceneIndex
+        self.isAdded = isAdded
+        self.manualSourceRange = manualSourceRange
         self.start = start
         self.end = end
         self.originalStart = start
@@ -25,12 +30,18 @@ struct EditableSceneSegment: Identifiable, Equatable {
     }
 
     var isEdited: Bool {
-        abs(start - originalStart) > 0.05 || abs(end - originalEnd) > 0.05
+        isAdded || abs(start - originalStart) > 0.05 || abs(end - originalEnd) > 0.05
     }
 
     var diffDuration: Double {
         duration - (originalEnd - originalStart)
     }
+}
+
+private struct SceneInsertionTarget: Identifiable {
+    let id = UUID()
+    let actIndex: Int
+    let index: Int
 }
 
 /// Редактируемый акт драматургической структуры
@@ -74,6 +85,7 @@ struct LongformActEditorView: View {
     let transcriptSegments: [TranscriptSegment]
     let sourceURL: URL?
     let coldOpenEnabled: Bool
+    let onReview: (LongformNarrativeArc) async throws -> LongformNarrativeArc
     let onApply: (LongformNarrativeArc) -> Void
     let onCancel: () -> Void
 
@@ -86,6 +98,10 @@ struct LongformActEditorView: View {
     @State private var hookText = ""
     @State private var conclusionText = ""
     @State private var ctaText = ""
+    @State private var insertionTarget: SceneInsertionTarget?
+    @State private var isReviewing = false
+    @State private var reviewMessage: String?
+    @State private var reviewedArc: LongformNarrativeArc?
 
     private let minSceneDuration = EssayDurationPolicy.sceneLength.lowerBound
 
@@ -96,6 +112,7 @@ struct LongformActEditorView: View {
         transcriptSegments: [TranscriptSegment],
         sourceURL: URL? = nil,
         coldOpenEnabled: Bool = true,
+        onReview: @escaping (LongformNarrativeArc) async throws -> LongformNarrativeArc = { $0 },
         onApply: @escaping (LongformNarrativeArc) -> Void,
         onCancel: @escaping () -> Void
     ) {
@@ -105,6 +122,7 @@ struct LongformActEditorView: View {
         self.transcriptSegments = transcriptSegments
         self.sourceURL = sourceURL
         self.coldOpenEnabled = coldOpenEnabled
+        self.onReview = onReview
         self.onApply = onApply
         self.onCancel = onCancel
     }
@@ -155,6 +173,16 @@ struct LongformActEditorView: View {
         .onAppear {
             loadInitialActs()
             preparePreviewPlayer()
+        }
+        .sheet(item: $insertionTarget) { target in
+            LongformSceneInsertSheet(
+                transcriptSegments: transcriptSegments,
+                existingRanges: editedActs.flatMap { $0.scenes.map { TimeSegment(start: $0.start, end: $0.end) } },
+                sourceURL: sourceURL,
+                sourceDuration: sourceDuration,
+                onInsert: { range in insertScene(range, at: target) }
+            )
+            .frame(minWidth: 680, minHeight: 600)
         }
         .onDisappear {
             previewStopTask?.cancel()
@@ -353,12 +381,34 @@ struct LongformActEditorView: View {
                     Label(problem, systemImage: "exclamationmark.triangle")
                         .font(.caption).foregroundStyle(.orange)
                 }
-                if let notes = arc.editorialNotes, !notes.isEmpty {
-                    DisclosureGroup("Замечания редактора (\(notes.count))") {
-                        ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
-                            Text("• " + note).font(.caption).frame(maxWidth: .infinity, alignment: .leading)
+                if let notes = (reviewedArc ?? arc).editorialNotes, !notes.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        DisclosureGroup("Замечания редактора (\(notes.count))") {
+                            ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
+                                Text("• " + note).font(.caption).frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .padding(.top, 4)
+                        }
+                        HStack(spacing: 10) {
+                            Button {
+                                runEditorialReview()
+                            } label: {
+                                Label(isReviewing ? "Модель проверяет сцены…" : "Проверить и исправить замечания",
+                                      systemImage: isReviewing ? "hourglass" : "wand.and.stars")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(StudioTheme.accent)
+                            .disabled(isReviewing)
+                            if let reviewMessage {
+                                Text(reviewMessage).font(.caption).foregroundStyle(.secondary)
+                            }
                         }
                     }
+                }
+                if let reviewMessage, (reviewedArc ?? arc).editorialNotes?.isEmpty == true {
+                    Label(reviewMessage, systemImage: "checkmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 // Карточка темы акта
                 HStack(alignment: .top) {
@@ -420,8 +470,14 @@ struct LongformActEditorView: View {
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(.primary)
 
+                    insertionButton(actIndex: actIndex, index: 0, title: "Добавить сцену в начало акта")
+
                     ForEach(0..<act.scenes.count, id: \.self) { sceneIdx in
                         sceneTrimmerCard(actIndex: actIndex, sceneIndex: sceneIdx)
+                        insertionButton(actIndex: actIndex, index: sceneIdx + 1,
+                                        title: sceneIdx == act.scenes.count - 1
+                                            ? "Добавить сцену в конец акта"
+                                            : "Вставить сцену после сцены \(sceneIdx + 1)")
                     }
                 }
             }
@@ -456,7 +512,7 @@ struct LongformActEditorView: View {
                 Spacer()
 
                 if scene.isEdited {
-                    Text("Отредактировано")
+                        Text(scene.isAdded ? "Добавлена вручную" : "Отредактировано")
                         .font(.caption2.bold())
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -825,14 +881,16 @@ struct LongformActEditorView: View {
     private func resetAct(actIndex: Int) {
         guard actIndex < arc.acts.count else { return }
         let originalAct = arc.acts[actIndex]
-        let originalScenes = originalAct.segments.enumerated().map { idx, seg in
-            EditableSceneSegment(sceneIndex: idx, start: seg.start, end: seg.end)
-        }
+        let originalScenes = editableScenes(for: originalAct)
         editedActs[actIndex].scenes = originalScenes
+        reviewedArc = nil
+        reviewMessage = nil
     }
 
     private func resetAllActs() {
         loadInitialActs()
+        reviewedArc = nil
+        reviewMessage = nil
     }
 
     private func loadInitialActs() {
@@ -841,9 +899,6 @@ struct LongformActEditorView: View {
         conclusionText = arc.conclusionText ?? ""
         ctaText = arc.ctaText ?? ""
         editedActs = arc.acts.enumerated().map { actIdx, act in
-            let scenes = act.segments.enumerated().map { segIdx, seg in
-                EditableSceneSegment(sceneIndex: segIdx, start: seg.start, end: seg.end)
-            }
             return EditableActModel(
                 id: act.id,
                 actIndex: actIdx,
@@ -851,38 +906,137 @@ struct LongformActEditorView: View {
                 title: act.title,
                 dramaticBeat: act.dramaticBeat,
                 titleProvenance: act.titleProvenance,
-                scenes: scenes
+                scenes: editableScenes(for: act)
             )
         }
     }
 
+    private func editableScenes(for act: LongformAct) -> [EditableSceneSegment] {
+        act.segments.enumerated().map { index, segment in
+            let manualSource = arc.sceneEdits?.first(where: {
+                $0.role == act.type && $0.revised == segment
+                    && $0.reason == LongformSceneEdit.manualAdditionReason
+            })?.original
+            return EditableSceneSegment(sceneIndex: manualSource == nil ? index : -1,
+                start: segment.start, end: segment.end, isAdded: manualSource != nil,
+                manualSourceRange: manualSource)
+        }
+    }
+
     private func applyChangesAndProceed() {
-        var updatedActs: [LongformAct] = []
-        for act in editedActs {
-            let segs = act.scenes.map { TimeSegment(start: $0.start, end: $0.end) }
-            updatedActs.append(LongformAct(
-                type: act.type,
-                title: act.title,
-                dramaticBeat: act.dramaticBeat,
-                segments: segs,
-                titleProvenance: act.titleProvenance
-            ))
+        onApply(draftArc())
+    }
+
+    private func sceneAnchor(actIndex: Int, sceneIndex: Int) -> TimeSegment {
+        let scene = editedActs[actIndex].scenes[sceneIndex]
+        if scene.isAdded {
+            return scene.manualSourceRange ?? TimeSegment(start: scene.start, end: scene.end)
+        }
+        guard arc.acts.indices.contains(actIndex), arc.acts[actIndex].segments.indices.contains(scene.sceneIndex) else {
+            return TimeSegment(start: scene.start, end: scene.end)
+        }
+        let range = arc.acts[actIndex].segments[scene.sceneIndex]
+        return LongformEditorialSupport.anchor(for: range, role: arc.acts[actIndex].type, in: arc)
+    }
+
+    private func insertionButton(actIndex: Int, index: Int, title: String) -> some View {
+        Button {
+            insertionTarget = SceneInsertionTarget(actIndex: actIndex, index: index)
+        } label: {
+            Label(title, systemImage: "plus.circle")
+                .font(.caption.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(StudioTheme.accent)
+        .padding(.vertical, 2)
+    }
+
+    private func insertScene(_ range: TimeSegment, at target: SceneInsertionTarget) {
+        guard editedActs.indices.contains(target.actIndex),
+              EssayDurationPolicy.sceneLength.contains(range.duration),
+              sourceDuration.isFinite ? range.end <= sourceDuration : true else { return }
+        let allRanges = editedActs.flatMap { $0.scenes.map { TimeSegment(start: $0.start, end: $0.end) } }
+        guard allRanges.allSatisfy({ $0.end <= range.start || range.end <= $0.start }) else { return }
+        let scene = EditableSceneSegment(sceneIndex: -1, start: range.start, end: range.end,
+                                         isAdded: true, manualSourceRange: range)
+        let position = min(max(target.index, 0), editedActs[target.actIndex].scenes.count)
+        editedActs[target.actIndex].scenes.insert(scene, at: position)
+        selectedActIndex = target.actIndex
+        reviewedArc = nil
+        reviewMessage = nil
+    }
+
+    private func draftArc() -> LongformNarrativeArc {
+        var updatedArc = reviewedArc ?? arc
+        updatedArc.acts = editedActs.map { act in
+            LongformAct(type: act.type, title: act.title, dramaticBeat: act.dramaticBeat,
+                        segments: act.scenes.map { TimeSegment(start: $0.start, end: $0.end) },
+                        titleProvenance: act.titleProvenance)
         }
 
-        var updatedArc = arc
-        updatedArc.acts = updatedActs
-        updatedArc.sceneEdits = LongformEditorialSupport.recordingEdits(from: arc, acts: updatedActs)
+        var sceneEdits = updatedArc.sceneEdits ?? []
+        for (actIndex, act) in editedActs.enumerated() where arc.acts.indices.contains(actIndex) {
+            for scene in act.scenes {
+                let revised = TimeSegment(start: scene.start, end: scene.end)
+                if scene.isAdded {
+                    let source = scene.manualSourceRange ?? revised
+                    sceneEdits.removeAll {
+                        $0.role == act.type && $0.original == source
+                            && $0.reason == LongformSceneEdit.manualAdditionReason
+                    }
+                    sceneEdits.append(LongformSceneEdit(role: act.type, original: source, revised: revised,
+                        reason: LongformSceneEdit.manualAdditionReason))
+                    continue
+                }
+                guard arc.acts[actIndex].segments.indices.contains(scene.sceneIndex) else { continue }
+                let original = arc.acts[actIndex].segments[scene.sceneIndex]
+                let anchor = LongformEditorialSupport.anchor(for: original, role: act.type, in: arc)
+                sceneEdits.removeAll { $0.role == act.type && $0.original == anchor }
+                if revised != original {
+                    sceneEdits.append(LongformSceneEdit(role: act.type, original: anchor, revised: revised,
+                        reason: "Границы изменены пользователем в монтажном столе"))
+                }
+            }
+        }
+        updatedArc.sceneEdits = sceneEdits.isEmpty ? nil : sceneEdits
         updatedArc.publicationTitle = publicationTitle.trimmed
         updatedArc.hookText = hookText.trimmed
         updatedArc.conclusionText = conclusionText.trimmed
         updatedArc.ctaText = ctaText.trimmed
-
-        onApply(updatedArc)
+        return updatedArc
     }
 
-    private func sceneAnchor(actIndex: Int, sceneIndex: Int) -> TimeSegment {
-        let range = arc.acts[actIndex].segments[sceneIndex]
-        return LongformEditorialSupport.anchor(for: range, role: arc.acts[actIndex].type, in: arc)
+    private func runEditorialReview() {
+        guard !isReviewing else { return }
+        isReviewing = true
+        reviewMessage = nil
+        let draft = draftArc()
+        Task { @MainActor in
+            defer { isReviewing = false }
+            do {
+                let result = try await onReview(draft)
+                guard result.acts.count == editedActs.count,
+                      zip(result.acts, editedActs).allSatisfy({ $0.0.segments.count == $0.1.scenes.count }) else {
+                    reviewMessage = "Ответ модели не совпал со сценами. Монтаж сохранён."
+                    return
+                }
+                for (actIndex, reviewedAct) in result.acts.enumerated() {
+                    for (sceneIndex, range) in reviewedAct.segments.enumerated() {
+                        editedActs[actIndex].scenes[sceneIndex].start = range.start
+                        editedActs[actIndex].scenes[sceneIndex].end = range.end
+                    }
+                }
+                reviewedArc = result
+                let unresolved = result.editorialNotes?.count ?? 0
+                reviewMessage = result.editorialReviewModelID == nil
+                    ? "Модель не применила проверенные правки; монтаж сохранён."
+                    : (unresolved == 0 ? "Проверка завершена, замечаний не осталось."
+                       : "Проверка завершена; осталось замечаний: \(unresolved).")
+            } catch {
+                reviewMessage = "Не удалось запустить проверку: \(error.localizedDescription)"
+            }
+        }
     }
 
     private var editingProblem: String? {

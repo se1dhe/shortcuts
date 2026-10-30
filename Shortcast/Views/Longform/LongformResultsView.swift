@@ -480,6 +480,10 @@ struct LongformResultsView: View {
                     transcriptSegments: transcript.segments,
                     sourceURL: workspace.job?.url,
                     coldOpenEnabled: result.audioSettings?.coldOpenEnabled ?? true,
+                    onReview: { draft in
+                        try await workspace.reviewLongformEditorDraft(
+                            draft, modelManager: modelManager, settings: settings)
+                    },
                     onApply: { modifiedArc in
                         showActEditor = false
                         workspace.rebuildLongformWithModifiedArc(

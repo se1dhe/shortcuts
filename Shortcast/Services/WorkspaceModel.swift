@@ -946,6 +946,24 @@ final class WorkspaceModel {
         )
     }
 
+    /// Runs the Director's editorial pass on the current montage draft without starting a render.
+    func reviewLongformEditorDraft(
+        _ draft: LongformNarrativeArc,
+        modelManager: ModelManager,
+        settings: AppSettings
+    ) async throws -> LongformNarrativeArc {
+        guard let transcript = storedTranscript ?? currentProject?.transcript else {
+            throw NSError(domain: "LongformEditorialReview", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Транскрипт фильма недоступен."])
+        }
+        try await modelManager.requireDirector(profile: settings.copywriterModel.directorProfile)
+        let gateway = makeDirectorGateway(modelManager: modelManager)
+        let coldOpenEnabled = longformResult?.audioSettings?.coldOpenEnabled
+            ?? stagedAudioSettings?.coldOpenEnabled ?? true
+        return await makeEditorialReview(model: gateway).review(
+            arc: draft, transcript: transcript, coldOpenEnabled: coldOpenEnabled)
+    }
+
     func improveLongform(existingResult: LongformBuildResult, modelManager: ModelManager, settings: AppSettings) {
         startLongformRebuild(concept: existingResult.arc.concept, existingArc: existingResult.arc,
             modelManager: modelManager, settings: settings,

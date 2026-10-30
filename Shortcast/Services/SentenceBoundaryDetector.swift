@@ -25,8 +25,10 @@ protocol SentenceBoundaryDetecting: Sendable {
 /// and respects audio room tone and consonant attack buffers.
 struct SentenceBoundaryDetector: SentenceBoundaryDetecting {
 
-    static let defaultHeadPadding: Double = 0.20
-    static let defaultTailPadding: Double = 0.45
+    // Give the image a little room before the first word and after the final
+    // phrase. The old sub-second defaults made otherwise valid cuts feel abrupt.
+    static let defaultHeadPadding: Double = 1.20
+    static let defaultTailPadding: Double = 1.60
     static let defaultMinSegmentDuration: Double = 10.0
     static let defaultMaxShortsDuration: Double = 58.0
     static let defaultPauseThreshold: Double = 1.0

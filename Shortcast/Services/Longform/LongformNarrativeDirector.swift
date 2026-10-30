@@ -18,7 +18,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
     /// Сколько отвергнутых кандидатов акт вправе пропустить, прежде чем признать окно исчерпанным
     static let maxSkippedCandidatesPerAct: Int = 4
     /// Хвостовой паддинг затухания реплики перед кинематографическим затемнением
-    static let tailPaddingDuration: Double = 0.85
+    static let tailPaddingDuration: Double = 1.60
     /// Доля длины фильма, честно запрашиваемая у монтажа-эссе
     static let runtimeTargetRatio: Double = 0.06
     /// Граница зарезервированного финала фильма, который акты I–III не выжирают
@@ -1573,11 +1573,11 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
     private func headPaddingDuration(for actType: LongformActType) -> Double {
         switch actType {
         case .hook: return 3.0
-        case .downfall: return 0.5
+        case .downfall: return 1.2
         case .struggle: return 1.2
         case .catharsis: return 1.5
-        case .form: return 1.0
-        case .psychology: return 0.8
+        case .form: return 1.2
+        case .psychology: return 1.2
         case .philosophy: return 1.8
         }
     }
@@ -2007,8 +2007,8 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         maxAllowedDuration: Double
     ) -> Range<Double> {
         let detector = SentenceBoundaryDetector(
-            headPadding: 0.20,
-            tailPadding: 0.45,
+            headPadding: SentenceBoundaryDetector.defaultHeadPadding,
+            tailPadding: SentenceBoundaryDetector.defaultTailPadding,
             minSegmentDuration: 15.0,
             maxShortsDuration: maxAllowedDuration
         )

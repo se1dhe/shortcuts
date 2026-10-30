@@ -9,6 +9,8 @@ struct LongformCaptionEdit: Codable, Equatable, Sendable {
 }
 
 struct LongformSceneEdit: Codable, Equatable, Sendable {
+    static let manualAdditionReason = "Добавлена вручную пользователем из исходного фильма"
+
     let role: LongformActType
     let original: TimeSegment
     let revised: TimeSegment
@@ -36,9 +38,13 @@ enum LongformEditorialSupport {
         for (oldAct, newAct) in zip(arc.acts, acts) {
             for (original, revised) in zip(oldAct.segments, newAct.segments) where original != revised {
                 let anchor = anchor(for: original, role: oldAct.type, in: arc)
+                let isManualAddition = edits.contains {
+                    $0.role == oldAct.type && $0.original == anchor
+                        && $0.reason == LongformSceneEdit.manualAdditionReason
+                }
                 edits.removeAll { $0.role == oldAct.type && $0.original == anchor }
                 edits.append(LongformSceneEdit(role: oldAct.type, original: anchor, revised: revised,
-                                              reason: reason))
+                    reason: isManualAddition ? LongformSceneEdit.manualAdditionReason : reason))
             }
         }
         return edits

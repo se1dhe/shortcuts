@@ -48,6 +48,9 @@ struct LongformEditorialReview: Sendable {
     Перевір самодостатність входів, зайві повтори, відступи від теми та причинну розв'язку.
     Початок «а він», «знаєш чому» без контексту — ризик. Кінець речення не завжди кінець дії.
     У кожної сцени є ID і готові варіанти меж: обирай лише наданий option.
+    ВИПРАВ УСІ ПОТОЧНІ ЗАУВАЖЕННЯ, ДЕ Є БЕЗПЕЧНИЙ ВАРІАНТ МЕЖ: не залишай їх у notes після виправлення.
+    Якщо вихід закінчується одразу за реплікою, обери aftermath, коли він не заходить у наступну сцену.
+    Якщо вхід починається без контексту, обери context; якщо попередня репліка змінює зміст — поясни це в notes.
     aftermath означає 6 секунд реального матеріалу після слів, а НЕ підтвердження певної дії.
     Не переставляй акти, не додавай нових сцен, не змінюй тему, не переписуй репліки дубляжу.
     Якщо бачиш явну помилку ASR, запропонуй виправлення в captionSuggestions за номером L.
@@ -68,8 +71,9 @@ struct LongformEditorialReview: Sendable {
         var blocks: [String] = []
         var number = 0
         let cap = max(260, 10_000 / max(1, arc.segments.count))
-        for act in arc.acts {
-            for range in act.segments {
+        let diagnostics = LongformEditorialSupport.notes(for: arc, transcript: transcript)
+        for (actIndex, act) in arc.acts.enumerated() {
+            for (sceneIndex, range) in act.segments.enumerated() {
                 number += 1
                 let options = options(for: range, transcript: transcript).map {
                     "\($0.id)=\(String(format: "%.2f", $0.range.start))–\(String(format: "%.2f", $0.range.end))"
@@ -80,12 +84,15 @@ struct LongformEditorialReview: Sendable {
                     if text.count <= limit { return text }
                     return String(text.prefix(limit / 2)) + " […] " + String(text.suffix(limit / 2))
                 }
+                let prefix = "Акт \(actIndex + 1), сцена \(sceneIndex + 1):"
+                let sceneNotes = diagnostics.filter { $0.hasPrefix(prefix) }
                 blocks.append("""
                 SCENE \(number) role=\(act.type.promptKey), мета=\(act.dramaticBeat.prefix(120))
                 \(options)
                 ДО: \(dialogue(max(0, range.start - 8), range.start, limit: 180))
                 ВСЕРЕДИНІ: \(dialogue(range.start, range.end, limit: cap))
                 ПІСЛЯ: \(dialogue(range.end, range.end + 8, limit: 180))
+                ПОТОЧНІ ЗАУВАЖЕННЯ: \(sceneNotes.isEmpty ? "немає" : sceneNotes.joined(separator: " | "))
                 """)
             }
         }

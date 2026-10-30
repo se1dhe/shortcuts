@@ -13,6 +13,27 @@ struct LongformEditorialReview: Sendable {
         let range: TimeSegment
     }
 
+    struct Attempt: Sendable, Identifiable {
+        let id: Int
+        let message: String
+        let accepted: Bool
+    }
+
+    struct Outcome: Sendable {
+        let arc: LongformNarrativeArc
+        let attempts: [Attempt]
+        let changes: [SceneChange]
+    }
+
+    struct SceneChange: Sendable, Identifiable {
+        let id: String
+        let act: Int
+        let scene: Int
+        let oldRange: TimeSegment
+        let newRange: TimeSegment
+        let reason: String
+    }
+
     static func options(for range: TimeSegment, transcript: Transcript) -> [Option] {
         let lines = transcript.segments.sorted { $0.start < $1.start }
         let filmEnd = lines.map(\.end).max() ?? range.end
@@ -101,30 +122,142 @@ struct LongformEditorialReview: Sendable {
     }
 
     func review(arc: LongformNarrativeArc, transcript: Transcript, coldOpenEnabled: Bool) async -> LongformNarrativeArc {
+        let outcome = await reviewDetailed(arc: arc, transcript: transcript, coldOpenEnabled: coldOpenEnabled) { _ in }
+        return outcome.arc
+    }
+
+    func reviewDetailed(
+        arc: LongformNarrativeArc,
+        transcript: Transcript,
+        coldOpenEnabled: Bool,
+        progress: @Sendable (String) -> Void
+    ) async -> Outcome {
         var result = arc
-        result.editorialNotes = LongformEditorialSupport.notes(for: arc, transcript: transcript)
+        let initialNotes = LongformEditorialSupport.notes(for: arc, transcript: transcript)
+        result.editorialNotes = initialNotes
+        var attempts: [Attempt] = []
         guard let model, await model.isReady else {
+            progress("Редакторская модель не загружена в память; монтаж не менялся.")
             result.editorialNotes = (result.editorialNotes ?? [])
-                + ["Редакторский проход модели недоступен или ответ не прошёл проверку; монтаж сохранён."]
-            return result
+                + ["Редакторская модель не загружена в память. Изменения не применялись."]
+            return Outcome(arc: result, attempts: [Attempt(id: 0, message: "Модель не готова в памяти", accepted: false)], changes: [])
         }
-        let basePrompt = Self.prompt(arc: arc, transcript: transcript)
-        let prompt = basePrompt + correctionMemory.promptExamples(for: basePrompt,
-            filmKey: correctionFilmKey, language: correctionLanguage)
-        DirectorRunLog.write("editorial review: scenes=\(arc.segments.count) promptChars=\(prompt.count)")
-        guard let raw = await model.complete(instructions: Self.instructions, prompt: prompt, maxTokens: 1536) else {
-            result.editorialNotes = (result.editorialNotes ?? []) + ["Редакторская модель не вернула ответ; монтаж сохранён."]
-            return result
+
+        var working = arc
+        working.editorialNotes = initialNotes
+        var best = arc
+        best.editorialNotes = initialNotes
+        var bestNoteCount = initialNotes.count
+        var repairContext: String?
+        var didAccept = false
+        let maxAttempts = 4
+
+        for attemptNumber in 1...maxAttempts {
+            progress(attemptNumber == 1
+                ? "Анализирую замечания редактора и фразы рядом со сценами…"
+                : "Перестраиваю вариант по результату проверки · попытка \(attemptNumber) из \(maxAttempts)…")
+            let basePrompt = Self.prompt(arc: working, transcript: transcript)
+            let memory = correctionMemory.promptExamples(for: basePrompt,
+                filmKey: correctionFilmKey, language: correctionLanguage)
+            let retry = repairContext.map { "\n\nРЕЗУЛЬТАТ ПРЕДЫДУЩЕЙ ПРОВЕРКИ — ИСПРАВЬ ОТВЕТ, НЕ ПОВТОРЯЙ ОТКЛОНЁННЫЙ ВАРИАНТ:\n\($0)" } ?? ""
+            let prompt = basePrompt + memory + retry
+            DirectorRunLog.write("editorial review: attempt=\(attemptNumber) scenes=\(working.segments.count) promptChars=\(prompt.count)")
+            guard let raw = await model.complete(instructions: Self.instructions, prompt: prompt, maxTokens: 2048) else {
+                attempts.append(Attempt(id: attemptNumber, message: "Модель не вернула ответ; повторяю запрос с текущими замечаниями.", accepted: false))
+                repairContext = "Вызов не вернул текст. Верни полный JSON в требуемом формате."
+                continue
+            }
+            DirectorRunLog.dumpRaw(raw, stage: "editorial", attempt: attemptNumber)
+            guard let reviewed = Self.apply(raw, to: working, transcript: transcript, coldOpenEnabled: coldOpenEnabled) else {
+                let issue = Self.validationFeedback(raw, arc: working, transcript: transcript, coldOpenEnabled: coldOpenEnabled)
+                attempts.append(Attempt(id: attemptNumber, message: issue, accepted: false))
+                repairContext = "Твой ответ не прошёл проверку: \(issue)\nИсправь JSON и выбери только допустимые варианты, перечисленные для каждой сцены. Не меняй номера сцен."
+                progress("Ответ не прошёл проверку: \(issue). Прошу модель исправить решение…")
+                continue
+            }
+
+            let notes = reviewed.editorialNotes ?? []
+            let fingerprint = reviewed.segments.map { "\(Int($0.start * 100)):\(Int($0.end * 100))" }.joined(separator: ",")
+            let currentFingerprint = working.segments.map { "\(Int($0.start * 100)):\(Int($0.end * 100))" }.joined(separator: ",")
+            let changed = fingerprint != currentFingerprint
+            let improved = notes.count <= bestNoteCount
+            if improved {
+                best = reviewed
+                bestNoteCount = notes.count
+            }
+            attempts.append(Attempt(id: attemptNumber,
+                message: changed ? "Вариант прошёл проверку; замечаний осталось: \(notes.count)." : "Вариант прошёл проверку, границы не изменились; замечаний осталось: \(notes.count).",
+                accepted: true))
+            working = reviewed
+            didAccept = true
+
+            if notes.isEmpty {
+                result = reviewed
+                progress("Все замечания устранены; изменения прошли проверку.")
+                break
+            }
+            if attemptNumber < maxAttempts, !notes.isEmpty {
+                result = best
+                repairContext = "После проверки остаются замечания: \(notes.joined(separator: " | ")). Предыдущий набор границ: \(fingerprint). Сопоставь замечания с предыдущим выбором и найди другой допустимый вариант для проблемных сцен. Не повторяй вариант, который не устранил замечание. Если ни один вариант границ не решает проблему, объясни это конкретно в notes и продолжи искать решение для остальных сцен."
+                progress("Проверенный вариант оставил \(notes.count) замечаний; анализирую альтернативы для проблемных сцен…")
+            } else {
+                result = best
+                break
+            }
         }
-        DirectorRunLog.dumpRaw(raw, stage: "editorial", attempt: 1)
-        guard var reviewed = Self.apply(raw, to: arc, transcript: transcript, coldOpenEnabled: coldOpenEnabled) else {
-            DirectorRunLog.write("editorial review: reply rejected; original arc retained")
-            result.editorialNotes = (result.editorialNotes ?? []) + ["Правки модели не прошли проверку; монтаж сохранён."]
-            return result
+        if attempts.isEmpty {
+            result.editorialNotes = initialNotes + ["Модель не сформировала решение после нескольких запросов."]
+        } else if didAccept {
+            result = best
         }
-        reviewed.editorialReviewModelID = await model.modelID
-        DirectorRunLog.write("editorial review: accepted edits=\(reviewed.sceneEdits?.count ?? 0) captions=\(reviewed.captionSuggestions?.count ?? 0)")
-        return reviewed
+        if didAccept {
+            result.editorialReviewModelID = await model.modelID
+            DirectorRunLog.write("editorial review: accepted edits=\(result.sceneEdits?.count ?? 0) attempts=\(attempts.count)")
+        }
+        var changes: [SceneChange] = []
+        for (actIndex, pair) in zip(arc.acts, result.acts).enumerated() {
+            for (sceneIndex, ranges) in zip(pair.0.segments, pair.1.segments).enumerated() where ranges.0 != ranges.1 {
+                let reason = result.sceneEdits?.first(where: { $0.revised == ranges.1 })?.reason ?? "Граница изменена после редакторской проверки"
+                changes.append(SceneChange(id: "act-\(actIndex + 1)-scene-\(sceneIndex + 1)", act: actIndex + 1,
+                    scene: sceneIndex + 1, oldRange: ranges.0, newRange: ranges.1, reason: reason))
+            }
+        }
+        let remaining = result.editorialNotes?.count ?? 0
+        if didAccept {
+            progress(remaining == 0
+                ? "Готово: замечания устранены; сохранено изменений границ: \(changes.count)."
+                : "Сохранил лучший проверенный вариант. Осталось замечаний: \(remaining); завершено попыток: \(attempts.count).")
+        } else {
+            progress("Модель не получила проверенный вариант за \(attempts.count) попытки. Монтаж сохранён без изменений; причины указаны в журнале.")
+        }
+        return Outcome(arc: result, attempts: attempts, changes: changes)
+    }
+
+    private static func validationFeedback(_ raw: String, arc: LongformNarrativeArc,
+                                           transcript: Transcript, coldOpenEnabled: Bool) -> String {
+        guard let json = JSONVariantParser.extractJSONObject(from: raw),
+              let data = json.data(using: .utf8),
+              let reply = try? JSONDecoder().decode(Reply.self, from: data) else {
+            return "Ответ не соответствует JSON-схеме. Нужен объект с массивами edits и notes; в каждом edit обязательны целые scene, option и непустой reason."
+        }
+        let placements = arc.acts.enumerated().flatMap { ai, act in act.segments.indices.map { (ai, $0) } }
+        var seen = Set<Int>()
+        for edit in reply.edits {
+            guard edit.scene > 0, edit.scene <= placements.count else {
+                return "Номер сцены \(edit.scene) отсутствует. Допустимые номера: 1–\(placements.count)."
+            }
+            guard seen.insert(edit.scene).inserted else { return "Сцена \(edit.scene) указана повторно. Укажи её один раз." }
+            let (ai, si) = placements[edit.scene - 1]
+            let range = arc.acts[ai].segments[si]
+            let available = options(for: range, transcript: transcript).map(\.id).joined(separator: ", ")
+            guard options(for: range, transcript: transcript).contains(where: { $0.id == edit.option }) else {
+                return "Для сцены \(edit.scene) выбран вариант «\(edit.option)», которого нет в списке. Разрешены: \(available). Выбери один из них."
+            }
+        }
+        if let applied = apply(raw, to: arc, transcript: transcript, coldOpenEnabled: coldOpenEnabled) {
+            return "Границы прошли техническую проверку, но замечания остаются: \((applied.editorialNotes ?? []).joined(separator: " | ")). Предложи другие допустимые варианты, чтобы устранить их."
+        }
+        return "Выбранные диапазоны конфликтуют: не допускаются пересечения сцен и итоговая длительность эссе должна быть 4–8 минут. Пересчитай комбинацию вариантов; доступные варианты для каждой сцены перечислены в исходном запросе."
     }
 
     static func apply(_ raw: String, to arc: LongformNarrativeArc,

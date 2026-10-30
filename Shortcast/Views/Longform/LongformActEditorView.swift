@@ -85,7 +85,7 @@ struct LongformActEditorView: View {
     let transcriptSegments: [TranscriptSegment]
     let sourceURL: URL?
     let coldOpenEnabled: Bool
-    let onReview: (LongformNarrativeArc) async throws -> LongformNarrativeArc
+    let onReview: (LongformNarrativeArc, @Sendable (String) -> Void) async throws -> LongformEditorialReview.Outcome
     let onApply: (LongformNarrativeArc) -> Void
     let onCancel: () -> Void
 
@@ -103,6 +103,10 @@ struct LongformActEditorView: View {
     @State private var isReviewing = false
     @State private var reviewMessage: String?
     @State private var reviewedArc: LongformNarrativeArc?
+    @State private var reviewProgress = ""
+    @State private var reviewAttempts: [LongformEditorialReview.Attempt] = []
+    @State private var reviewEvents: [String] = []
+    @State private var reviewChanges: [LongformEditorialReview.SceneChange] = []
 
     private let minSceneDuration = EssayDurationPolicy.sceneLength.lowerBound
 
@@ -113,7 +117,9 @@ struct LongformActEditorView: View {
         transcriptSegments: [TranscriptSegment],
         sourceURL: URL? = nil,
         coldOpenEnabled: Bool = true,
-        onReview: @escaping (LongformNarrativeArc) async throws -> LongformNarrativeArc = { $0 },
+        onReview: @escaping (LongformNarrativeArc, @Sendable (String) -> Void) async throws -> LongformEditorialReview.Outcome = { arc, _ in
+            LongformEditorialReview.Outcome(arc: arc, attempts: [], changes: [])
+        },
         onApply: @escaping (LongformNarrativeArc) -> Void,
         onCancel: @escaping () -> Void
     ) {
@@ -394,8 +400,8 @@ struct LongformActEditorView: View {
                             Button {
                                 runEditorialReview()
                             } label: {
-                                Label(isReviewing ? "Модель проверяет сцены…" : "Проверить и исправить замечания",
-                                      systemImage: isReviewing ? "hourglass" : "wand.and.stars")
+                                Label(isReviewing ? "Модель ищет решение…" : "Проверить и исправить замечания",
+                                      systemImage: isReviewing ? "progress.indicator" : "wand.and.stars")
                             }
                             .buttonStyle(.borderedProminent)
                             .tint(StudioTheme.accent)
@@ -403,6 +409,45 @@ struct LongformActEditorView: View {
                             if let reviewMessage {
                                 Text(reviewMessage).font(.caption).foregroundStyle(.secondary)
                             }
+                        }
+                        if isReviewing || !reviewAttempts.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                if isReviewing {
+                                    HStack(spacing: 8) {
+                                        ProgressView().controlSize(.small)
+                                        Text(reviewProgress.isEmpty ? "Готовлю замечания и контекст сцен…" : reviewProgress)
+                                            .font(.caption.weight(.medium)).foregroundStyle(.primary)
+                                    }
+                                }
+                                ForEach(Array(reviewEvents.enumerated()), id: \.offset) { _, event in
+                                    Label(event, systemImage: "arrow.turn.down.right")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                ForEach(reviewAttempts) { attempt in
+                                    Label("Попытка \(attempt.id): \(attempt.message)",
+                                          systemImage: attempt.accepted ? "checkmark.circle" : "arrow.clockwise")
+                                        .font(.caption)
+                                        .foregroundStyle(attempt.accepted ? .green : .secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                if !reviewChanges.isEmpty {
+                                    Divider()
+                                    Text("ПРИМЕНЁННЫЕ ИЗМЕНЕНИЯ")
+                                        .font(.system(size: 9, weight: .bold)).tracking(1).foregroundStyle(StudioTheme.accent)
+                                    ForEach(reviewChanges) { change in
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text("Акт \(change.act) · сцена \(change.scene): \(formatTimecode(change.oldRange.start))–\(formatTimecode(change.oldRange.end)) → \(formatTimecode(change.newRange.start))–\(formatTimecode(change.newRange.end))")
+                                                .font(.caption.monospacedDigit().weight(.semibold))
+                                            Text(change.reason).font(.caption2).foregroundStyle(.secondary)
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                }
+                            }
+                            .padding(10)
+                            .background(StudioTheme.raised, in: RoundedRectangle(cornerRadius: 9))
+                            .overlay(RoundedRectangle(cornerRadius: 9).stroke(StudioTheme.line, lineWidth: 1))
                         }
                     }
                 }
@@ -1032,11 +1077,23 @@ struct LongformActEditorView: View {
         guard !isReviewing else { return }
         isReviewing = true
         reviewMessage = nil
+        reviewProgress = "Запускаю редакторскую проверку…"
+        reviewAttempts = []
+        reviewEvents = []
+        reviewChanges = []
         let draft = draftArc()
         Task { @MainActor in
             defer { isReviewing = false }
             do {
-                let result = try await onReview(draft)
+                let outcome = try await onReview(draft) { message in
+                    Task { @MainActor in
+                        reviewProgress = message
+                        reviewEvents.append(message)
+                    }
+                }
+                let result = outcome.arc
+                reviewAttempts = outcome.attempts
+                reviewChanges = outcome.changes
                 guard result.acts.count == editedActs.count,
                       zip(result.acts, editedActs).allSatisfy({ $0.0.segments.count == $0.1.scenes.count }) else {
                     reviewMessage = "Ответ модели не совпал со сценами. Монтаж сохранён."
@@ -1050,10 +1107,11 @@ struct LongformActEditorView: View {
                 }
                 reviewedArc = result
                 let unresolved = result.editorialNotes?.count ?? 0
-                reviewMessage = result.editorialReviewModelID == nil
-                    ? "Модель не применила проверенные правки; монтаж сохранён."
-                    : (unresolved == 0 ? "Проверка завершена, замечаний не осталось."
-                       : "Проверка завершена; осталось замечаний: \(unresolved).")
+                reviewMessage = unresolved == 0
+                    ? "Проверка завершена, замечаний не осталось."
+                    : (!outcome.changes.isEmpty
+                       ? "Применены проверенные изменения; осталось замечаний: \(unresolved). Попытки и причины показаны выше."
+                       : "Модель проверила допустимые варианты, но границы сцен не изменила. Осталось замечаний: \(unresolved); подробности и попытки показаны выше.")
             } catch {
                 reviewMessage = "Не удалось запустить проверку: \(error.localizedDescription)"
             }

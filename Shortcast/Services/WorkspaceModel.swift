@@ -950,8 +950,9 @@ final class WorkspaceModel {
     func reviewLongformEditorDraft(
         _ draft: LongformNarrativeArc,
         modelManager: ModelManager,
-        settings: AppSettings
-    ) async throws -> LongformNarrativeArc {
+        settings: AppSettings,
+        progress: @Sendable (String) -> Void
+    ) async throws -> LongformEditorialReview.Outcome {
         guard let transcript = storedTranscript ?? currentProject?.transcript else {
             throw NSError(domain: "LongformEditorialReview", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "Транскрипт фильма недоступен."])
@@ -960,8 +961,8 @@ final class WorkspaceModel {
         let gateway = makeDirectorGateway(modelManager: modelManager)
         let coldOpenEnabled = longformResult?.audioSettings?.coldOpenEnabled
             ?? stagedAudioSettings?.coldOpenEnabled ?? true
-        return await makeEditorialReview(model: gateway).review(
-            arc: draft, transcript: transcript, coldOpenEnabled: coldOpenEnabled)
+        return await makeEditorialReview(model: gateway).reviewDetailed(
+            arc: draft, transcript: transcript, coldOpenEnabled: coldOpenEnabled, progress: progress)
     }
 
     func improveLongform(existingResult: LongformBuildResult, modelManager: ModelManager, settings: AppSettings) {

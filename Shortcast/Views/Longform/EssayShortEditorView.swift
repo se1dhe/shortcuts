@@ -61,78 +61,110 @@ struct EssayShortEditorView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Монтажный стол шортса").font(.title2.bold())
-                    Text("\(Int(editedShort.duration.rounded())) с · сцены, хук, тексты и субтитры").foregroundStyle(.secondary)
+                    Text("Монтаж шортса").font(.title2.bold())
+                    Text("\(Int(editedShort.duration.rounded())) с · \(scenes.count) сцен · порядок, границы, хук и субтитры")
+                        .font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("Отмена") { dismiss() }.disabled(busy)
                 Button(busy ? "Рендеринг…" : "Сохранить и пересобрать") { save() }
                     .buttonStyle(StudioPrimaryButtonStyle()).disabled(busy || validationError != nil)
-            }.padding(20)
+            }.padding(.horizontal, 20).padding(.vertical, 16)
             Divider()
-            HStack(alignment: .top, spacing: 20) {
+            HStack(alignment: .top, spacing: 18) {
                 VStack(alignment: .leading, spacing: 12) {
-                    VideoPlayer(player: player).frame(height: 270)
-                    EditorTimelineView(
-                        clips: scenes.map { EditorTimelineClip(id: $0.id, start: $0.start, end: $0.end, isAdded: $0.isAdded) },
-                        selectedID: selectedSceneID,
-                        onSelect: { id in
-                            selectedSceneID = id
-                            if let scene = scenes.first(where: { $0.id == id }) {
-                                preview(TimeSegment(start: scene.start, end: scene.end))
-                            }
-                        },
-                        onInsertAt: { insertionTarget = ShortSceneInsertionTarget(index: $0) },
-                        onMoveEarlier: { moveScene($0, delta: -1) },
-                        onMoveLater: { moveScene($0, delta: 1) },
-                        onRemove: { id in scenes.removeAll { $0.id == id } }
-                    )
-                    Text("Блоки идут в порядке финального ролика. Нажмите на сцену для просмотра, используйте «+» на склейке для вставки фрагмента из фильма.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    if busy { ProgressView("Сохраняем монтаж, субтитры и обложку…") }
-                    if let message = error ?? validationError { Text(message).font(.callout).foregroundStyle(.red) }
-                }.frame(width: 420)
+                    VideoPlayer(player: player)
+                        .frame(width: 470, height: 264)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(StudioTheme.line, lineWidth: 1))
+                    HStack {
+                        Label("Предпросмотр исходника", systemImage: "play.rectangle")
+                        Spacer()
+                        if let selectedSceneID,
+                           let scene = scenes.first(where: { $0.id == selectedSceneID }) {
+                            Text("Сцена \(scenes.firstIndex(where: { $0.id == scene.id }).map { $0 + 1 } ?? 1) · \(timecode(scene.duration))")
+                                .font(.caption.monospacedDigit().weight(.semibold)).foregroundStyle(StudioTheme.accent)
+                        } else {
+                            Text("Выберите сцену на шкале")
+                        }
+                    }
+                    .font(.caption).foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
+                }
+                .frame(width: 470)
+
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        GroupBox("Тексты шортса") {
-                            VStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        GroupBox("Содержание") {
+                            VStack(spacing: 9) {
                                 TextField("Название", text: $draft.title)
                                 TextField("Хук в видео", text: $draft.hook, axis: .vertical)
-                                TextField("Мысль шортса", text: $draft.angle, axis: .vertical)
-                                TextField("Вопрос для обсуждения", text: $draft.question, axis: .vertical)
-                                TextField("Опорная реплика", text: $draft.payoffQuote, axis: .vertical)
-                            }.textFieldStyle(.roundedBorder).padding(6)
+                                TextField("Основная мысль", text: $draft.angle, axis: .vertical)
+                                TextField("Вопрос зрителю", text: $draft.question, axis: .vertical)
+                                TextField("Ключевая реплика", text: $draft.payoffQuote, axis: .vertical)
+                            }.textFieldStyle(.roundedBorder).padding(5)
                         }
-                        GroupBox("Сцены · порядок и границы в исходном фильме") {
-                            VStack(spacing: 12) {
-                                ForEach($scenes) { scene in
-                                    sceneRow(scene)
-                                }
-                                Button("Добавить сцену из фильма", systemImage: "plus.viewfinder") {
-                                    insertionTarget = ShortSceneInsertionTarget(index: scenes.count)
-                                }
-                            }.padding(6)
+                        GroupBox("Сцены и точная подрезка") {
+                            VStack(spacing: 10) {
+                                ForEach($scenes) { scene in sceneRow(scene) }
+                            }.padding(5)
                         }
                         GroupBox("Субтитры выбранных сцен") {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text("Правки сохраняются только в этом шортсе. Субтитры эссе и второго шортса остаются самостоятельными.")
+                            VStack(alignment: .leading, spacing: 9) {
+                                Text("Изменения применяются только к этому шортсу.")
                                     .font(.caption).foregroundStyle(.secondary)
                                 ForEach(Array(selectedCaptions.enumerated()), id: \.offset) { _, segment in
-                                    HStack(alignment: .top) {
+                                    HStack(alignment: .top, spacing: 8) {
+                                        Text(timecode(segment.start))
+                                            .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                                            .frame(width: 64, alignment: .leading)
                                         Button { preview(TimeSegment(start: segment.start, end: segment.end)) } label: {
                                             Image(systemName: "play.fill")
-                                        }
+                                        }.buttonStyle(.borderless)
                                         TextField("Субтитр", text: captionBinding(segment), axis: .vertical)
                                             .textFieldStyle(.roundedBorder)
                                     }
                                 }
-                            }.padding(6)
+                            }.padding(5)
                         }
-                    }.padding(.trailing, 12)
+                    }.padding(.trailing, 8)
                 }
-            }.padding(20).disabled(busy)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .frame(maxHeight: .infinity)
+
+            EditorTimelineView(
+                clips: scenes.map { EditorTimelineClip(id: $0.id, start: $0.start, end: $0.end, isAdded: $0.isAdded) },
+                selectedID: selectedSceneID,
+                onSelect: { id in
+                    selectedSceneID = id
+                    if let scene = scenes.first(where: { $0.id == id }) {
+                        preview(TimeSegment(start: scene.start, end: scene.end))
+                    }
+                },
+                onInsertAt: { insertionTarget = ShortSceneInsertionTarget(index: $0) },
+                onMoveEarlier: { moveScene($0, delta: -1) },
+                onMoveLater: { moveScene($0, delta: 1) },
+                onRemove: { id in scenes.removeAll { $0.id == id } }
+            )
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+
+            if busy || error != nil || validationError != nil {
+                HStack {
+                    if busy { ProgressView("Сохраняю сцены, субтитры и собираю видео…") }
+                    if let message = error ?? validationError {
+                        Label(message, systemImage: "exclamationmark.triangle")
+                            .font(.callout).foregroundStyle(.red)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 20).padding(.bottom, 12)
+            }
         }
-        .frame(width: 1100, height: 760)
+        .disabled(busy)
+        .frame(width: 1280, height: 860)
         .background(StudioTheme.background)
         .tint(StudioTheme.accent)
         .interactiveDismissDisabled(busy)
@@ -221,5 +253,10 @@ struct EssayShortEditorView: View {
             do { try await onSave(editedShort); dismiss() }
             catch { self.error = error.localizedDescription }
         }
+    }
+
+    private func timecode(_ seconds: Double) -> String {
+        let value = max(0, Int(seconds.rounded()))
+        return String(format: "%02d:%02d:%02d", value / 3600, (value % 3600) / 60, value % 60)
     }
 }

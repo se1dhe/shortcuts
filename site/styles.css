@@ -5,3 +5,52 @@
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}.reveal{opacity:1;transform:none}}
 .editor-visual{display:block;width:100%;overflow:hidden;border:1px solid #ffffff12;border-radius:12px;background:#0c0d0f;cursor:zoom-in}.editor-visual img{display:block;width:100%;height:auto;aspect-ratio:16/9;object-fit:cover;transition:transform .45s ease}.editor-visual:hover img{transform:scale(1.015)}.editor-card.large>.editor-visual img{max-height:380px;object-fit:cover}
 .telegram-cta,.telegram-button,.footer-telegram,.telegram-link{display:inline-flex;align-items:center;gap:9px}.telegram-cta{border-color:#e8c37d75;background:linear-gradient(135deg,#28251f,#17181a);color:var(--gold);padding:9px 14px;border-radius:10px;transition:border-color .2s,background .2s,transform .2s}.telegram-cta:hover,.telegram-button:hover{border-color:var(--gold);transform:translateY(-1px)}.telegram-cta svg,.telegram-link svg,.telegram-button svg,.footer-telegram svg{width:17px;height:17px;fill:currentColor;flex:none}.telegram-link{color:var(--gold)}.telegram-link:hover{color:#f5d794}.telegram-button{box-shadow:0 8px 24px #d9b87320}.doc-telegram{margin-top:10px}.footer-telegram{color:var(--gold);font-size:11px;font-weight:700;letter-spacing:.3px;padding:8px 12px;border:1px solid #e8c37d42;border-radius:9px;transition:background .2s,border-color .2s}.footer-telegram:hover{background:#e8c37d12;border-color:#e8c37d9c}.footer-telegram svg{width:15px;height:15px}
+
+/* Editorial gallery: give real application captures room to read. */
+.hero-frame{transform:none;border-color:#d5b56b88;box-shadow:0 30px 100px #0009,0 0 70px #e8c37d0c}
+.hero-frame .image-button{aspect-ratio:1.9}
+.hero-frame .image-button img{object-position:center 48%}
+.editor-grid{gap:16px}
+.editor-card{padding:24px;border-radius:16px;box-shadow:inset 0 1px #ffffff05;transition:border-color .25s,transform .25s,background .25s}
+.editor-card:hover{border-color:#e8c37d50;transform:translateY(-2px)}
+.editor-card.large .image-button{aspect-ratio:2.12}
+.editor-card.large .image-button img{width:100%;height:100%;max-height:none;object-fit:cover;object-position:center 42%}
+.editor-card .editor-visual{aspect-ratio:1.65;background:#111216}
+.editor-card .editor-visual img{width:100%;height:100%;aspect-ratio:auto;object-fit:cover}
+.editor-head .eyebrow{font-size:9px}
+.editor-card>p{font-size:13px;line-height:1.75;min-height:0;margin:16px 0 20px}
+.editor-note{margin-top:22px;padding:16px 18px;border:1px solid #ffffff12;border-radius:12px;background:#151619;font-size:12px;line-height:1.7}
+.editor-note .note-mark{flex:none}
+.review-section{background:radial-gradient(ellipse at 8% 44%,#ba96501a,transparent 40%),#141517;border-block:1px solid #ffffff0c}
+.review-layout{display:grid;grid-template-columns:1.18fr .82fr;align-items:center;gap:40px;padding:20px;border:1px solid #ffffff14;border-radius:20px;background:linear-gradient(135deg,#191a1d,#121315)}
+.review-shot{border:1px solid #ffffff16;border-radius:12px;background:#090a0c}
+.review-shot img{width:100%;height:auto;display:block}
+.review-copy{display:grid;gap:10px;padding:8px 12px}
+.review-step{display:grid;grid-template-columns:42px 1fr;gap:13px;align-items:start;padding:16px 0;border-bottom:1px solid #ffffff10}
+.review-step>span{width:34px;height:34px;display:grid;place-items:center;border:1px solid #e8c37d65;border-radius:50%;color:var(--gold);font:12px var(--mono)}
+.review-step b{display:block;color:#eee9df;font-size:14px;margin:1px 0 5px}
+.review-step small{display:block;color:#a3a2a0;font-size:12px;line-height:1.65}
+.review-caption{padding-top:5px;color:#d4b975;font:9px var(--mono);letter-spacing:1.2px}
+.cover-shot{position:relative}
+.cover-shot:after{content:"КОНЦЕПТ · БЕЗ ФОТО АКТЁРА";position:absolute;bottom:13px;right:14px;padding:7px 10px;border:1px solid #e8c37d70;border-radius:5px;background:#101114df;color:#e8c37d;font:9px var(--mono);letter-spacing:1px}
+.image-button:focus-visible,.step:focus-visible,.doc-tab:focus-visible,a:focus-visible{outline:2px solid var(--gold);outline-offset:4px}
+.lightbox{width:min(94vw,1540px)}
+.lightbox img{margin:auto}
+@media(max-width:900px){.review-layout{grid-template-columns:1fr;gap:20px}.review-copy{grid-template-columns:1fr 1fr}.review-caption{grid-column:1/-1}.editor-card.large .image-button{aspect-ratio:1.8}}
+@media(max-width:650px){.editor-card{padding:17px}.editor-card.large .image-button{aspect-ratio:1.25}.editor-card.large .image-button img{object-position:center 42%}.review-layout{padding:12px}.review-copy{grid-template-columns:1fr;padding:3px 5px}.review-caption{grid-column:auto}.review-step{padding:11px 0}.review-step small{font-size:11px}.hero-frame .image-button{aspect-ratio:1.45}.cover-shot:after{bottom:8px;right:8px;font-size:7px;padding:5px 7px}}
+.hero-frame{z-index:1}
+.hero-orbit{z-index:0}
+.hero-frame .image-button{aspect-ratio:2.04}
+.hero-frame .image-button img{object-fit:contain;background:#17191d}
+@media(max-width:650px){.hero-frame .image-button{aspect-ratio:2.04}.hero-frame .image-button img{object-fit:contain}}
+.editor-card.large .image-button{aspect-ratio:1.75}
+@media(max-width:900px){.editor-card.large .image-button{aspect-ratio:1.6}}
+@media(max-width:650px){.editor-card.large .image-button{aspect-ratio:auto}.editor-card.large .image-button img{height:auto}}
+.review-layout{grid-template-columns:minmax(0,1fr);gap:22px}
+.review-shot{max-width:100%;aspect-ratio:1.95}
+.review-shot img{width:100%;height:100%;object-fit:cover;object-position:top left}
+.review-copy{grid-template-columns:repeat(3,minmax(0,1fr));gap:22px;padding:4px 10px}
+.review-step{height:100%;grid-template-columns:36px 1fr;padding:10px 0 15px}
+.review-caption{grid-column:1/-1}
+@media(max-width:900px){.review-copy{grid-template-columns:1fr 1fr}.review-caption{grid-column:1/-1}}
+@media(max-width:650px){.review-copy{grid-template-columns:1fr}.review-caption{grid-column:auto}.review-shot{aspect-ratio:auto}.review-shot img{height:auto}}

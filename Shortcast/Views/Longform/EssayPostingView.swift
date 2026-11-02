@@ -30,68 +30,68 @@ struct EssayPostingView: View {
         VStack(spacing: 0) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("ФИНАЛЬНЫЙ ШАГ").font(.system(size: 10, weight: .bold)).tracking(2).foregroundStyle(StudioTheme.accent)
-                    Text("Публикация выпуска").font(.system(size: 26, weight: .medium, design: .serif))
+                    Text(L10n.tr("ФИНАЛЬНЫЙ ШАГ")).font(.system(size: 10, weight: .bold)).tracking(2).foregroundStyle(StudioTheme.accent)
+                    Text(L10n.tr("Публикация выпуска")).font(.system(size: 26, weight: .medium, design: .serif))
                     Text(result.metadata.title).font(.system(size: 13)).foregroundStyle(StudioTheme.muted)
                 }
                 Spacer()
-                Button("К шортсам", systemImage: "arrow.left", action: onBack).disabled(busy)
+                Button(L10n.tr("К шортсам"), systemImage: "arrow.left", action: onBack).disabled(busy)
             }.padding(20)
             Divider()
             HStack(spacing: 8) {
-                postingTab("Очередь выпуска", systemImage: "list.number", manual: false)
-                postingTab("TikTok · вручную", systemImage: "music.note", manual: true)
+                postingTab(L10n.tr("Очередь выпуска"), systemImage: "list.number", manual: false)
+                postingTab(L10n.tr("TikTok · вручную"), systemImage: "music.note", manual: true)
                 Spacer()
-                Text(showManualTikTok ? "Тексты и файлы для самостоятельной публикации" : "Статусы, ссылки и проверка площадок")
+                Text(showManualTikTok ? L10n.tr("Тексты и файлы для самостоятельной публикации") : L10n.tr("Статусы, ссылки и проверка площадок"))
                     .font(.caption).foregroundStyle(StudioTheme.muted)
             }.padding(.horizontal, 20).padding(.vertical, 12)
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    if let error { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).textSelection(.enabled) }
+                    if let error { Label(L10n.tr(error), systemImage: "exclamationmark.triangle").foregroundStyle(.orange).textSelection(.enabled) }
                     if showManualTikTok { manualTikTokWorkspace } else {
                     publicationRoadmap
-                    DisclosureGroup("Материалы выпуска и тексты") { releaseOverview }
+                    DisclosureGroup(L10n.tr("Материалы выпуска и тексты")) { releaseOverview }
                     if let address = release?.essayYouTubeURL, let url = URL(string: address) {
-                        Link("Эссе на YouTube · ссылка сохранена", destination: url).foregroundStyle(StudioTheme.accent)
+                        Link(L10n.tr("Эссе на YouTube · ссылка сохранена"), destination: url).foregroundStyle(StudioTheme.accent)
                     }
-                    DisclosureGroup("Начать публикацию заново") {
-                        Text("Если старые публикации удалены: сбросьте локальные статусы и ссылки. Видео, монтаж и субтитры сохранятся; прежние квитанции попадут в publication-history рядом с экспортом.")
+                    DisclosureGroup(L10n.tr("Начать публикацию заново")) {
+                        Text(L10n.tr("Если старые публикации удалены: сбросьте локальные статусы и ссылки. Видео, монтаж и субтитры сохранятся; прежние квитанции попадут в publication-history рядом с экспортом."))
                             .font(.caption).foregroundStyle(StudioTheme.muted)
-                        Button("Сбросить все статусы на «Не опубликовано»") {
+                        Button(L10n.tr("Сбросить все статусы на «Не опубликовано»")) {
                             run {
                                 try await workspace.resetEssayPublicationState()
                                 youtubeURL = ""; recoveredURLs = [:]; journal = []; activeKey = nil; postingStarted = nil; postingFinished = nil
-                                status = "Все статусы сброшены. Можно начать с публикации эссе."
+                                status = L10n.tr("Все статусы сброшены. Можно начать с публикации эссе.")
                             }
                         }.disabled(busy)
                     }
                     connectionsCard
                     if let release {
-                        Toggle("Публиковать шортсы также в TikTok", isOn: Binding(
+                        Toggle(L10n.tr("Публиковать шортсы также в TikTok"), isOn: Binding(
                             get: { workspace.currentEssayRelease?.wantsTikTok ?? true },
                             set: { value in
                                 run {
                                     guard var next = workspace.currentEssayRelease, let id = workspace.currentProject?.id else { return }
                                     next.includeTikTok = value
                                     try await workspace.saveEssayRelease(next, projectID: id)
-                                    status = value ? "TikTok включён в выпуск" : "TikTok отложен. YouTube и Telegram можно опубликовать сейчас."
+                                    status = value ? L10n.tr("TikTok включён в выпуск") : L10n.tr("TikTok отложен. YouTube и Telegram можно опубликовать сейчас.")
                                 }
                             }))
                             .disabled(busy)
                         if !release.wantsTikTok {
-                            Text("TikTok отложен: вход в него не требуется. Позже включите этот переключатель и снова нажмите публикацию — уже отправленные эссе, Telegram-пост и YouTube Shorts пропустятся.")
+                            Text(L10n.tr("TikTok отложен: вход в него не требуется. Позже включите этот переключатель и снова нажмите публикацию — уже отправленные эссе, Telegram-пост и YouTube Shorts пропустятся."))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                    DisclosureGroup("Если эссе уже опубликовано вне этого выпуска") {
+                    DisclosureGroup(L10n.tr("Если эссе уже опубликовано вне этого выпуска")) {
                         HStack {
-                            TextField("Точная ссылка YouTube", text: $youtubeURL).textFieldStyle(.roundedBorder)
-                            Button("Сохранить ссылку") {
+                            TextField(L10n.tr("Точная ссылка YouTube"), text: $youtubeURL).textFieldStyle(.roundedBorder)
+                            Button(L10n.tr("Сохранить ссылку")) {
                                 run {
                                     guard let id = workspace.currentProject?.id else { return }
                                     try await workspace.recordEssayYouTubeURL(youtubeURL, result: result, projectID: id)
-                                    status = "Ссылка эссе сохранена"
+                                    status = L10n.tr("Ссылка эссе сохранена")
                                 }
                             }
                         }.disabled(busy)
@@ -101,29 +101,29 @@ struct EssayPostingView: View {
                             if let receipt = release.receipts[key] {
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text("\(targetTitle(key)): \(receipt.message)").font(.caption).textSelection(.enabled)
-                                    if let link = receipt.url, let url = URL(string: link) { Link("Открыть публикацию", destination: url).foregroundStyle(StudioTheme.accent) }
+                                    if let link = receipt.url, let url = URL(string: link) { Link(L10n.tr("Открыть публикацию"), destination: url).foregroundStyle(StudioTheme.accent) }
                                     if receipt.state == .needsReview {
                                         HStack {
-                                            TextField("Ссылка на уже созданную публикацию", text: Binding(
+                                            TextField(L10n.tr("Ссылка на уже созданную публикацию"), text: Binding(
                                                 get: { recoveredURLs[key] ?? "" }, set: { recoveredURLs[key] = $0 }))
                                                 .textFieldStyle(.roundedBorder)
-                                            Button("Подтвердить адрес") {
+                                            Button(L10n.tr("Подтвердить адрес")) {
                                                 run {
                                                     guard var next = workspace.currentEssayRelease, let id = workspace.currentProject?.id else { return }
                                                     let platform = key.hasPrefix("telegram.") ? "telegram" : (key.hasSuffix(".tiktok") ? "tiktok" : "youtube")
                                                     guard let address = key.hasSuffix(".comment") ? EssayRelease.youtubeCommentURL(recoveredURLs[key] ?? "") : EssayRelease.publicationURL(recoveredURLs[key] ?? "", platform: platform) else {
-                                                        throw EssayReleaseError.invalid("Нужна точная ссылка на опубликованное видео или сообщение.")
+                                                        throw EssayReleaseError.invalid(L10n.tr("Нужна точная ссылка на опубликованное видео или сообщение."))
                                                     }
-                                                    next.receipts[key] = .init(state: .published, url: address, message: "Адрес проверен пользователем")
+                                                    next.receipts[key] = .init(state: .published, url: address, message: L10n.tr("Адрес проверен пользователем"))
                                                     if key == "essay.youtube" { next.essayYouTubeURL = address; youtubeURL = address }
                                                     try await workspace.saveEssayRelease(next, projectID: id)
                                                 }
                                             }
                                         }.disabled(busy)
-                                        Button("Проверил площадку: публикации нет — разрешить повтор") {
+                                        Button(L10n.tr("Проверил площадку: публикации нет — разрешить повтор")) {
                                             run {
                                                 guard var next = workspace.currentEssayRelease, let id = workspace.currentProject?.id else { return }
-                                                next.receipts[key] = .init(state: .failed, message: "Пользователь проверил отсутствие публикации")
+                                                next.receipts[key] = .init(state: .failed, message: L10n.tr("Пользователь проверил отсутствие публикации"))
                                                 try await workspace.saveEssayRelease(next, projectID: id)
                                             }
                                         }.font(.caption).disabled(busy)
@@ -134,10 +134,10 @@ struct EssayPostingView: View {
                         ForEach(release.shorts) { short in
                             if let url = release.receipts["\(short.id).youtube"]?.url {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Text("\(short.id == "short1" ? "Шортс 1" : "Шортс 2"): привязать полное эссе как «Связанное видео» в YouTube Studio").font(.caption.bold())
-                                    Text("Эта настройка требует расширенных функций канала. Приложение не отмечает её выполненной по одному факту загрузки.").font(.caption).foregroundStyle(.secondary)
-                                    if let address = URL(string: url) { Link("Открыть опубликованный Short", destination: address).foregroundStyle(StudioTheme.accent) }
-                                    Toggle("Связанное видео проверено в Studio", isOn: Binding(get: {
+                                    Text(L10n.tr("%1$@: привязать полное эссе как «Связанное видео» в YouTube Studio", String(describing: short.id == "short1" ? L10n.tr("Шортс 1") : L10n.tr("Шортс 2")))).font(.caption.bold())
+                                    Text(L10n.tr("Эта настройка требует расширенных функций канала. Приложение не отмечает её выполненной по одному факту загрузки.")).font(.caption).foregroundStyle(.secondary)
+                                    if let address = URL(string: url) { Link(L10n.tr("Открыть опубликованный Short"), destination: address).foregroundStyle(StudioTheme.accent) }
+                                    Toggle(L10n.tr("Связанное видео проверено в Studio"), isOn: Binding(get: {
                                         workspace.currentEssayRelease?.relatedVideoConfirmed.contains(short.id) == true
                                     }, set: { value in
                                         run {
@@ -150,8 +150,8 @@ struct EssayPostingView: View {
                             }
                         }
                         Divider()
-                        Text("Telegram · посты выпуска").font(.headline)
-                        Text("Обложка выпуска, заголовок, цитатный блок, мысль эссе и кнопка просмотра. Отдельный пост продолжает обсуждение; его можно отправить позже.")
+                        Text(L10n.tr("Telegram · посты выпуска")).font(.headline)
+                        Text(L10n.tr("Обложка выпуска, заголовок, цитатный блок, мысль эссе и кнопка просмотра. Отдельный пост продолжает обсуждение; его можно отправить позже."))
                             .font(.caption).foregroundStyle(.secondary)
                         ForEach([false, true], id: \.self) { discussion in
                             richPostCard(release, discussion: discussion)
@@ -163,20 +163,20 @@ struct EssayPostingView: View {
             }
             Divider()
             if showManualTikTok {
-                Label("Публикуйте ролики самостоятельно. Копирование текстов и открытие файлов ничего не отправляют в TikTok.", systemImage: "hand.raised")
+                Label(L10n.tr("Публикуйте ролики самостоятельно. Копирование текстов и открытие файлов ничего не отправляют в TikTok."), systemImage: "hand.raised")
                     .font(.caption).foregroundStyle(StudioTheme.muted).frame(maxWidth: .infinity, alignment: .leading).padding(18)
             } else {
             HStack(spacing: 14) {
                 if busy { ProgressView().controlSize(.small) }
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(status.isEmpty ? "Все материалы подставляются автоматически" : status).font(.callout).lineLimit(2)
+                    Text(status.isEmpty ? L10n.tr("Все материалы подставляются автоматически") : status).font(.callout).lineLimit(2)
                     Text(release?.wantsTikTok == false
-                         ? "YouTube · Telegram · YouTube Shorts · закреплённые комментарии · TikTok позже"
-                         : "YouTube · Telegram · YouTube Shorts · TikTok · закреплённые комментарии")
+                         ? L10n.tr("YouTube · Telegram · YouTube Shorts · закреплённые комментарии · TikTok позже")
+                         : L10n.tr("YouTube · Telegram · YouTube Shorts · TikTok · закреплённые комментарии"))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button(release?.isPublished == true ? "Выпуск опубликован" : busy ? (workspace.isWorkingOnEssayRelease ? "Идёт публикация…" : "Подождите…") : release?.receipts.isEmpty == false ? "Продолжить публикацию" : "Опубликовать выпуск") { run { try await publishRelease() } }
+                Button(release?.isPublished == true ? L10n.tr("Выпуск опубликован") : busy ? (workspace.isWorkingOnEssayRelease ? L10n.tr("Идёт публикация…") : L10n.tr("Подождите…")) : release?.receipts.isEmpty == false ? L10n.tr("Продолжить публикацию") : L10n.tr("Опубликовать выпуск")) { run { try await publishRelease() } }
                     .buttonStyle(StudioPrimaryButtonStyle())
                     .disabled(busy || release?.hasReadyShorts != true || release?.isPublished == true)
             }.padding(18)
@@ -205,9 +205,9 @@ struct EssayPostingView: View {
     private var manualTikTokWorkspace: some View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("TIKTOK / РУЧНАЯ ПУБЛИКАЦИЯ").font(.system(size: 10, weight: .bold)).tracking(2).foregroundStyle(StudioTheme.accent)
-                Text("Ваши ролики. Готовые тексты.").font(.system(size: 29, weight: .medium, design: .serif))
-                Text("Откройте MP4, загрузите его в TikTok и скопируйте подготовленный текст. Материалы остаются здесь после публикации эссе, YouTube Shorts и Telegram-поста.")
+                Text(L10n.tr("TIKTOK / РУЧНАЯ ПУБЛИКАЦИЯ")).font(.system(size: 10, weight: .bold)).tracking(2).foregroundStyle(StudioTheme.accent)
+                Text(L10n.tr("Ваши ролики. Готовые тексты.")).font(.system(size: 29, weight: .medium, design: .serif))
+                Text(L10n.tr("Откройте MP4, загрузите его в TikTok и скопируйте подготовленный текст. Материалы остаются здесь после публикации эссе, YouTube Shorts и Telegram-поста."))
                     .font(.callout).foregroundStyle(StudioTheme.muted).fixedSize(horizontal: false, vertical: true)
             }
             if let release, !release.shorts.isEmpty {
@@ -215,7 +215,7 @@ struct EssayPostingView: View {
                     manualTikTokCard(short, index: index, release: release)
                 }
             } else {
-                Label("Сначала подготовьте два шортса на шаге «Шортсы».", systemImage: "film.stack")
+                Label(L10n.tr("Сначала подготовьте два шортса на шаге «Шортсы»."), systemImage: "film.stack")
                     .foregroundStyle(StudioTheme.muted).studioPanel()
             }
         }
@@ -233,45 +233,45 @@ struct EssayPostingView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 9))
                 }
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("ШОРТС \(index + 1) / 9:16 / \(Int(short.duration.rounded())) С")
+                    Text(L10n.tr("ШОРТС %1$@ / 9:16 / %2$@ С", String(describing: index + 1), String(describing: Int(short.duration.rounded()))))
                         .font(.system(size: 10, weight: .bold)).tracking(1.5).foregroundStyle(StudioTheme.accent)
                     Text(short.title).font(.system(size: 23, weight: .medium, design: .serif))
                     HStack(spacing: 12) {
                         if let url = short.outputURL {
-                            Button("Видео в Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-                            Button("Открыть MP4", systemImage: "play.rectangle") { NSWorkspace.shared.open(url) }
+                            Button(L10n.tr("Видео в Finder"), systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                            Button(L10n.tr("Открыть MP4"), systemImage: "play.rectangle") { NSWorkspace.shared.open(url) }
                         }
                         if let url = short.coverURL {
-                            Button("Обложка", systemImage: "photo") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                            Button(L10n.tr("Обложка"), systemImage: "photo") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                         }
                     }.font(.caption)
                     Button { copyTikTok(fullText, key: key + ".all") } label: {
-                        Label(copiedTikTokField == key + ".all" ? "Текст скопирован" : "Скопировать весь текст для TikTok",
+                        Label(copiedTikTokField == key + ".all" ? L10n.tr("Текст скопирован") : L10n.tr("Скопировать весь текст для TikTok"),
                               systemImage: copiedTikTokField == key + ".all" ? "checkmark" : "doc.on.doc")
                     }.buttonStyle(StudioPrimaryButtonStyle())
                 }
                 Spacer(minLength: 0)
             }
-            tikTokTextField("Название", value: post.hook, key: key + ".title")
-            tikTokTextField("Описание", value: post.summary, key: key + ".description")
-            tikTokTextField("Хештеги TikTok", value: tags, key: key + ".hashtags")
-            tikTokTextField("Комментарий со ссылкой на полное эссе", value: post.pinnedComment, key: key + ".comment")
+            tikTokTextField(L10n.tr("Название"), value: post.hook, key: key + ".title")
+            tikTokTextField(L10n.tr("Описание"), value: post.summary, key: key + ".description")
+            tikTokTextField(L10n.tr("Хештеги TikTok"), value: tags, key: key + ".hashtags")
+            tikTokTextField(L10n.tr("Комментарий со ссылкой на полное эссе"), value: post.pinnedComment, key: key + ".comment")
             Divider()
             if let address = release.receipts[key]?.url, let url = URL(string: address) {
-                Link("Ролик опубликован в TikTok ↗", destination: url).foregroundStyle(StudioTheme.success)
+                Link(L10n.tr("Ролик опубликован в TikTok ↗"), destination: url).foregroundStyle(StudioTheme.success)
             } else {
-                Text("После ручной публикации можно сохранить ссылку, чтобы она осталась в проекте.")
+                Text(L10n.tr("После ручной публикации можно сохранить ссылку, чтобы она осталась в проекте."))
                     .font(.caption).foregroundStyle(StudioTheme.muted)
                 HStack {
-                    TextField("Ссылка на ваш ролик TikTok", text: Binding(get: { recoveredURLs[key] ?? "" }, set: { recoveredURLs[key] = $0 }))
+                    TextField(L10n.tr("Ссылка на ваш ролик TikTok"), text: Binding(get: { recoveredURLs[key] ?? "" }, set: { recoveredURLs[key] = $0 }))
                         .textFieldStyle(.roundedBorder)
-                    Button("Сохранить ссылку") {
+                    Button(L10n.tr("Сохранить ссылку")) {
                         run {
                             guard let address = EssayRelease.publicationURL(recoveredURLs[key] ?? "", platform: "tiktok") else {
-                                throw EssayReleaseError.invalid("Вставьте ссылку вида https://www.tiktok.com/@аккаунт/video/номер.")
+                                throw EssayReleaseError.invalid(L10n.tr("Вставьте ссылку вида https://www.tiktok.com/@аккаунт/video/номер."))
                             }
                             guard var next = workspace.currentEssayRelease, let id = workspace.currentProject?.id else { return }
-                            next.receipts[key] = .init(state: .published, url: address, message: "Опубликовано вручную в TikTok")
+                            next.receipts[key] = .init(state: .published, url: address, message: L10n.tr("Опубликовано вручную в TikTok"))
                             try await workspace.saveEssayRelease(next, projectID: id)
                         }
                     }.disabled(busy)
@@ -286,9 +286,9 @@ struct EssayPostingView: View {
                 Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(StudioTheme.muted)
                 Spacer()
                 Button { copyTikTok(value, key: key) } label: {
-                    Label(copiedTikTokField == key ? "Скопировано" : "Копировать", systemImage: copiedTikTokField == key ? "checkmark" : "doc.on.doc")
+                    Label(copiedTikTokField == key ? L10n.tr("Скопировано") : L10n.tr("Копировать"), systemImage: copiedTikTokField == key ? "checkmark" : "doc.on.doc")
                 }.buttonStyle(.borderless).foregroundStyle(StudioTheme.accent).font(.caption)
-                    .accessibilityLabel("Копировать TikTok: " + title)
+                    .accessibilityLabel(L10n.tr("Копировать TikTok: ") + title)
             }
             Text(value).font(.system(size: 13)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -333,8 +333,8 @@ struct EssayPostingView: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("ПУЛЬТ ПУБЛИКАЦИИ").font(.system(size: 10, weight: .bold)).tracking(2).foregroundStyle(StudioTheme.accent)
-                        Text(completed == keys.count ? "Выпуск опубликован" : pending.map { (busy ? "Сейчас: " : release?.receipts[$0]?.state == .needsReview ? "Проверьте: " : "Далее: ") + targetTitle($0) } ?? "Очередь выпуска")
+                        Text(L10n.tr("ПУЛЬТ ПУБЛИКАЦИИ")).font(.system(size: 10, weight: .bold)).tracking(2).foregroundStyle(StudioTheme.accent)
+                        Text(completed == keys.count ? L10n.tr("Выпуск опубликован") : pending.map { (busy ? L10n.tr("Сейчас: ") : release?.receipts[$0]?.state == .needsReview ? L10n.tr("Проверьте: ") : L10n.tr("Далее: ")) + targetTitle($0) } ?? L10n.tr("Очередь выпуска"))
                             .font(.system(size: 25, weight: .medium, design: .serif))
                     }
                     Spacer()
@@ -364,7 +364,7 @@ struct EssayPostingView: View {
                         }
                         VStack(alignment: .leading, spacing: 5) {
                             Text(targetTitle(key)).font(.system(size: 14, weight: .semibold))
-                            Text(sending && busy && activeKey == key ? status : done ? "Публикация подтверждена" : review ? "Нужна проверка результата · подробности ниже" : key == pending ? "Следующий шаг" : "В очереди")
+                            Text(sending && busy && activeKey == key ? status : done ? L10n.tr("Публикация подтверждена") : review ? L10n.tr("Нужна проверка результата · подробности ниже") : key == pending ? L10n.tr("Следующий шаг") : L10n.tr("В очереди"))
                                 .font(.caption).foregroundStyle(review ? StudioTheme.warning : StudioTheme.muted).lineLimit(2)
                         }
                         Spacer()
@@ -372,17 +372,17 @@ struct EssayPostingView: View {
                             Text(StudioOperationProgress.clock(context.date.timeIntervalSince(stepStarted))).monospacedDigit().foregroundStyle(StudioTheme.accent)
                         }
                         if let address = receipt?.url, let url = URL(string: address) {
-                            Link(destination: url) { Label("Открыть", systemImage: "arrow.up.right") }.foregroundStyle(StudioTheme.accent)
+                            Link(destination: url) { Label(L10n.tr("Открыть"), systemImage: "arrow.up.right") }.foregroundStyle(StudioTheme.accent)
                         } else { Text(String(format: "%02d", index + 1)).font(.system(.caption, design: .monospaced)).foregroundStyle(StudioTheme.muted) }
                     }
                     .padding(8).background(sending ? StudioTheme.accent.opacity(0.06) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
                 }
-                Text("Приложение проходит очередь сверху вниз. Подтверждённые отправки пропускаются при повторном запуске. Пост для обсуждения отправляется отдельно ниже; связанные видео проверяются вручную в YouTube Studio.")
+                Text(L10n.tr("Приложение проходит очередь сверху вниз. Подтверждённые отправки пропускаются при повторном запуске. Пост для обсуждения отправляется отдельно ниже; связанные видео проверяются вручную в YouTube Studio."))
                     .font(.caption).foregroundStyle(StudioTheme.muted)
                 if busy && (workspace.isWorkingOnEssayRelease || activeKey != nil) {
                     VStack(alignment: .leading, spacing: 8) {
                         Label(status, systemImage: "arrow.triangle.2.circlepath").foregroundStyle(StudioTheme.accent)
-                        Text("Площадка подтверждает результат. Процент загрузки показывается только если его сообщает площадка.")
+                        Text(L10n.tr("Площадка подтверждает результат. Процент загрузки показывается только если его сообщает площадка."))
                             .foregroundStyle(StudioTheme.muted)
                         ForEach(Array(journal.suffix(4).enumerated()), id: \.offset) { _, event in
                             HStack(alignment: .top) {
@@ -405,15 +405,15 @@ struct EssayPostingView: View {
                     .frame(width: 190).clipShape(RoundedRectangle(cornerRadius: 10))
             }
             VStack(alignment: .leading, spacing: 12) {
-                Text("Один проект. Все материалы выпуска.").font(.system(size: 17, weight: .semibold))
+                Text(L10n.tr("Один проект. Все материалы выпуска.")).font(.system(size: 17, weight: .semibold))
                 HStack(spacing: 18) {
-                    Label("Эссе 16:9", systemImage: "checkmark.circle")
-                    Label("Два шортса 9:16", systemImage: release?.hasReadyShorts == true ? "checkmark.circle" : "clock")
-                    Label("Обложки и тексты", systemImage: "photo.on.rectangle")
+                    Label(L10n.tr("Эссе 16:9"), systemImage: "checkmark.circle")
+                    Label(L10n.tr("Два шортса 9:16"), systemImage: release?.hasReadyShorts == true ? "checkmark.circle" : "clock")
+                    Label(L10n.tr("Обложки и тексты"), systemImage: "photo.on.rectangle")
                 }.font(.system(size: 12)).foregroundStyle(StudioTheme.accent)
-                Text("YouTube → Telegram → Shorts. Ссылка на полное эссе добавится в публикации автоматически.")
+                Text(L10n.tr("YouTube → Telegram → Shorts. Ссылка на полное эссе добавится в публикации автоматически."))
                     .font(.system(size: 12)).foregroundStyle(StudioTheme.muted)
-                DisclosureGroup("Текст эссе и закреплённый комментарий") {
+                DisclosureGroup(L10n.tr("Текст эссе и закреплённый комментарий")) {
                     Text(publicationMetadata.description + "\n\n" + publicationMetadata.pinnedComment)
                         .font(.caption).textSelection(.enabled)
                 }.font(.system(size: 12))
@@ -426,7 +426,7 @@ struct EssayPostingView: View {
         @Bindable var settings = settings
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Аккаунты и канал").font(.subheadline.bold())
+                Text(L10n.tr("Аккаунты и канал")).font(.subheadline.bold())
                 Spacer()
                 if let browserAuth {
                     Label("YouTube", systemImage: browserAuth.youtube ? "checkmark.circle.fill" : "exclamationmark.circle")
@@ -438,25 +438,25 @@ struct EssayPostingView: View {
             Text("Telegram: \(settings.telegramChannelId.isEmpty ? "канал не задан" : settings.telegramChannelId) · \(settings.telegramBotToken.trimmed.isEmpty ? "бот не подключён" : "токен сохранён")")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
-                Button("Войти в YouTube / TikTok…") {
+                Button(L10n.tr("Войти в YouTube / TikTok…")) {
                     run {
                         browserAuth = try await BrowserAutomationService.shared.openLoginSession()
-                        connectionMessage = "Сессия сохранена. При входе выберите нужный канал YouTube и аккаунт TikTok."
+                        connectionMessage = L10n.tr("Сессия сохранена. При входе выберите нужный канал YouTube и аккаунт TikTok.")
                     }
                 }
-                Button("Проверить подключения") {
+                Button(L10n.tr("Проверить подключения")) {
                     run {
                         browserAuth = try await BrowserAutomationService.shared.checkAuthStatus()
                         let (_, title) = try await TelegramPublishingService.shared.testConnection(botToken: settings.telegramBotToken, channelId: settings.telegramChannelId)
-                        connectionMessage = "Telegram: \(title). Статус YouTube и TikTok показан выше."
+                        connectionMessage = L10n.tr("Telegram: %1$@. Статус YouTube и TikTok показан выше.", String(describing: title))
                     }
                 }
             }
             if !connectionMessage.isEmpty { Text(connectionMessage).font(.caption).foregroundStyle(.secondary) }
-            DisclosureGroup("Подключить или изменить Telegram") {
-                SecureField("Токен бота Telegram", text: $settings.telegramBotToken).textFieldStyle(.roundedBorder)
-                TextField("Канал Telegram", text: $settings.telegramChannelId).textFieldStyle(.roundedBorder)
-                Text("Настраивается один раз. Бот должен быть администратором канала с правом публикации. Если адрес канала изменён, пересоздайте шортсы: он присутствует в самом видео.")
+            DisclosureGroup(L10n.tr("Подключить или изменить Telegram")) {
+                SecureField(L10n.tr("Токен бота Telegram"), text: $settings.telegramBotToken).textFieldStyle(.roundedBorder)
+                TextField(L10n.tr("Канал Telegram"), text: $settings.telegramChannelId).textFieldStyle(.roundedBorder)
+                Text(L10n.tr("Настраивается один раз. Бот должен быть администратором канала с правом публикации. Если адрес канала изменён, пересоздайте шортсы: он присутствует в самом видео."))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }.disabled(busy).padding(14)
@@ -470,14 +470,14 @@ struct EssayPostingView: View {
             if let cover = result.thumbnailURL, let image = NSImage(contentsOf: cover) {
                 Image(nsImage: image).resizable().aspectRatio(contentMode: .fit).frame(maxHeight: 220).clipShape(RoundedRectangle(cornerRadius: 8))
             }
-            Text(discussion ? "Пост для обсуждения" : "Анонс эссе").font(.caption).foregroundStyle(.secondary)
+            Text(discussion ? L10n.tr("Пост для обсуждения") : L10n.tr("Анонс эссе")).font(.caption).foregroundStyle(.secondary)
             Text(post?.title ?? "«\(result.arc.movieTitle)» — \(discussion ? (release.shorts.last?.angle ?? "продовжуємо розмову") : (result.arc.publicationTitle ?? result.arc.concept.suggestedTitle))").font(.title3.bold())
             Text(post?.quote ?? result.arc.hookText ?? result.arc.concept.tagline).italic().padding(.leading, 12)
             Text(post?.body ?? result.arc.thesis ?? result.arc.concept.philosophicalPremise)
             Text(post?.question ?? release.shorts.last?.question ?? "").bold()
-            if let post, let url = URL(string: post.youtubeURL) { Link("Дивитися повне есе ↗", destination: url).buttonStyle(.borderedProminent).tint(StudioTheme.accent) }
-            else { Text("Кнопка просмотра появится после сохранения ссылки эссе").font(.caption).foregroundStyle(.secondary) }
-            Button(release.receipts[key]?.state == .published ? "Пост опубликован" : "Опубликовать этот RichMessage") {
+            if let post, let url = URL(string: post.youtubeURL) { Link(L10n.tr("Дивитися повне есе ↗"), destination: url).buttonStyle(.borderedProminent).tint(StudioTheme.accent) }
+            else { Text(L10n.tr("Кнопка просмотра появится после сохранения ссылки эссе")).font(.caption).foregroundStyle(.secondary) }
+            Button(release.receipts[key]?.state == .published ? L10n.tr("Пост опубликован") : L10n.tr("Опубликовать этот RichMessage")) {
                 run { try await publishPost(discussion: discussion) }
             }.disabled(busy || post == nil || release.receipts[key]?.state == .published)
         }.padding(18).background(StudioTheme.panel, in: RoundedRectangle(cornerRadius: 12))
@@ -485,12 +485,12 @@ struct EssayPostingView: View {
 
     private func run(_ operation: @escaping @MainActor () async throws -> Void) {
         guard !busy else { return }; busy = true; error = nil
-        OperationJournal.shared.begin("Публикация выпуска")
+        OperationJournal.shared.begin(L10n.tr("Публикация выпуска"))
         Task { @MainActor in
             defer { busy = false }
             do {
                 try await operation()
-                OperationJournal.shared.append(status.isEmpty ? "Действие завершено" : status)
+                OperationJournal.shared.append(status.isEmpty ? L10n.tr("Действие завершено") : status)
             } catch {
                 self.error = error.localizedDescription
                 OperationJournal.shared.append(error.localizedDescription, level: .error)
@@ -500,18 +500,18 @@ struct EssayPostingView: View {
 
     private func targetTitle(_ key: String) -> String {
         if key.hasSuffix(".comment") {
-            return key.hasPrefix("essay.") ? "Эссе · Закреплённый комментарий" : "Шортс \(key.hasPrefix("short1.") ? "1" : "2") · Закреплённый комментарий"
+            return key.hasPrefix("essay.") ? L10n.tr("Эссе · Закреплённый комментарий") : L10n.tr("Шортс %1$@ · Закреплённый комментарий", String(describing: key.hasPrefix("short1.") ? "1" : "2"))
         }
-        if key == "essay.youtube" { return "Эссе · YouTube" }
-        if key == "telegram.announcement" { return "Telegram · Анонс" }
-        if key == "telegram.discussion" { return "Telegram · Обсуждение" }
+        if key == "essay.youtube" { return L10n.tr("Эссе · YouTube") }
+        if key == "telegram.announcement" { return L10n.tr("Telegram · Анонс") }
+        if key == "telegram.discussion" { return L10n.tr("Telegram · Обсуждение") }
         let number = key.hasPrefix("short1.") ? "1" : "2"
-        return "Шортс \(number) · " + (key.hasSuffix(".youtube") ? "YouTube Shorts" : "TikTok")
+        return L10n.tr("Шортс %1$@ · ", String(describing: number)) + (key.hasSuffix(".youtube") ? "YouTube Shorts" : "TikTok")
     }
 
     private func publishRelease() async throws {
         guard let release, let id = workspace.currentProject?.id else { return }
-        postingStarted = Date(); postingFinished = nil; journal = []; recordProgress("Проверяю подключения и готовность материалов")
+        postingStarted = Date(); postingFinished = nil; journal = []; recordProgress(L10n.tr("Проверяю подключения и готовность материалов"))
         workspace.isWorkingOnEssayRelease = true; defer { workspace.isWorkingOnEssayRelease = false; postingFinished = Date() }
         _ = try await EssayReleasePublisher().publish(release, result: result,
             botToken: settings.telegramBotToken, channelId: settings.telegramChannelId,
@@ -519,40 +519,40 @@ struct EssayPostingView: View {
                 let sending = deliveryKeys.first { next.receipts[$0]?.state == .sending }
                 if sending != activeKey {
                     activeKey = sending; stepStarted = Date()
-                    if let sending { recordProgress("Начинаем: " + targetTitle(sending)) }
+                    if let sending { recordProgress(L10n.tr("Начинаем: ") + targetTitle(sending)) }
                 }
                 for key in deliveryKeys where next.receipts[key]?.state == .published && workspace.currentEssayRelease?.receipts[key]?.state != .published {
-                    recordProgress("Подтверждено: " + targetTitle(key))
+                    recordProgress(L10n.tr("Подтверждено: ") + targetTitle(key))
                 }
                 try await workspace.saveEssayRelease(next, projectID: id)
             })
         youtubeURL = workspace.currentEssayRelease?.essayYouTubeURL ?? ""
         status = release.wantsTikTok
-            ? "Отправки завершены. Проверьте привязку связанных видео в YouTube Studio."
-            : "YouTube и Telegram опубликованы, комментарии закреплены. TikTok отложен."
+            ? L10n.tr("Отправки завершены. Проверьте привязку связанных видео в YouTube Studio.")
+            : L10n.tr("YouTube и Telegram опубликованы, комментарии закреплены. TikTok отложен.")
     }
 
     private func publishPost(discussion: Bool) async throws {
         guard !settings.telegramBotToken.trimmed.isEmpty, !settings.telegramChannelId.trimmed.isEmpty else {
-            throw EssayReleaseError.invalid("Укажите токен Telegram и канал в Настройках.")
+            throw EssayReleaseError.invalid(L10n.tr("Укажите токен Telegram и канал в Настройках."))
         }
         guard var next = workspace.currentEssayRelease, let id = workspace.currentProject?.id else { return }
         let key = discussion ? "telegram.discussion" : "telegram.announcement"
         postingStarted = Date(); postingFinished = nil; stepStarted = Date(); activeKey = key; journal = []
         defer { activeKey = nil; postingFinished = Date() }
-        recordProgress("Проверяю обложку, текст и кнопку просмотра для Telegram")
+        recordProgress(L10n.tr("Проверяю обложку, текст и кнопку просмотра для Telegram"))
         try EssayReleasePublisher.requireRetryAllowed(next.receipts[key])
         let post = try EssayRichPost.make(result: result, release: next, discussion: discussion)
-        next.receipts[key] = .init(state: .sending, message: "Отправка RichMessage")
+        next.receipts[key] = .init(state: .sending, message: L10n.tr("Отправка RichMessage"))
         try await workspace.saveEssayRelease(next, projectID: id)
         do {
-            recordProgress("Отправляю обложку и RichMessage в Telegram…")
+            recordProgress(L10n.tr("Отправляю обложку и RichMessage в Telegram…"))
             let messageID = try await TelegramPublishingService.shared.publishRichPost(post, botToken: settings.telegramBotToken, channelId: settings.telegramChannelId)
-            next.receipts[key] = .init(state: .published, url: telegramURL.map { $0 + "/\(messageID)" }, message: "Сообщение #\(messageID)")
+            next.receipts[key] = .init(state: .published, url: telegramURL.map { $0 + "/\(messageID)" }, message: L10n.tr("Сообщение #%1$@", String(describing: messageID)))
             try await workspace.saveEssayRelease(next, projectID: id)
-            recordProgress("Telegram подтвердил публикацию · сообщение #\(messageID)")
+            recordProgress(L10n.tr("Telegram подтвердил публикацию · сообщение #%1$@", String(describing: messageID)))
         } catch {
-            let message = error.localizedDescription.replacingOccurrences(of: settings.telegramBotToken, with: "[скрыто]")
+            let message = error.localizedDescription.replacingOccurrences(of: settings.telegramBotToken, with: L10n.tr("[скрыто]"))
             next.receipts[key] = .init(state: .needsReview, message: message)
             try await workspace.saveEssayRelease(next, projectID: id); throw EssayReleaseError.invalid(message)
         }

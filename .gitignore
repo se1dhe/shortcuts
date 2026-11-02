@@ -80,3 +80,6 @@ tmp/
 
 # User-managed soundtrack library
 Music/
+
+# Python tooling cache
+__pycache__/

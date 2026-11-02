@@ -25,7 +25,7 @@ struct AudioTrackSelectionSheet: View {
                         .foregroundStyle(StudioTheme.accent)
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Выбор аудиодорожки озвучки")
+                        Text(L10n.tr("Выбор аудиодорожки озвучки"))
                             .font(.title3.weight(.bold))
                         Text(pending.videoURL.lastPathComponent)
                             .font(.subheadline)
@@ -44,7 +44,7 @@ struct AudioTrackSelectionSheet: View {
 
                 // Description
                 HStack {
-                    Text("В фильме обнаружено \(pending.tracks.count) аудиодорожки. Выберите дорожку с нужной озвучкой (дубляж, закадровый перевод или оригинал) для транскрибации и монтажа:")
+                    Text(L10n.tr("В фильме обнаружено %1$@ аудиодорожки. Выберите дорожку с нужной озвучкой (дубляж, закадровый перевод или оригинал) для транскрибации и монтажа:", String(describing: pending.tracks.count)))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -67,7 +67,7 @@ struct AudioTrackSelectionSheet: View {
 
                 // Actions Footer
                 HStack {
-                    Button("Отмена") {
+                    Button(L10n.tr("Отмена")) {
                         workspace.cancelAudioTrackSelection()
                         dismiss()
                     }
@@ -87,7 +87,7 @@ struct AudioTrackSelectionSheet: View {
                             )
                         }
                     } label: {
-                        Text("Начать обработку")
+                        Text(L10n.tr("Начать обработку"))
                             .frame(minWidth: 130)
                     }
                     .keyboardShortcut(.defaultAction)
@@ -119,12 +119,12 @@ struct AudioTrackSelectionSheet: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
-                        Text(track.displayName)
+                        Text(track.interfaceDisplayName)
                             .font(.body.weight(isSelected ? .semibold : .regular))
                             .foregroundStyle(.primary)
 
                         if track.isRussianVoiceover {
-                            Text("Рекомендуется")
+                            Text(L10n.tr("Рекомендуется"))
                                 .font(.caption2.weight(.bold))
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
@@ -140,7 +140,7 @@ struct AudioTrackSelectionSheet: View {
                             badge(text: track.channels == 6 ? "5.1 Surround" : (track.channels == 2 ? "2.0 Stereo" : "\(track.channels) ch"))
                         }
                         if track.isDefault {
-                            badge(text: "По умолчанию")
+                            badge(text: L10n.tr("По умолчанию"))
                         }
                         if track.isForced {
                             badge(text: "Forced")
@@ -171,5 +171,24 @@ struct AudioTrackSelectionSheet: View {
             .background(Color.secondary.opacity(0.12))
             .foregroundStyle(.secondary)
             .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+}
+
+extension AudioTrackInfo {
+    /// Localize track controls, preserving the file's own metadata title.
+    @MainActor var interfaceDisplayName: String {
+        let locale = InterfaceLocalization.shared.language.locale
+        let code = language?.lowercased() ?? ""
+        let codes = ["rus": "ru", "eng": "en", "ukr": "uk", "fra": "fr", "fre": "fr", "deu": "de", "ger": "de", "ita": "it", "spa": "es", "jpn": "ja", "kor": "ko", "zho": "zh", "chi": "zh", "kaz": "kk"]
+        var parts: [String] = []
+        if !code.isEmpty {
+            parts.append(locale.localizedString(forLanguageCode: codes[code] ?? code) ?? code)
+        }
+        if let title, !title.isEmpty { parts.append("(\(title))") }
+        if parts.isEmpty { parts.append(L10n.tr("Дорожка №%1$@", String(audioIndex + 1))) }
+        var detail = [codec.uppercased()]
+        if channels > 0 { detail.append(channels == 1 ? "Mono" : channels == 2 ? "2.0 Stereo" : channels == 6 ? "5.1 Surround" : "\(channels) ch") }
+        if isDefault { detail.append(L10n.tr("По умолчанию")) }
+        return parts.joined(separator: " ") + " · " + detail.filter { !$0.isEmpty }.joined(separator: ", ")
     }
 }

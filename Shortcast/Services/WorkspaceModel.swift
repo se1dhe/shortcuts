@@ -216,6 +216,28 @@ final class WorkspaceModel {
 
     // MARK: - Entry
 
+    /// Display the saved release when its large source file has been removed.
+    /// This path never starts inference, imports a replacement source, or saves
+    /// a modified archive. Rendering still requires the original media.
+    @discardableResult
+    func reviewSavedEssay(_ project: FilmProject) -> Bool {
+        guard !isBusy, let result = project.longformResult else { return false }
+        clearFilmAnalysisState()
+        currentProject = project
+        storedTranscript = project.transcript
+        thematicAnalysis = project.thematicAnalysis
+        selectedConcept = project.selectedConcept ?? result.arc.concept
+        detectedMovie = project.tmdbMetadata
+        longformResult = result
+        stagedArc = project.pendingLongformArc
+        stagedAudioSettings = result.audioSettings
+        job = VideoJob(url: project.sourceMovieURL, durationSeconds: project.durationSeconds,
+                       sourceMetadata: VideoSourceMetadata(title: project.movieTitle))
+        errorMessage = nil
+        phase = .longformResults
+        return true
+    }
+
     /// Entry point when a file is imported or dropped.
     /// Immediately copies the file into the working directory (while security-scoped access is active),
     /// then inspects audio tracks: if there are multiple tracks, prompts the user via sheet.

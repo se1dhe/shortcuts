@@ -50,25 +50,25 @@ struct ContentView: View {
                 .frame(width: 42, height: 42)
                 .background(StudioTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
             VStack(alignment: .leading, spacing: 3) {
-                Text("КАДР & СЕНС").font(.system(size: 12, weight: .bold)).tracking(2.4)
-                Text("Монтажная выпуска").font(.system(size: 12)).foregroundStyle(StudioTheme.muted)
+                Text(L10n.tr("КАДР & СЕНС")).font(.system(size: 12, weight: .bold)).tracking(2.4)
+                Text(L10n.tr("Монтажная выпуска")).font(.system(size: 12)).foregroundStyle(StudioTheme.muted)
             }
             Rectangle().fill(StudioTheme.line).frame(width: 1, height: 30).padding(.horizontal, 10)
-            Text(workspace.detectedMovie?.title ?? workspace.currentProject?.movieTitle ?? "Новый проект")
+            Text(workspace.detectedMovie?.title ?? workspace.currentProject?.movieTitle ?? L10n.tr("Новый проект"))
                 .font(.system(size: 14, weight: .medium)).lineLimit(1)
             if workspace.currentProject != nil {
-                Label("Локальный проект", systemImage: "checkmark.icloud")
+                Label(L10n.tr("Локальный проект"), systemImage: "checkmark.icloud")
                     .font(.system(size: 11)).foregroundStyle(StudioTheme.muted)
             }
             Spacer()
             if workspace.job != nil {
-                Button("Новый фильм", systemImage: "plus") {
+                Button(L10n.tr("Новый фильм"), systemImage: "plus") {
                     workspace.startOver(); selectedStage = .film
                 }.buttonStyle(.bordered).disabled(workspace.isBusy)
             }
             Button { showSettings = true } label: {
                 Image(systemName: "slider.horizontal.3").font(.system(size: 16)).frame(width: 30, height: 30)
-            }.buttonStyle(.plain).help("Настройки студии").disabled(workspace.isBusy)
+            }.buttonStyle(.plain).help(L10n.tr("Настройки студии")).disabled(workspace.isBusy)
         }.padding(.horizontal, 28).padding(.vertical, 18)
     }
 
@@ -105,7 +105,7 @@ struct ContentView: View {
                 }.buttonStyle(.plain)
                     .disabled(!available(stage) || workspace.isBusy)
                     .opacity(available(stage) ? 1 : 0.85)
-                    .help(available(stage) ? stage.detail : "Сначала завершите предыдущий шаг")
+                    .help(available(stage) ? stage.detail : L10n.tr("Сначала завершите предыдущий шаг"))
             }
         }.padding(.horizontal, 28).padding(.bottom, 22)
     }
@@ -168,14 +168,14 @@ struct ContentView: View {
             FilmAnalysisProgressView()
         case .selectingLongformConcept:
             ThematicConceptSelectionSheet(
-                movieTitle: workspace.detectedMovie?.title ?? workspace.job?.effectiveTitle ?? "Фильм",
+                movieTitle: workspace.detectedMovie?.title ?? workspace.job?.effectiveTitle ?? L10n.tr("Фильм"),
                 concepts: workspace.discoveredConcepts,
                 aiReasoning: workspace.thematicReasoning,
                 source: workspace.thematicAnalysis?.source ?? .unknown,
                 isRegenerating: workspace.isRegeneratingConcepts,
                 essayPlan: workspace.thematicAnalysis?.essayPlan,
                 planningError: workspace.errorMessage,
-                cancelTitle: workspace.longformResult == nil ? "Отмена" : "Открыть готовое эссе",
+                cancelTitle: workspace.longformResult == nil ? L10n.tr("Отмена") : L10n.tr("Открыть готовое эссе"),
                 onSelect: { concept, confirmedTitle, audioSettings, essayPlan in
                     workspace.confirmLongformConcept(
                         concept,
@@ -206,7 +206,7 @@ struct ContentView: View {
                 LongformSubtitleEditorView(
                     arc: stagedArc,
                     concept: stagedConcept,
-                    movieTitle: workspace.stagedConfirmedMovieTitle ?? workspace.detectedMovie?.title ?? "Фильм",
+                    movieTitle: workspace.stagedConfirmedMovieTitle ?? workspace.detectedMovie?.title ?? L10n.tr("Фильм"),
                     allSegments: transcript.segments,
                     correctionFilmKey: workspace.subtitleCorrectionFilmKey,
                     correctionLanguage: workspace.subtitleCorrectionLanguage,
@@ -214,7 +214,7 @@ struct ContentView: View {
                     onAutoCorrect: { input, progress in
                         try await workspace.correctLongformSubtitleDraft(
                             input,
-                            movieTitle: workspace.detectedMovie?.title ?? workspace.job?.effectiveTitle ?? "Фильм",
+                            movieTitle: workspace.detectedMovie?.title ?? workspace.job?.effectiveTitle ?? L10n.tr("Фильм"),
                             language: workspace.subtitleCorrectionLanguage,
                             modelManager: modelManager,
                             settings: settings,
@@ -234,9 +234,9 @@ struct ContentView: View {
                 )
             } else {
                 VStack(spacing: 12) {
-                    Text("Данные субтитров не найдены")
+                    Text(L10n.tr("Данные субтитров не найдены"))
                         .font(.headline)
-                    Button("Назад") {
+                    Button(L10n.tr("Назад")) {
                         workspace.returnToConceptSelection()
                     }
                 }
@@ -250,7 +250,7 @@ struct ContentView: View {
                 .progressViewStyle(.linear)
                 .frame(maxWidth: 480)
 
-                Text("Монтаж кино-эссе · 16:9")
+                Text(L10n.tr("Монтаж кино-эссе · 16:9"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -259,7 +259,7 @@ struct ContentView: View {
             if let result = workspace.longformResult {
                 LongformResultsView(
                     result: result,
-                    movieTitle: workspace.detectedMovie?.title ?? workspace.job?.effectiveTitle ?? "Фильм",
+                    movieTitle: workspace.detectedMovie?.title ?? workspace.job?.effectiveTitle ?? L10n.tr("Фильм"),
                     onChooseAnotherTheme: {
                         workspace.chooseAnotherConcept()
                     },
@@ -268,7 +268,7 @@ struct ContentView: View {
 
                 )
             } else {
-                Text("Ролик не найден")
+                Text(L10n.tr("Ролик не найден"))
             }
         }
     }
@@ -300,16 +300,16 @@ private struct FirstLaunchSheet: View {
                 .font(.system(size: 52))
                 .foregroundStyle(.tint)
 
-            Text("Добро пожаловать в КАДР & СЕНС")
+            Text(L10n.tr("Добро пожаловать в КАДР & СЕНС"))
                 .font(.title2.weight(.bold))
 
-            Text("Выберите рабочую папку. Все загруженные видео, обработанные клипы и кэш будут храниться здесь.\n\nПапка должна находиться на вашем Mac — не на внешнем или сетевом диске.")
+            Text(L10n.tr("Выберите рабочую папку. Все загруженные видео, обработанные клипы и кэш будут храниться здесь.\n\nПапка должна находиться на вашем Mac — не на внешнем или сетевом диске."))
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)
 
-            Button("Выбрать рабочую папку…") {
+            Button(L10n.tr("Выбрать рабочую папку…")) {
                 selectFolder()
             }
             .buttonStyle(.borderedProminent)
@@ -335,7 +335,7 @@ private struct FirstLaunchSheet: View {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
-        panel.message = "Выберите рабочую папку для КАДР & СЕНС"
+        panel.message = L10n.tr("Выберите рабочую папку для КАДР & СЕНС")
         panel.begin { response in
             if response == .OK, let url = panel.url {
                 settings.workingDirectory = url

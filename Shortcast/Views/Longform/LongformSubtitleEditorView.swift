@@ -109,8 +109,8 @@ struct LongformSubtitleEditorView: View {
         correctionFilmKey: String? = nil,
         correctionLanguage: String = "uk",
         sourceURL: URL? = nil,
-        confirmButtonTitle: String = "Перерендерить кино-эссе",
-        backButtonTitle: String = "Отмена",
+        confirmButtonTitle: String = L10n.tr("Перерендерить кино-эссе"),
+        backButtonTitle: String = L10n.tr("Отмена"),
         onAutoCorrect: @escaping ([LongformSubtitleCorrectionInput], @Sendable (String) -> Void) async throws -> LongformSubtitleCorrectionOutcome,
         onConfirm: @escaping ([TranscriptSegment]) -> Void,
         onBack: @escaping () -> Void
@@ -157,9 +157,9 @@ struct LongformSubtitleEditorView: View {
             headerBar
 
             HStack {
-                Text("Память правок: \(correctionMemory.examples.filter { $0.original != $0.replacement }.count) • применено к этому эссе: \(rememberedCount)")
+                Text(L10n.tr("Память правок: %1$@ • применено к этому эссе: %2$@", String(describing: correctionMemory.examples.filter { $0.original != $0.replacement }.count), String(describing: rememberedCount)))
                 Spacer()
-                Text("Подтверждённые правки запоминаются при пересборке")
+                Text(L10n.tr("Подтверждённые правки запоминаются при пересборке"))
             }
             .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 18).padding(.bottom, 8)
             if let memoryWarning {
@@ -199,14 +199,14 @@ struct LongformSubtitleEditorView: View {
             if let sourceURL { sourcePlayer = MontageVideoPreviewPlayer.makeVideoOnlyPlayer(url: sourceURL) }
         }
         .onDisappear { correctionTask?.cancel(); stopPlayback?.cancel(); previewAudio.stop(); sourcePlayer?.pause() }
-        .alert("Не удалось сохранить память правок", isPresented: Binding(
+        .alert(L10n.tr("Не удалось сохранить память правок"), isPresented: Binding(
             get: { pendingWithoutMemory != nil }, set: { if !$0 { pendingWithoutMemory = nil } })) {
-                Button("Продолжить без памяти") {
+                Button(L10n.tr("Продолжить без памяти")) {
                     if let updated = pendingWithoutMemory { onConfirm(updated) }
                     pendingWithoutMemory = nil
                 }
-                Button("Назад", role: .cancel) { pendingWithoutMemory = nil }
-            } message: { Text(memoryWarning ?? "Правки останутся в проекте, но не попадут в общую память.") }
+                Button(L10n.tr("Назад"), role: .cancel) { pendingWithoutMemory = nil }
+            } message: { Text(memoryWarning ?? L10n.tr("Правки останутся в проекте, но не попадут в общую память.")) }
         .task(id: selectedPhrase?.id) {
             sourceStill = nil
             guard let sourceURL, let phrase = selectedPhrase else { return }
@@ -238,7 +238,7 @@ struct LongformSubtitleEditorView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
-                    Text("Редактор субтитров")
+                    Text(L10n.tr("Редактор субтитров"))
                         .font(.headline)
 
                     Text("«\(concept.word.uppercased())»")
@@ -249,7 +249,7 @@ struct LongformSubtitleEditorView: View {
                         .foregroundStyle(StudioTheme.accent)
 
                     if editedCount > 0 {
-                        Text("Изменено: \(editedCount)")
+                        Text(L10n.tr("Изменено: %1$@", String(describing: editedCount)))
                             .font(.caption2.bold())
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
@@ -258,7 +258,7 @@ struct LongformSubtitleEditorView: View {
                     }
                 }
 
-                Text("Фильм «\(movieTitle)» • Исправьте текст субтитров и нажмите «\(confirmButtonTitle)»")
+                Text(L10n.tr("Фильм «%1$@» • Исправьте текст субтитров и нажмите «%2$@»", String(describing: movieTitle), String(describing: confirmButtonTitle)))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -291,12 +291,12 @@ struct LongformSubtitleEditorView: View {
         HStack(spacing: 12) {
             // Вкладки актов
             HStack(spacing: 6) {
-                actFilterButton(title: "Все акты (\(phrases.count))", actIndex: nil)
+                actFilterButton(title: L10n.tr("Все акты (%1$@)", String(describing: phrases.count)), actIndex: nil)
 
                 ForEach(Array(arc.acts.enumerated()), id: \.offset) { idx, _ in
                     let count = phrases.filter { $0.actIndex == idx }.count
                     actFilterButton(
-                        title: "Акт \(Self.romanNumeral(idx + 1)) (\(count))",
+                        title: L10n.tr("Акт %1$@ (%2$@)", String(describing: Self.romanNumeral(idx + 1)), String(describing: count)),
                         actIndex: idx
                     )
                 }
@@ -306,18 +306,18 @@ struct LongformSubtitleEditorView: View {
 
             // Быстрые инструменты редактирования
             Menu {
-                Button("Сделать заглавной первую букву в каждой фразе") {
+                Button(L10n.tr("Сделать заглавной первую букву в каждой фразе")) {
                     capitalizeFirstLetters()
                 }
-                Button("Удалить лишние пробелы") {
+                Button(L10n.tr("Удалить лишние пробелы")) {
                     trimWhitespaceInAll()
                 }
                 Divider()
-                Button("Сбросить все правки к оригиналу Whisper", role: .destructive) {
+                Button(L10n.tr("Сбросить все правки к оригиналу Whisper"), role: .destructive) {
                     resetAllToOriginal()
                 }
             } label: {
-                Label("Текстовые инструменты", systemImage: "textformat")
+                Label(L10n.tr("Текстовые инструменты"), systemImage: "textformat")
             }
             .menuStyle(.borderedButton)
             .controlSize(.small)
@@ -325,7 +325,7 @@ struct LongformSubtitleEditorView: View {
             Button {
                 runModelSubtitleCorrection()
             } label: {
-                Label(isModelCorrecting ? "Модель проверяет…" : "Исправить моделью",
+                Label(isModelCorrecting ? L10n.tr("Модель проверяет…") : L10n.tr("Исправить моделью"),
                       systemImage: isModelCorrecting ? "hourglass" : "sparkles")
             }
             .buttonStyle(.borderedProminent)
@@ -338,7 +338,7 @@ struct LongformSubtitleEditorView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
                     .font(.caption)
-                TextField("Поиск фразы…", text: $searchText)
+                TextField(L10n.tr("Поиск фразы…"), text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.caption)
                 if !searchText.isEmpty {
@@ -372,26 +372,26 @@ struct LongformSubtitleEditorView: View {
                 if isModelCorrecting { ProgressView().controlSize(.small) }
                 else { Image(systemName: modelCorrectionStatusIsError ? "exclamationmark.circle" : "sparkles").foregroundStyle(StudioTheme.accent) }
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(isModelCorrecting ? "Проверка субтитров" : "Редакторская проверка")
+                    Text(isModelCorrecting ? L10n.tr("Проверка субтитров") : L10n.tr("Редакторская проверка"))
                         .font(.system(size: 12, weight: .bold))
-                    Text(isModelCorrecting ? modelCorrectionProgress : (modelCorrectionStatus ?? "Выберите предложение для сравнения с исходной репликой."))
+                    Text(isModelCorrecting ? modelCorrectionProgress : (modelCorrectionStatus ?? L10n.tr("Выберите предложение для сравнения с исходной репликой.")))
                         .font(.caption).foregroundStyle(modelCorrectionStatusIsError ? StudioTheme.warning : StudioTheme.muted)
                         .lineLimit(2)
                 }
                 Spacer(minLength: 12)
                 if isModelCorrecting {
-                    Button("Остановить", systemImage: "stop.fill") { correctionTask?.cancel() }
+                    Button(L10n.tr("Остановить"), systemImage: "stop.fill") { correctionTask?.cancel() }
                         .buttonStyle(.bordered).fixedSize()
                 }
                 if !modelCorrectionSuggestions.isEmpty {
-                    Button(reviewingSuggestions ? "К субтитрам" : "Проверить предложения (\(modelCorrectionSuggestions.count))") {
+                    Button(reviewingSuggestions ? L10n.tr("К субтитрам") : L10n.tr("Проверить предложения (%1$@)", String(describing: modelCorrectionSuggestions.count))) {
                         reviewingSuggestions.toggle()
                     }.buttonStyle(.bordered).fixedSize()
                 }
                 if !modelCorrectionEvents.isEmpty {
                     Button { showModelEvents.toggle() } label: {
                         Image(systemName: "list.bullet.rectangle").frame(width: 24, height: 24)
-                    }.buttonStyle(.plain).help("Журнал проверки")
+                    }.buttonStyle(.plain).help(L10n.tr("Журнал проверки"))
                 }
             }
             if showModelEvents {
@@ -413,7 +413,7 @@ struct LongformSubtitleEditorView: View {
             HSplitView {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack {
-                        Text("ПРЕДЛОЖЕНИЯ").font(.system(size: 10, weight: .bold)).tracking(1.4)
+                        Text(L10n.tr("ПРЕДЛОЖЕНИЯ")).font(.system(size: 10, weight: .bold)).tracking(1.4)
                         Spacer()
                         Text("\(modelCorrectionSuggestions.count)").font(.caption.monospaced()).foregroundStyle(StudioTheme.accent)
                     }.padding(16)
@@ -429,7 +429,7 @@ struct LongformSubtitleEditorView: View {
                                         } label: {
                                             VStack(alignment: .leading, spacing: 7) {
                                                 HStack {
-                                                    Text("АКТ \(Self.romanNumeral(phrase.actIndex + 1))").font(.system(size: 9, weight: .bold)).tracking(1)
+                                                    Text(L10n.tr("АКТ %1$@", String(describing: Self.romanNumeral(phrase.actIndex + 1)))).font(.system(size: 9, weight: .bold)).tracking(1)
                                                     Spacer()
                                                     Text(phrase.timecodeDisplay).font(.system(size: 10, design: .monospaced))
                                                 }.foregroundStyle(StudioTheme.muted)
@@ -458,14 +458,14 @@ struct LongformSubtitleEditorView: View {
             }
             Divider()
             HStack(spacing: 12) {
-                Label("Правки применяются к тексту. Видео обновится после пересборки.", systemImage: "info.circle")
+                Label(L10n.tr("Правки применяются к тексту. Видео обновится после пересборки."), systemImage: "info.circle")
                     .font(.caption).foregroundStyle(StudioTheme.muted)
                 Spacer(minLength: 10)
-                Button("Отклонить оставшиеся") {
+                Button(L10n.tr("Отклонить оставшиеся")) {
                     modelCorrectionSuggestions = []
-                    modelCorrectionStatus = "Оставшиеся предложения отклонены."
+                    modelCorrectionStatus = L10n.tr("Оставшиеся предложения отклонены.")
                 }.buttonStyle(.bordered).fixedSize()
-                Button("Применить оставшиеся (\(modelCorrectionSuggestions.count))") { applyAllModelSuggestions() }
+                Button(L10n.tr("Применить оставшиеся (%1$@)", String(describing: modelCorrectionSuggestions.count))) { applyAllModelSuggestions() }
                     .buttonStyle(.bordered).fixedSize()
             }.padding(14).background(StudioTheme.panel)
         }
@@ -477,7 +477,7 @@ struct LongformSubtitleEditorView: View {
         return VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("АКТ \(Self.romanNumeral(phrase.actIndex + 1)) · \(phrase.actType.displayName)")
+                    Text(L10n.tr("АКТ %1$@ · %2$@", String(describing: Self.romanNumeral(phrase.actIndex + 1)), String(describing: L10n.tr(phrase.actType.displayName))))
                         .font(.system(size: 10, weight: .bold)).tracking(0.8).foregroundStyle(StudioTheme.accent)
                     Text(phrase.timecodeDisplay).font(.system(size: 14, weight: .semibold, design: .monospaced))
                 }
@@ -488,39 +488,39 @@ struct LongformSubtitleEditorView: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text("Сравните реплики перед применением")
+                    Text(L10n.tr("Сравните реплики перед применением"))
                         .font(.system(size: 21, weight: .semibold))
-                    comparisonText("СЕЙЧАС В СУБТИТРАХ", text: phrase.text, proposed: false)
-                    comparisonText("ПРЕДЛОЖЕНИЕ МОДЕЛИ", text: suggestion.replacement, proposed: true)
+                    comparisonText(L10n.tr("СЕЙЧАС В СУБТИТРАХ"), text: phrase.text, proposed: false)
+                    comparisonText(L10n.tr("ПРЕДЛОЖЕНИЕ МОДЕЛИ"), text: suggestion.replacement, proposed: true)
                     Label(suggestion.reason, systemImage: "sparkles")
                         .font(.callout).foregroundStyle(StudioTheme.muted).fixedSize(horizontal: false, vertical: true)
                     Divider()
-                    Text("КОНТЕКСТ ИЗ ТРАНСКРИПЦИИ").font(.system(size: 10, weight: .bold)).tracking(1.2).foregroundStyle(StudioTheme.muted)
-                    if index > 0 { contextPhrase("До", phrase: phrases[index - 1]) }
-                    contextPhrase("Реплика", phrase: phrase)
-                    if index + 1 < phrases.count { contextPhrase("После", phrase: phrases[index + 1]) }
-                    Button("Прослушать исходную реплику", systemImage: "speaker.wave.2") {
+                    Text(L10n.tr("КОНТЕКСТ ИЗ ТРАНСКРИПЦИИ")).font(.system(size: 10, weight: .bold)).tracking(1.2).foregroundStyle(StudioTheme.muted)
+                    if index > 0 { contextPhrase(L10n.tr("До"), phrase: phrases[index - 1]) }
+                    contextPhrase(L10n.tr("Реплика"), phrase: phrase)
+                    if index + 1 < phrases.count { contextPhrase(L10n.tr("После"), phrase: phrases[index + 1]) }
+                    Button(L10n.tr("Прослушать исходную реплику"), systemImage: "speaker.wave.2") {
                         selectedPhraseId = phrase.id
                         playSourcePhrase(phrase)
                     }.buttonStyle(.bordered).disabled(sourceURL == nil)
                     if phrase.text != suggestion.original {
-                        Label("Текст уже изменён вручную. Это предложение устарело.", systemImage: "exclamationmark.triangle")
+                        Label(L10n.tr("Текст уже изменён вручную. Это предложение устарело."), systemImage: "exclamationmark.triangle")
                             .font(.caption).foregroundStyle(StudioTheme.warning)
                     }
                 }.padding(22).frame(maxWidth: .infinity, alignment: .leading)
             }
             Divider()
             HStack(spacing: 12) {
-                Button("Показать в редакторе", systemImage: "text.cursor") {
+                Button(L10n.tr("Показать в редакторе"), systemImage: "text.cursor") {
                     selectedPhraseId = phrase.id
                     selectedActFilter = phrase.actIndex
                     searchText = ""
                     reviewingSuggestions = false
                 }.buttonStyle(.bordered)
                 Spacer()
-                Button("Отклонить") { dismissModelSuggestion(suggestion.id) }
+                Button(L10n.tr("Отклонить")) { dismissModelSuggestion(suggestion.id) }
                     .buttonStyle(.bordered)
-                Button("Применить и далее", systemImage: "checkmark") { applyModelSuggestion(suggestion) }
+                Button(L10n.tr("Применить и далее"), systemImage: "checkmark") { applyModelSuggestion(suggestion) }
                     .buttonStyle(.borderedProminent).tint(StudioTheme.accent)
                     .disabled(phrase.text != suggestion.original)
             }.fixedSize(horizontal: false, vertical: true).padding(18).background(StudioTheme.panel)
@@ -574,7 +574,7 @@ struct LongformSubtitleEditorView: View {
                                 Image(systemName: "text.magnifyingglass")
                                     .font(.title)
                                     .foregroundStyle(.secondary)
-                                Text("Фразы не найдены")
+                                Text(L10n.tr("Фразы не найдены"))
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                             }
@@ -621,7 +621,7 @@ struct LongformSubtitleEditorView: View {
                 Spacer()
 
                 if phrase.isEdited {
-                    Label("Изменено", systemImage: "checkmark.circle.fill")
+                    Label(L10n.tr("Изменено"), systemImage: "checkmark.circle.fill")
                         .font(.caption2)
                         .foregroundStyle(.green)
 
@@ -632,7 +632,7 @@ struct LongformSubtitleEditorView: View {
                             .font(.caption2)
                     }
                     .buttonStyle(.plain)
-                    .help("Вернуть исходный текст Whisper")
+                    .help(L10n.tr("Вернуть исходный текст Whisper"))
                 }
             }
 
@@ -641,23 +641,23 @@ struct LongformSubtitleEditorView: View {
                     selectedPhraseId = phrase.id
                     runModelSubtitleCorrection(phraseID: phrase.id)
                 } label: {
-                    Label(correctingPhraseID == phrase.id ? "Проверяю эту фразу…" : "Исправить моделью",
+                    Label(correctingPhraseID == phrase.id ? L10n.tr("Проверяю эту фразу…") : L10n.tr("Исправить моделью"),
                           systemImage: correctingPhraseID == phrase.id ? "hourglass" : "sparkles")
                 }
                 .buttonStyle(.bordered).controlSize(.small)
                 .disabled(isModelCorrecting)
-                .help("Проверить только эту реплику с контекстом соседних. Предложение появится для подтверждения.")
+                .help(L10n.tr("Проверить только эту реплику с контекстом соседних. Предложение появится для подтверждения."))
                 Spacer()
             }
 
             // Поле редактирования
             let suspicious = UkrainianTextReview.suspiciousWords(in: phrase.text)
             if !suspicious.isEmpty {
-                Text("Сверьте с дубляжом: " + suspicious.joined(separator: ", "))
+                Text(L10n.tr("Сверьте с дубляжом: ") + suspicious.joined(separator: ", "))
                     .font(.caption2).foregroundStyle(.orange)
             }
             if let idx = phrases.firstIndex(where: { $0.id == phrase.id }) {
-                TextField("Реплика", text: $phrases[idx].text, axis: .vertical)
+                TextField(L10n.tr("Реплика"), text: $phrases[idx].text, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(2...4)
                     .font(.system(size: 13, weight: .medium))
@@ -670,7 +670,7 @@ struct LongformSubtitleEditorView: View {
             let lines = phrase.screenLines
             if !lines.isEmpty {
                 HStack(alignment: .top, spacing: 6) {
-                    Text("Экран:")
+                    Text(L10n.tr("Экран:"))
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
 
@@ -682,7 +682,7 @@ struct LongformSubtitleEditorView: View {
                         }
                     }
                     Spacer()
-                    Text("\(lines.count) стр.")
+                    Text(L10n.tr("%1$@ стр.", String(describing: lines.count)))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -713,11 +713,11 @@ struct LongformSubtitleEditorView: View {
                 ForEach(Array(correctionMemory.suggestions(for: current.text, filmKey: correctionFilmKey,
                     language: correctionLanguage).enumerated()), id: \.offset) { _, suggestion in
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Похожая правка из памяти — сверьте с дубляжом").font(.caption.bold())
+                        Text(L10n.tr("Похожая правка из памяти — сверьте с дубляжом")).font(.caption.bold())
                         Text(suggestion.text).font(.subheadline)
-                        Text("Ранее: «\(suggestion.example.original)» → «\(suggestion.example.replacement)»")
+                        Text(L10n.tr("Ранее: «%1$@» → «%2$@»", String(describing: suggestion.example.original), String(describing: suggestion.example.replacement)))
                             .font(.caption).foregroundStyle(.secondary)
-                        Button("Применить к этой реплике") {
+                        Button(L10n.tr("Применить к этой реплике")) {
                             if let index = phrases.firstIndex(where: { $0.id == current.id }) {
                                 phrases[index].text = suggestion.text
                             }
@@ -728,10 +728,10 @@ struct LongformSubtitleEditorView: View {
                     $0.start == current.start && $0.end == current.end && $0.original == current.text
                 }) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Предложение модели — сверьте с дубляжом").font(.caption.bold())
+                        Text(L10n.tr("Предложение модели — сверьте с дубляжом")).font(.caption.bold())
                         Text(suggestion.replacement).font(.subheadline)
                         Text(suggestion.reason).font(.caption).foregroundStyle(.secondary)
-                        Button("Применить к этой реплике") {
+                        Button(L10n.tr("Применить к этой реплике")) {
                             if let index = phrases.firstIndex(where: { $0.id == current.id }) {
                                 phrases[index].text = suggestion.replacement
                             }
@@ -742,7 +742,7 @@ struct LongformSubtitleEditorView: View {
                     StudioPlayerSurface(player: sourcePlayer)
                         .frame(height: 150)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
-                    Button("Прослушать выбранную реплику", systemImage: "speaker.wave.2") {
+                    Button(L10n.tr("Прослушать выбранную реплику"), systemImage: "speaker.wave.2") {
                         playSourcePhrase(current)
                     }
                 }
@@ -751,14 +751,14 @@ struct LongformSubtitleEditorView: View {
                 HStack {
                     Image(systemName: "tv.fill")
                         .foregroundStyle(.secondary)
-                    Text("Экранный монитор (16:9 Cinema)")
+                    Text(L10n.tr("Экранный монитор (16:9 Cinema)"))
                         .font(.subheadline.weight(.bold))
                     Spacer()
                     Text("1920×1080")
                         .font(.caption2.monospaced())
                         .foregroundStyle(.secondary)
                 }
-                Text(sourceStill == nil ? "Раскладка титров; исходный кадр — в проигрывателе выше." : "Раскладка титров на исходном кадре выбранной реплики.")
+                Text(sourceStill == nil ? L10n.tr("Раскладка титров; исходный кадр — в проигрывателе выше.") : L10n.tr("Раскладка титров на исходном кадре выбранной реплики."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -780,7 +780,7 @@ struct LongformSubtitleEditorView: View {
             if let curr = selectedPhrase {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("Параметры реплики:")
+                        Text(L10n.tr("Параметры реплики:"))
                             .font(.caption.weight(.bold))
                             .foregroundStyle(.secondary)
                         Spacer()
@@ -790,12 +790,12 @@ struct LongformSubtitleEditorView: View {
                     }
 
                     HStack(spacing: 14) {
-                        statPill(label: "Длительность", value: String(format: "%.1f с", curr.duration))
-                        statPill(label: "Слов", value: "\(curr.text.split(whereSeparator: { $0.isWhitespace }).count)")
-                        statPill(label: "Строк в кадре", value: "\(curr.screenLines.count)")
+                        statPill(label: L10n.tr("Длительность"), value: String(format: L10n.tr("%.1f с"), curr.duration))
+                        statPill(label: L10n.tr("Слов"), value: "\(curr.text.split(whereSeparator: { $0.isWhitespace }).count)")
+                        statPill(label: L10n.tr("Строк в кадре"), value: "\(curr.screenLines.count)")
                     }
 
-                    Text("Субтитры располагаются под главной мыслью с постоянным зазором; длинные реплики растут вниз.")
+                    Text(L10n.tr("Субтитры располагаются под главной мыслью с постоянным зазором; длинные реплики растут вниз."))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .padding(.top, 4)
@@ -832,8 +832,8 @@ struct LongformSubtitleEditorView: View {
         correctingPhraseID = target?.id
         reviewingSuggestions = target == nil
         selectedSuggestionID = target?.originalSegmentIndex
-        OperationJournal.shared.begin("Вычитка субтитров")
-        modelCorrectionProgress = "Готовлю фразы и соседний контекст…"
+        OperationJournal.shared.begin(L10n.tr("Вычитка субтитров"))
+        modelCorrectionProgress = L10n.tr("Готовлю фразы и соседний контекст…")
         modelCorrectionEvents = []
         if target == nil { modelCorrectionSuggestions = [] }
         modelCorrectionStatus = nil
@@ -866,18 +866,18 @@ struct LongformSubtitleEditorView: View {
                     modelCorrectionSuggestions = outcome.suggestions
                 }
                 let discardedNote = outcome.discardedSuggestionCount > 0
-                    ? " Отброшено некорректных ответов модели: \(outcome.discardedSuggestionCount)."
+                    ? L10n.tr(" Отброшено некорректных ответов модели: %1$@.", String(describing: outcome.discardedSuggestionCount))
                     : ""
                 let failedNote = outcome.failedPhraseCount > 0
-                    ? " Не удалось проверить фраз: \(outcome.failedPhraseCount)." : ""
-                let status = outcome.wasCancelled ? "Остановлено." : "Проверка завершена."
-                modelCorrectionStatus = "\(status) Проверено фраз: \(outcome.checkedCount). Предложений: \(outcome.suggestions.count).\(failedNote)\(discardedNote)"
+                    ? L10n.tr(" Не удалось проверить фраз: %1$@.", String(describing: outcome.failedPhraseCount)) : ""
+                let status = outcome.wasCancelled ? L10n.tr("Остановлено.") : L10n.tr("Проверка завершена.")
+                modelCorrectionStatus = L10n.tr("%1$@ Проверено фраз: %2$@. Предложений: %3$@.%4$@%5$@", String(describing: status), String(describing: outcome.checkedCount), String(describing: outcome.suggestions.count), String(describing: failedNote), String(describing: discardedNote))
                 modelCorrectionStatusIsError = outcome.failedPhraseCount > 0
             } catch is CancellationError {
-                modelCorrectionStatus = "Проверка остановлена."
+                modelCorrectionStatus = L10n.tr("Проверка остановлена.")
             } catch {
                 OperationJournal.shared.append(error.localizedDescription, level: .error)
-                modelCorrectionStatus = "Проверка не завершена: \(error.localizedDescription)"
+                modelCorrectionStatus = L10n.tr("Проверка не завершена: %1$@", String(describing: error.localizedDescription))
                 modelCorrectionStatusIsError = true
             }
         }
@@ -898,7 +898,7 @@ struct LongformSubtitleEditorView: View {
         guard let index = phrases.firstIndex(where: { $0.originalSegmentIndex == suggestion.id }) else { return }
         guard phrases[index].text == suggestion.original else {
             modelCorrectionSuggestions.removeAll { $0.id == suggestion.id }
-            modelCorrectionStatus = "Реплика изменилась во время проверки; устаревшее предложение снято."
+            modelCorrectionStatus = L10n.tr("Реплика изменилась во время проверки; устаревшее предложение снято.")
             modelCorrectionStatusIsError = false
             return
         }
@@ -906,8 +906,8 @@ struct LongformSubtitleEditorView: View {
         dismissModelSuggestion(suggestion.id)
         modelCorrectionStatusIsError = false
         modelCorrectionStatus = modelCorrectionSuggestions.isEmpty
-            ? "Предложение применено. Проверьте текст и нажмите «\(confirmButtonTitle)» для пересборки."
-            : "Предложение применено. Осталось проверить: \(modelCorrectionSuggestions.count)."
+            ? L10n.tr("Предложение применено. Проверьте текст и нажмите «%1$@» для пересборки.", String(describing: confirmButtonTitle))
+            : L10n.tr("Предложение применено. Осталось проверить: %1$@.", String(describing: modelCorrectionSuggestions.count))
     }
 
     private func applyAllModelSuggestions() {
@@ -926,9 +926,9 @@ struct LongformSubtitleEditorView: View {
         modelCorrectionSuggestions = []
         modelCorrectionStatusIsError = false
         modelCorrectionStatus = appliedCount == 0
-            ? "Предложения не применены; изменённые вручную реплики оставлены как есть."
-            : "Применено: \(appliedCount)." + (skippedCount > 0 ? " Пропущено устаревших предложений: \(skippedCount)." : "")
-                + " Проверьте текст и нажмите «\(confirmButtonTitle)» для пересборки."
+            ? L10n.tr("Предложения не применены; изменённые вручную реплики оставлены как есть.")
+            : L10n.tr("Применено: %1$@.", String(describing: appliedCount)) + (skippedCount > 0 ? L10n.tr(" Пропущено устаревших предложений: %1$@.", String(describing: skippedCount)) : "")
+                + L10n.tr(" Проверьте текст и нажмите «%1$@» для пересборки.", String(describing: confirmButtonTitle))
     }
 
     private func initializePhrases() {
@@ -939,7 +939,7 @@ struct LongformSubtitleEditorView: View {
                 $0.importEdits(arc.captionEdits ?? [], filmKey: correctionFilmKey, language: correctionLanguage)
             }
             correctionMemory = try SubtitleCorrectionStore.shared.load()
-        } catch { memoryWarning = "Память правок недоступна: \(error.localizedDescription)" }
+        } catch { memoryWarning = L10n.tr("Память правок недоступна: %1$@", String(describing: error.localizedDescription)) }
         let rememberedEdits = correctionMemory.edits(for: allSegments, filmKey: correctionFilmKey, language: correctionLanguage)
         // Явная правка текущего проекта всегда важнее общей памяти.
         let combined = (arc.captionEdits ?? []) + rememberedEdits

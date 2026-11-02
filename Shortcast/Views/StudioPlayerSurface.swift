@@ -55,7 +55,7 @@ struct FullscreenEssayPlayerView: View {
                     Button {
                         onClose()
                     } label: {
-                        Label("Выйти из полного экрана", systemImage: "xmark")
+                        Label(L10n.tr("Выйти из полного экрана"), systemImage: "xmark")
                             .padding(.horizontal, 12).padding(.vertical, 8)
                     }
                     .buttonStyle(.bordered)
@@ -234,12 +234,12 @@ struct MusicBedEditor: View {
 
     private var configurationIssue: String? {
         guard settings.backgroundMusicURL != nil else { return nil }
-        if missingTrack { return "Музыкальный файл недоступен." }
+        if missingTrack { return L10n.tr("Музыкальный файл недоступен.") }
         let start = settings.musicOffsetSeconds ?? 0
-        if !start.isFinite || start < 0 || (trackDuration > 0 && start >= trackDuration) { return "Начало должно быть внутри выбранного трека." }
-        if (settings.musicEnvelope ?? []).contains(where: { !$0.time.isFinite || $0.time < 0 || $0.time > duration || !$0.gain.isFinite || !(0...1).contains($0.gain) }) { return "Точки огибающей должны находиться внутри монтажа, громкость — от 0 до 100%." }
+        if !start.isFinite || start < 0 || (trackDuration > 0 && start >= trackDuration) { return L10n.tr("Начало должно быть внутри выбранного трека.") }
+        if (settings.musicEnvelope ?? []).contains(where: { !$0.time.isFinite || $0.time < 0 || $0.time > duration || !$0.gain.isFinite || !(0...1).contains($0.gain) }) { return L10n.tr("Точки огибающей должны находиться внутри монтажа, громкость — от 0 до 100%.") }
         let fades = [settings.musicFadeInSeconds ?? 2, settings.musicFadeOutSeconds ?? 4]
-        if fades.contains(where: { !$0.isFinite || $0 < 0 }) { return "Длительность фейдов должна быть положительной или нулевой." }
+        if fades.contains(where: { !$0.isFinite || $0 < 0 }) { return L10n.tr("Длительность фейдов должна быть положительной или нулевой.") }
         return nil
     }
 
@@ -248,21 +248,21 @@ struct MusicBedEditor: View {
             HStack(spacing: 12) {
                 Image(systemName: "waveform").foregroundStyle(StudioTheme.accent).font(.title2)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Музыка и сведение").font(.title2.bold())
-                    Text("Отдельная подложка этого монтажа").font(.caption).foregroundStyle(StudioTheme.muted)
+                    Text(L10n.tr("Музыка и сведение")).font(.title2.bold())
+                    Text(L10n.tr("Отдельная подложка этого монтажа")).font(.caption).foregroundStyle(StudioTheme.muted)
                 }
                 Spacer()
-                Button("Отменить") { settings = original; dismiss() }
-                Button("Готово") { dismiss() }.buttonStyle(StudioPrimaryButtonStyle()).disabled(configurationIssue != nil)
+                Button(L10n.tr("Отменить")) { settings = original; dismiss() }
+                Button(L10n.tr("Готово")) { dismiss() }.buttonStyle(StudioPrimaryButtonStyle()).disabled(configurationIssue != nil)
             }.padding(22)
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("01 / ИСТОЧНИК").font(.caption.bold()).tracking(1.5).foregroundStyle(StudioTheme.accent)
+                        Text(L10n.tr("01 / ИСТОЧНИК")).font(.caption.bold()).tracking(1.5).foregroundStyle(StudioTheme.accent)
                         HStack {
                             Menu {
-                                Button("Без музыки") { stopAudition(); settings.backgroundMusicURL = nil }
+                                Button(L10n.tr("Без музыки")) { stopAudition(); settings.backgroundMusicURL = nil }
                                 ForEach(musicLibrary.tracks) { track in
                                     Button(track.name) {
                                         musicLibrary.refresh()
@@ -272,74 +272,74 @@ struct MusicBedEditor: View {
                                     }
                                 }
                             } label: {
-                                Label(settings.backgroundMusicURL?.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "_", with: " ") ?? "Без музыки", systemImage: "music.note")
+                                Label(settings.backgroundMusicURL?.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "_", with: " ") ?? L10n.tr("Без музыки"), systemImage: "music.note")
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }.controlSize(.large)
-                            Button("Папка с музыкой…", systemImage: "folder") { musicLibrary.chooseFolder(); reconcileMusicSelection() }.controlSize(.large)
+                            Button(L10n.tr("Папка с музыкой…"), systemImage: "folder") { musicLibrary.chooseFolder(); reconcileMusicSelection() }.controlSize(.large)
                         }
                         if let directory = musicLibrary.directory {
-                            Text("\(directory.path) · треков: \(musicLibrary.tracks.count)")
+                            Text(L10n.tr("%1$@ · треков: %2$@", String(describing: directory.path), String(describing: musicLibrary.tracks.count)))
                                 .font(.caption).foregroundStyle(StudioTheme.muted)
                                 .lineLimit(1).truncationMode(.middle)
                         }
                         if let message = musicLibrary.error {
                             Text(message).font(.caption).foregroundStyle(StudioTheme.warning)
                         }
-                        TextField("Источник музыки / ссылка", text: Binding(get: { settings.musicSource ?? "" }, set: { settings.musicSource = $0 }))
-                        TextField("Условия использования / лицензия", text: Binding(get: { settings.musicUsageTerms ?? "" }, set: { settings.musicUsageTerms = $0 }))
+                        TextField(L10n.tr("Источник музыки / ссылка"), text: Binding(get: { settings.musicSource ?? "" }, set: { settings.musicSource = $0 }))
+                        TextField(L10n.tr("Условия использования / лицензия"), text: Binding(get: { settings.musicUsageTerms ?? "" }, set: { settings.musicUsageTerms = $0 }))
                         if let url = settings.backgroundMusicURL {
                             HStack {
                                 Text(url.lastPathComponent).font(.caption2).foregroundStyle(StudioTheme.muted).lineLimit(1).truncationMode(.middle)
                                 Spacer()
-                                Button("В Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                                Button(L10n.tr("В Finder"), systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                                     .buttonStyle(.plain).font(.caption).foregroundStyle(StudioTheme.accent)
                             }
-                            if missingTrack { Label("Файл недоступен. Выберите другой трек.", systemImage: "exclamationmark.triangle").foregroundStyle(StudioTheme.warning) }
+                            if missingTrack { Label(L10n.tr("Файл недоступен. Выберите другой трек."), systemImage: "exclamationmark.triangle").foregroundStyle(StudioTheme.warning) }
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading).studioPanel(padding: 18)
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
-                            Text("02 / УРОВЕНЬ И РЕЧЬ").font(.caption.bold()).tracking(1.5).foregroundStyle(StudioTheme.accent)
+                            Text(L10n.tr("02 / УРОВЕНЬ И РЕЧЬ")).font(.caption.bold()).tracking(1.5).foregroundStyle(StudioTheme.accent)
                             Spacer()
                             Text(String(format: "%.1f dB", gainDB.wrappedValue)).font(.headline.monospacedDigit())
                         }
                         Slider(value: gainDB, in: -60...0).tint(StudioTheme.accent)
                         HStack {
-                            Button("Тихий фон") { gainDB.wrappedValue = -30 }
-                            Button("Атмосфера") { gainDB.wrappedValue = -24 }
-                            Button("Акцент") { gainDB.wrappedValue = -18 }
+                            Button(L10n.tr("Тихий фон")) { gainDB.wrappedValue = -30 }
+                            Button(L10n.tr("Атмосфера")) { gainDB.wrappedValue = -24 }
+                            Button(L10n.tr("Акцент")) { gainDB.wrappedValue = -18 }
                             Spacer()
-                            Text("Громкость подложки").font(.caption).foregroundStyle(StudioTheme.muted)
+                            Text(L10n.tr("Громкость подложки")).font(.caption).foregroundStyle(StudioTheme.muted)
                         }.buttonStyle(.bordered)
-                        Toggle("Приглушать музыку под диалогами", isOn: $settings.duckingEnabled)
+                        Toggle(L10n.tr("Приглушать музыку под диалогами"), isOn: $settings.duckingEnabled)
                         if settings.duckingEnabled {
                             HStack {
-                                Text("Приглушение")
+                                Text(L10n.tr("Приглушение"))
                                 Slider(value: Binding(get: { Double(settings.musicDuckingDepth ?? 0.7) },
                                                       set: { settings.musicDuckingDepth = Float($0) }), in: 0...1)
                                 Text("\(Int((settings.musicDuckingDepth ?? 0.7) * 100))%").monospacedDigit().frame(width: 48)
                             }.font(.callout)
-                            Text("Уровень плавно снижается перед репликой и восстанавливается после неё.")
+                            Text(L10n.tr("Уровень плавно снижается перед репликой и восстанавливается после неё."))
                                 .font(.caption).foregroundStyle(StudioTheme.muted)
                         }
                     }.disabled(settings.backgroundMusicURL == nil).studioPanel(padding: 18)
                     VStack(alignment: .leading, spacing: 16) {
-                        Text("03 / ВРЕМЯ И ФЕЙДЫ").font(.caption.bold()).tracking(1.5).foregroundStyle(StudioTheme.accent)
+                        Text(L10n.tr("03 / ВРЕМЯ И ФЕЙДЫ")).font(.caption.bold()).tracking(1.5).foregroundStyle(StudioTheme.accent)
                         HStack {
-                            Text("Начать трек с, с")
+                            Text(L10n.tr("Начать трек с, с"))
                             Spacer()
-                            TextField("Секунды", value: offset, format: .number.precision(.fractionLength(1)))
+                            TextField(L10n.tr("Секунды"), value: offset, format: .number.precision(.fractionLength(1)))
                                 .textFieldStyle(.roundedBorder).frame(width: 100)
                         }
-                        Text("Этот момент трека прозвучит в начале ролика. Длина трека: \(Int(trackDuration)) с.")
+                        Text(L10n.tr("Этот момент трека прозвучит в начале ролика. Длина трека: %1$@ с.", String(describing: Int(trackDuration))))
                             .font(.caption).foregroundStyle(StudioTheme.muted)
-                        Toggle("Бесшовно повторять до конца ролика", isOn: Binding(get: { settings.musicLoopEnabled ?? true }, set: { settings.musicLoopEnabled = $0 }))
-                        fadeControl("Плавный вход", value: fadeIn)
-                        fadeControl("Плавный выход", value: fadeOut)
+                        Toggle(L10n.tr("Бесшовно повторять до конца ролика"), isOn: Binding(get: { settings.musicLoopEnabled ?? true }, set: { settings.musicLoopEnabled = $0 }))
+                        fadeControl(L10n.tr("Плавный вход"), value: fadeIn)
+                        fadeControl(L10n.tr("Плавный выход"), value: fadeOut)
                         HStack {
-                            Text("Громкость по ходу истории").font(.caption.bold())
+                            Text(L10n.tr("Громкость по ходу истории")).font(.caption.bold())
                             Spacer()
-                            Button("Добавить точку", systemImage: "plus") {
+                            Button(L10n.tr("Добавить точку"), systemImage: "plus") {
                                 var points = settings.musicEnvelope ?? []
                                 points.append(MusicEnvelopePoint(time: min(duration, (points.last?.time ?? -30) + 30), gain: 1))
                                 settings.musicEnvelopeFollowsActs = false
@@ -348,7 +348,7 @@ struct MusicBedEditor: View {
                         }
                         HStack {
                             if !suggestedEnvelope.isEmpty {
-                                Button("Рекомендуемый микс", systemImage: "waveform.path") {
+                                Button(L10n.tr("Рекомендуемый микс"), systemImage: "waveform.path") {
                                     settings.musicEnvelope = suggestedEnvelope
                                     settings.musicEnvelopeFollowsActs = true
                                     settings.duckingEnabled = true
@@ -356,16 +356,16 @@ struct MusicBedEditor: View {
                                     settings.loudnessNormalizationEnabled = true
                                 }
                             }
-                            Button("Ровный фон") { settings.musicEnvelopeFollowsActs = false; settings.musicEnvelope = nil }
+                            Button(L10n.tr("Ровный фон")) { settings.musicEnvelopeFollowsActs = false; settings.musicEnvelope = nil }
                             Spacer()
                         }.buttonStyle(.bordered)
                         if !suggestedEnvelope.isEmpty {
-                            Text("Профиль следует за актами при изменении монтажа. Кнопка заменяет точки ниже, включает приглушение под речь на 70% и нормализацию громкости. Выбранный трек и его уровень сохраняются. Ручная правка точек отключает привязку к актам.")
+                            Text(L10n.tr("Профиль следует за актами при изменении монтажа. Кнопка заменяет точки ниже, включает приглушение под речь на 70% и нормализацию громкости. Выбранный трек и его уровень сохраняются. Ручная правка точек отключает привязку к актам."))
                                 .font(.caption).foregroundStyle(StudioTheme.muted)
                         }
                         ForEach(Array((settings.musicEnvelope ?? []).enumerated()), id: \.element.id) { index, point in
                             HStack {
-                                TextField("Секунды", value: Binding(get: { (settings.musicEnvelope?.indices.contains(index) == true ? settings.musicEnvelope![index].time : 0) }, set: { value in
+                                TextField(L10n.tr("Секунды"), value: Binding(get: { (settings.musicEnvelope?.indices.contains(index) == true ? settings.musicEnvelope![index].time : 0) }, set: { value in
                                     guard settings.musicEnvelope?.indices.contains(index) == true else { return }; settings.musicEnvelopeFollowsActs = false; settings.musicEnvelope?[index].time = value
                                 }), format: .number).frame(width: 100)
                                 Slider(value: Binding(get: { (settings.musicEnvelope?.indices.contains(index) == true ? settings.musicEnvelope![index].gain : 1) }, set: { value in
@@ -389,7 +389,7 @@ struct MusicBedEditor: View {
                             context.fill(path, with: .color(StudioTheme.accent.opacity(0.15)))
                             context.stroke(path, with: .color(StudioTheme.accent.opacity(0.8)), lineWidth: 1.5)
                         }.frame(height: 60).background(StudioTheme.background, in: RoundedRectangle(cornerRadius: 8))
-                        Text("Огибающая громкости\(speechIntervals.isEmpty ? "" : " с приглушением под реальные реплики") · монтаж \(Int(duration.rounded())) с")
+                        Text(L10n.tr("Огибающая громкости%1$@ · монтаж %2$@ с", String(describing: speechIntervals.isEmpty ? "" : L10n.tr(" с приглушением под реальные реплики")), String(describing: Int(duration.rounded()))))
                             .font(.caption2).foregroundStyle(StudioTheme.muted)
                     }.disabled(settings.backgroundMusicURL == nil).studioPanel(padding: 18)
                     if let issue = configurationIssue ?? error { Label(issue, systemImage: "exclamationmark.triangle").foregroundStyle(StudioTheme.warning).font(.callout) }
@@ -397,12 +397,12 @@ struct MusicBedEditor: View {
             }
             Divider()
             HStack {
-                Button(auditioning ? "Остановить" : "Трек · 10 с", systemImage: auditioning ? "stop.fill" : "play.fill") {
+                Button(auditioning ? L10n.tr("Остановить") : L10n.tr("Трек · 10 с"), systemImage: auditioning ? "stop.fill" : "play.fill") {
                     if auditioning { stopAudition() } else { startAudition() }
                 }.buttonStyle(.bordered).disabled(settings.backgroundMusicURL == nil || missingTrack)
-                Text("Только музыка: без речи, огибающей и приглушения").font(.caption).foregroundStyle(StudioTheme.muted)
+                Text(L10n.tr("Только музыка: без речи, огибающей и приглушения")).font(.caption).foregroundStyle(StudioTheme.muted)
                 Spacer()
-                Text("Применится после сохранения монтажа").font(.caption).foregroundStyle(StudioTheme.accent)
+                Text(L10n.tr("Применится после сохранения монтажа")).font(.caption).foregroundStyle(StudioTheme.accent)
             }.padding(18)
         }.frame(width: 740, height: 760)
             .background(StudioTheme.background).preferredColorScheme(.dark).tint(StudioTheme.accent)
@@ -429,9 +429,9 @@ struct MusicBedEditor: View {
         HStack {
             Text(title).frame(width: 120, alignment: .leading)
             Slider(value: value, in: 0...min(15, max(0.1, duration / 2)))
-            TextField("Секунды", value: value, format: .number.precision(.fractionLength(1)))
+            TextField(L10n.tr("Секунды"), value: value, format: .number.precision(.fractionLength(1)))
                 .textFieldStyle(.roundedBorder).frame(width: 70)
-            Text("с").foregroundStyle(StudioTheme.muted)
+            Text(L10n.tr("с")).foregroundStyle(StudioTheme.muted)
         }.font(.callout)
     }
     private func stopAudition() { audition?.cancel(); audition = nil; audio.stop(); auditioning = false }
@@ -447,7 +447,7 @@ struct MusicBedEditor: View {
     private func startAudition() {
         guard let url = settings.backgroundMusicURL, !missingTrack else { return }
         let start = settings.musicOffsetSeconds ?? 0
-        guard start.isFinite, start >= 0, start < trackDuration else { error = "Начало должно быть внутри выбранного трека."; return }
+        guard start.isFinite, start >= 0, start < trackDuration else { error = L10n.tr("Начало должно быть внутри выбранного трека."); return }
         auditioning = true; error = nil
         audition = Task { @MainActor in
             do {

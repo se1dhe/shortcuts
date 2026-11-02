@@ -154,9 +154,9 @@ final class MontageScenePreviewAudio {
 
         var errorDescription: String? {
             switch self {
-            case .noAudioTrack: "В исходном фильме не найдена аудиодорожка."
-            case .cannotReadAudio: "Не удалось декодировать звук выбранного фрагмента."
-            case .emptyAudioRange: "В выбранном диапазоне фильма нет доступного звука."
+            case .noAudioTrack: L10n.stored("В исходном фильме не найдена аудиодорожка.")
+            case .cannotReadAudio: L10n.stored("Не удалось декодировать звук выбранного фрагмента.")
+            case .emptyAudioRange: L10n.stored("В выбранном диапазоне фильма нет доступного звука.")
             }
         }
     }
@@ -339,7 +339,7 @@ final class MontageTimelinePlayback {
                     toleranceBefore: CMTime(seconds: 0.02, preferredTimescale: 600),
                     toleranceAfter: CMTime(seconds: 0.02, preferredTimescale: 600))
                 guard !Task.isCancelled, request == token else { return }
-                guard finished else { pause(); self.error = "Не удалось перейти к выбранному кадру."; return }
+                guard finished else { pause(); self.error = L10n.stored("Не удалось перейти к выбранному кадру."); return }
                 try audio.play(pcm)
                 isPreparing = false
                 player.play()

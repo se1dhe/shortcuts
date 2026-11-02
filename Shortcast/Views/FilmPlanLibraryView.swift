@@ -17,29 +17,29 @@ struct FilmPlanLibraryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("Фильмы из плана").font(.title2.bold())
+                Text(L10n.tr("Фильмы из плана")).font(.title2.bold())
                 Spacer()
-                Button("Импортировать план…") {
+                Button(L10n.tr("Импортировать план…")) {
                     let panel = NSOpenPanel(); panel.allowedContentTypes = [.plainText]; panel.canChooseDirectories = false
                     if panel.runModal() == .OK, let url = panel.url { do { try library.importPlan(url) } catch { library.error = error.localizedDescription } }
                 }
-                Button("Закрыть") { dismiss() }
+                Button(L10n.tr("Закрыть")) { dismiss() }
             }
-            HStack { TextField("Найти фильм, год или тему", text: $query); Toggle("Только невыполненные", isOn: $unfinishedOnly) }
-            Text("\(library.films.count) фильмов · \(library.completed.count) эссе выполнено. Скачивание и выполнение эссе учитываются отдельно.").font(.caption).foregroundStyle(.secondary)
-            if let error = library.error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+            HStack { TextField(L10n.tr("Найти фильм, год или тему"), text: $query); Toggle(L10n.tr("Только невыполненные"), isOn: $unfinishedOnly) }
+            Text(L10n.tr("%1$@ фильмов · %2$@ эссе выполнено. Скачивание и выполнение эссе учитываются отдельно.", String(describing: library.films.count), String(describing: library.completed.count))).font(.caption).foregroundStyle(.secondary)
+            if let error = library.error { Text(L10n.tr(error)).foregroundStyle(.red).textSelection(.enabled) }
             if !library.downloads.isEmpty {
                 ScrollView { VStack(spacing: 10) { ForEach(library.downloads) { task in downloadRow(task) } } }.frame(maxHeight: 210)
             }
             List(visibleFilms) { film in
                 HStack(alignment: .top, spacing: 12) {
-                    Button { library.toggleCompleted(film) } label: { Image(systemName: library.completed.contains(film.id) ? "checkmark.circle.fill" : "circle") }.buttonStyle(.borderless).help("Эссе выполнено")
+                    Button { library.toggleCompleted(film) } label: { Image(systemName: library.completed.contains(film.id) ? "checkmark.circle.fill" : "circle") }.buttonStyle(.borderless).help(L10n.tr("Эссе выполнено"))
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("\(film.number). \(film.title) · \(film.year)").font(.headline)
+                        Text(verbatim: "\(film.number). \(film.title) · \(film.year)").font(.headline)
                         Text(film.topic).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Выбрать раздачу", systemImage: "arrow.down.circle") { selected = film }.disabled(settings.workingDirectory == nil).accessibilityLabel("Выбрать раздачу: " + film.title)
+                    Button(L10n.tr("Выбрать раздачу"), systemImage: "arrow.down.circle") { selected = film }.disabled(settings.workingDirectory == nil).accessibilityLabel(L10n.tr("Выбрать раздачу: ") + film.title)
                 }.padding(.vertical, 8).accessibilityElement(children: .contain)
             }
             OperationLogPanel(isActive: library.downloads.contains { $0.state == "Загрузка" })
@@ -47,9 +47,9 @@ struct FilmPlanLibraryView: View {
         .sheet(item: $selected) { film in
             if let folder = settings.workingDirectory { FilmTorrentBrowser(film: film, workingDirectory: folder) }
         }
-        .confirmationDialog("Убрать загрузку?", isPresented: Binding(get: { cancellation != nil }, set: { if !$0 { cancellation = nil } })) {
-            Button("Убрать задачу, оставить файлы") { removeTask(false) }
-            Button("Убрать задачу и переместить файлы в Корзину", role: .destructive) { removeTask(true) }
+        .confirmationDialog(L10n.tr("Убрать загрузку?"), isPresented: Binding(get: { cancellation != nil }, set: { if !$0 { cancellation = nil } })) {
+            Button(L10n.tr("Убрать задачу, оставить файлы")) { removeTask(false) }
+            Button(L10n.tr("Убрать задачу и переместить файлы в Корзину"), role: .destructive) { removeTask(true) }
         }
 
     }
@@ -61,16 +61,16 @@ struct FilmPlanLibraryView: View {
     private func downloadRow(_ task: FilmLibrary.Download) -> some View {
         HStack {
             VStack(alignment: .leading) {
-                Text(task.film.title + " · " + task.state).font(.headline)
+                Text(task.film.title + " · " + L10n.tr(task.state)).font(.headline)
                 Text(task.progress).font(.system(.caption, design: .monospaced)).lineLimit(2).textSelection(.enabled)
             }
             Spacer()
-            Button("В Finder") { NSWorkspace.shared.open(task.folder) }
-            if task.state == "Загрузка" { Button("Пауза") { library.pause(task.id) } }
+            Button(L10n.tr("В Finder")) { NSWorkspace.shared.open(task.folder) }
+            if task.state == "Загрузка" { Button(L10n.tr("Пауза")) { library.pause(task.id) } }
             else {
-                if task.state == "Скачан" || task.state == "MP4 готов" { Button(task.state == "MP4 готов" ? "Открыть проект" : "Подготовить MP4") { dismiss(); onChooseFile(task.readyURL ?? task.sourceURL, VideoSourceMetadata(title: task.film.title)) } }
-                else { Button("Продолжить") { do { try library.resume(task.id) } catch { library.error = error.localizedDescription } } }
-                Button("Убрать") { cancellation = task }
+                if task.state == "Скачан" || task.state == "MP4 готов" { Button(task.state == "MP4 готов" ? L10n.tr("Открыть проект") : L10n.tr("Подготовить MP4")) { dismiss(); onChooseFile(task.readyURL ?? task.sourceURL, VideoSourceMetadata(title: task.film.title)) } }
+                else { Button(L10n.tr("Продолжить")) { do { try library.resume(task.id) } catch { library.error = error.localizedDescription } } }
+                Button(L10n.tr("Убрать")) { cancellation = task }
             }
         }.padding(12).background(StudioTheme.panel, in: RoundedRectangle(cornerRadius: 12))
     }
@@ -114,7 +114,7 @@ final class FilmTorrentBrowserModel: NSObject, WKNavigationDelegate, WKDownloadD
             guard let self else { return }
             if let error { self.error = error.localizedDescription; return }
             guard let json = value as? String, let data = json.data(using: .utf8) else { return }
-            do { self.torrents = try UAKinoAdapter.parseTorrents(String(decoding: data, as: UTF8.self)); if self.torrents.isEmpty { self.findPlannedFilm() } else { self.tableURL = self.web.url } } catch { self.error = "Не удалось прочитать таблицу раздач: " + error.localizedDescription }
+            do { self.torrents = try UAKinoAdapter.parseTorrents(String(decoding: data, as: UTF8.self)); if self.torrents.isEmpty { self.findPlannedFilm() } else { self.tableURL = self.web.url } } catch { self.error = L10n.tr("Не удалось прочитать таблицу раздач: ") + error.localizedDescription }
         }
     }
     private func findPlannedFilm() {
@@ -134,8 +134,8 @@ final class FilmTorrentBrowserModel: NSObject, WKNavigationDelegate, WKDownloadD
     func download(_ torrent: FilmTorrent) {
         guard !isObtainingTorrent, UAKinoAdapter.validTorrentURL(torrent.url) else { return }
         error = nil; files = []; downloadedTorrent = nil
-        isObtainingTorrent = true; downloadMessage = "Сайт готовит ссылку на торрент…"
-        OperationJournal.shared.append("Получаю торрент: " + torrent.title)
+        isObtainingTorrent = true; downloadMessage = L10n.tr("Сайт готовит ссылку на торрент…")
+        OperationJournal.shared.append(L10n.tr("Получаю торрент: ") + torrent.title)
         if let tableURL, web.url != tableURL {
             pendingTableSelection = torrent; web.load(URLRequest(url: tableURL)); return
         }
@@ -149,7 +149,7 @@ final class FilmTorrentBrowserModel: NSObject, WKNavigationDelegate, WKDownloadD
         web.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
             if let error { self.isObtainingTorrent = false; self.error = error.localizedDescription }
-            else if value as? Bool != true { self.isObtainingTorrent = false; self.error = "Страница раздач изменилась. Откройте её заново." }
+            else if value as? Bool != true { self.isObtainingTorrent = false; self.error = L10n.tr("Страница раздач изменилась. Откройте её заново.") }
         }
     }
     private func waitForFileLink() {
@@ -161,15 +161,15 @@ final class FilmTorrentBrowserModel: NSObject, WKNavigationDelegate, WKDownloadD
                    let link = value as? String, let url = URL(string: link), UAKinoAdapter.validFileURL(url) {
                     var request = URLRequest(url: url)
                     request.setValue(self.web.url?.absoluteString, forHTTPHeaderField: "Referer")
-                    self.downloadMessage = "Получаю файл торрента…"
+                    self.downloadMessage = L10n.tr("Получаю файл торрента…")
                     self.web.startDownload(using: request) { [weak self] download in download.delegate = self }
                     return
                 }
-                self.downloadMessage = "Ожидаю ссылку сайта · \(second + 1) с"
+                self.downloadMessage = L10n.tr("Ожидаю ссылку сайта · %1$@ с", String(describing: second + 1))
                 try? await Task.sleep(for: .seconds(1))
             }
             guard let self else { return }
-            self.isObtainingTorrent = false; self.error = "Сайт не выдал торрент за минуту. Откройте страницу сайта и повторите выбор раздачи."
+            self.isObtainingTorrent = false; self.error = L10n.tr("Сайт не выдал торрент за минуту. Откройте страницу сайта и повторите выбор раздачи.")
             OperationJournal.shared.append(self.error ?? "", level: .warning)
         }
     }
@@ -195,11 +195,11 @@ final class FilmTorrentBrowserModel: NSObject, WKNavigationDelegate, WKDownloadD
         guard let url = downloadedTorrent else { return }
         do {
             let data = try Data(contentsOf: url)
-            guard data.first == 100 else { throw EssayReleaseError.invalid("Сайт вернул веб-страницу вместо торрента. Повторите штатный выбор раздачи после проверки сайта.") }
+            guard data.first == 100 else { throw EssayReleaseError.invalid(L10n.tr("Сайт вернул веб-страницу вместо торрента. Повторите штатный выбор раздачи после проверки сайта.")) }
             files = try TorrentManifest.files(data).filter { ["mp4", "mkv", "avi", "mov", "webm", "m4v"].contains(URL(fileURLWithPath: $0.path).pathExtension.lowercased()) }
             guard let largest = files.max(by: { $0.bytes < $1.bytes }) else { throw TorrentManifest.invalid }
             selectedFile = largest.index
-            OperationJournal.shared.append("Торрент получен: видеофайлов \(files.count)")
+            OperationJournal.shared.append(L10n.tr("Торрент получен: видеофайлов %1$@", String(describing: files.count)))
         } catch { self.error = error.localizedDescription }
     }
     func download(_ download: WKDownload, didFailWithError error: any Error, resumeData: Data?) { isObtainingTorrent = false; linkPolling?.cancel(); self.error = error.localizedDescription }
@@ -217,13 +217,13 @@ struct FilmTorrentBrowser: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack { Text("\(film.title) · \(film.year)").font(.title2); Spacer(); Button("Закрыть") { dismiss() } }
-            Text("Проверьте название и год, откройте фильм, затем «Скачати торенти». Выберите раздачу по размеру и качеству.").font(.callout).foregroundStyle(.secondary)
+            HStack { Text(verbatim: "\(film.title) · \(film.year)").font(.title2); Spacer(); Button(L10n.tr("Закрыть")) { dismiss() } }
+            Text(L10n.tr("Проверьте название и год, откройте фильм, затем «Скачати торенти». Выберите раздачу по размеру и качеству.")).font(.callout).foregroundStyle(.secondary)
             if model.isLoading { ProgressView().controlSize(.small) }
-            if let error = model.error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+            if let error = model.error { Text(L10n.tr(error)).foregroundStyle(.red).textSelection(.enabled) }
             if model.isObtainingTorrent { ProgressView(model.downloadMessage).controlSize(.small) }
             if !model.torrents.isEmpty {
-                Toggle("Показать страницу сайта", isOn: $showWebsite).font(.caption)
+                Toggle(L10n.tr("Показать страницу сайта"), isOn: $showWebsite).font(.caption)
             }
             FilmWebsite(web: model.web)
                 .frame(height: model.torrents.isEmpty || showWebsite ? 380 : 1)
@@ -233,15 +233,15 @@ struct FilmTorrentBrowser: View {
                 ScrollView { VStack(alignment: .leading, spacing: 10) {
                     ForEach(model.torrents) { torrent in
                         HStack {
-                            VStack(alignment: .leading) { Text(torrent.title).font(.callout); if UAKinoAdapter.recommended(model.torrents, availableBytes: try? workingDirectory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage) == torrent.id { Text("Рекомендуется: украинская дорожка, доступная раздача, размер с учётом места").font(.caption2).foregroundStyle(StudioTheme.accent) }; Text("\(torrent.size) · сиды: \(torrent.seeds.map(String.init) ?? "—") · пиры: \(torrent.peers.map(String.init) ?? "—")").font(.caption).foregroundStyle(.secondary) }
-                            Spacer(); Button("Выбрать") { model.download(torrent) }.disabled(model.isObtainingTorrent)
+                            VStack(alignment: .leading) { Text(torrent.title).font(.callout); if UAKinoAdapter.recommended(model.torrents, availableBytes: try? workingDirectory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage) == torrent.id { Text(L10n.tr("Рекомендуется: украинская дорожка, доступная раздача, размер с учётом места")).font(.caption2).foregroundStyle(StudioTheme.accent) }; Text(L10n.tr("%1$@ · сиды: %2$@ · пиры: %3$@", String(describing: torrent.size), String(describing: torrent.seeds.map(String.init) ?? "—"), String(describing: torrent.peers.map(String.init) ?? "—"))).font(.caption).foregroundStyle(.secondary) }
+                            Spacer(); Button(L10n.tr("Выбрать")) { model.download(torrent) }.disabled(model.isObtainingTorrent)
                         }
                     }
                 } }.frame(maxHeight: .infinity)
             }
             if !model.files.isEmpty {
-                Picker("Видеофайл", selection: $model.selectedFile) { ForEach(model.files) { file in Text(file.path + " · " + ByteCountFormatter.string(fromByteCount: file.bytes, countStyle: .file)).tag(file.index) } }
-                Button("Скачать в films и подготовить MP4") {
+                Picker(L10n.tr("Видеофайл"), selection: $model.selectedFile) { ForEach(model.files) { file in Text(file.path + " · " + ByteCountFormatter.string(fromByteCount: file.bytes, countStyle: .file)).tag(file.index) } }
+                Button(L10n.tr("Скачать в films и подготовить MP4")) {
                     guard let torrent = model.downloadedTorrent, let file = model.files.first(where: { $0.index == model.selectedFile }) else { return }
                     do { try FilmLibrary.shared.enqueue(film: film, torrent: torrent, file: file, workingDirectory: workingDirectory); dismiss() } catch { model.error = error.localizedDescription }
                 }.buttonStyle(StudioPrimaryButtonStyle())
@@ -264,12 +264,12 @@ struct PlannedFilmsStartPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Label("Фильмы из плана эссе", systemImage: "list.bullet.rectangle").font(.headline)
-                    Text("\(library.films.count) фильмов · выполнено \(library.completed.count)").font(.caption).foregroundStyle(.secondary)
+                    Label(L10n.tr("Фильмы из плана эссе"), systemImage: "list.bullet.rectangle").font(.headline)
+                    Text(L10n.tr("%1$@ фильмов · выполнено %2$@", String(describing: library.films.count), String(describing: library.completed.count))).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                TextField("Найти фильм", text: $query).textFieldStyle(.roundedBorder).frame(width: 200)
-                Button("Все загрузки", systemImage: "arrow.down.circle") { onChoose(nil) }
+                TextField(L10n.tr("Найти фильм"), text: $query).textFieldStyle(.roundedBorder).frame(width: 200)
+                Button(L10n.tr("Все загрузки"), systemImage: "arrow.down.circle") { onChoose(nil) }
             }
             ScrollView {
                 LazyVStack(spacing: 8) {
@@ -277,10 +277,10 @@ struct PlannedFilmsStartPanel: View {
                         HStack {
                             Image(systemName: library.completed.contains(film.id) ? "checkmark.circle.fill" : "film")
                                 .foregroundStyle(library.completed.contains(film.id) ? Color.green : StudioTheme.accent)
-                            Text("\(film.number). \(film.title) · \(film.year)").font(.callout.weight(.medium))
+                            Text(verbatim: "\(film.number). \(film.title) · \(film.year)").font(.callout.weight(.medium))
                             Spacer()
-                            if library.completed.contains(film.id) { Text("Эссе выполнено").font(.caption).foregroundStyle(.secondary) }
-                            Button("Скачать") { onChoose(film) }.buttonStyle(.borderless)
+                            if library.completed.contains(film.id) { Text(L10n.tr("Эссе выполнено")).font(.caption).foregroundStyle(.secondary) }
+                            Button(L10n.tr("Скачать")) { onChoose(film) }.buttonStyle(.borderless)
                         }.padding(.vertical, 4)
                     }
                 }

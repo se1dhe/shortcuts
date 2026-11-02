@@ -18,6 +18,7 @@ struct ShortcastApp: App {
     }
 
     @State private var settings = AppSettings()
+    @State private var localization = InterfaceLocalization.shared
     @State private var modelManager = ModelManager()
     @State private var workspace = WorkspaceModel()
 
@@ -25,6 +26,7 @@ struct ShortcastApp: App {
         WindowGroup {
             ContentView()
                 .environment(settings)
+                .environment(\.locale, localization.language.locale)
                 .environment(modelManager)
                 .environment(workspace)
                 .task {
@@ -41,6 +43,7 @@ struct ShortcastApp: App {
         Settings {
             SettingsView()
                 .environment(settings)
+                .environment(\.locale, localization.language.locale)
                 .environment(modelManager)
                 .environment(workspace)
         }

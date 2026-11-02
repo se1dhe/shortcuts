@@ -11,7 +11,7 @@ struct ProcessingView: View {
                 .frame(width: 64, height: 64)
                 .background(StudioTheme.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 18))
             ProgressView().controlSize(.large).tint(StudioTheme.accent)
-            Text(workspace.inputPreparationMessage ?? "Подготовка фильма…")
+            Text(workspace.inputPreparationMessage ?? L10n.tr("Подготовка фильма…"))
                 .font(.title3.weight(.semibold))
             if let job = workspace.job {
                 Text("\(job.fileName) · \(job.durationLabel)").font(.callout).foregroundStyle(StudioTheme.muted)

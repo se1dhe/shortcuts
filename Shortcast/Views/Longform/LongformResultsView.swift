@@ -55,7 +55,11 @@ struct LongformResultsView: View {
                                 .font(.headline)
                         }
 
-                        Text(result.arc.concept.format.title).font(.caption).foregroundStyle(.secondary)
+                        Text(L10n.tr(result.arc.concept.format.title)).font(.caption).foregroundStyle(.secondary)
+                        if let job = workspace.job, !FileManager.default.fileExists(atPath: job.url.path) {
+                            Label(L10n.tr("Исходник удалён. Сохранённый монтаж доступен; для предпросмотра и рендера нужен видеофайл."), systemImage: "externaldrive.badge.exclamationmark")
+                                .font(.caption).foregroundStyle(StudioTheme.warning)
+                        }
                         Text(result.metadata.title)
                             .font(.title3.weight(.bold))
                             .lineLimit(1)
@@ -68,10 +72,10 @@ struct LongformResultsView: View {
                     }
                     ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 10) {
-                        Button("Редакторский проход", systemImage: "wand.and.stars") {
+                        Button(L10n.tr("Редакторский проход"), systemImage: "wand.and.stars") {
                             workspace.improveLongform(existingResult: result, modelManager: modelManager, settings: settings)
                         }
-                        .help("Проверить диалоги с соседним контекстом, уточнить границы сцен и пересобрать эссе на той же теме")
+                        .help(L10n.tr("Проверить диалоги с соседним контекстом, уточнить границы сцен и пересобрать эссе на той же теме"))
 
                         Button {
                             suspendResultsPlayback()
@@ -79,13 +83,13 @@ struct LongformResultsView: View {
                         } label: {
                             HStack(spacing: 5) {
                                 Image(systemName: "character.cursor.ibeam")
-                                Text("Редактировать субтитры")
+                                Text(L10n.tr("Редактировать субтитры"))
                             }
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(StudioTheme.accent)
                         .disabled(workspace.isRefreshingLongformPackaging)
-                        .help("Исправить неточности в субтитрах и перерендерить видео с тем же монтажом")
+                        .help(L10n.tr("Исправить неточности в субтитрах и перерендерить видео с тем же монтажом"))
 
                         Button {
                             suspendResultsPlayback()
@@ -93,14 +97,14 @@ struct LongformResultsView: View {
                         } label: {
                             HStack(spacing: 5) {
                                 Image(systemName: "film.stack")
-                                Text("Монтажный стол")
+                                Text(L10n.tr("Монтажный стол"))
                             }
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(StudioTheme.accent)
-                        .help("Обрезать начало и конец актов — титры и музыка подстроятся автоматически")
+                        .help(L10n.tr("Обрезать начало и конец актов — титры и музыка подстроятся автоматически"))
 
-                        Menu("Монтаж шортсов", systemImage: "scissors") {
+                        Menu(L10n.tr("Монтаж шортсов"), systemImage: "scissors") {
                             if let release = workspace.currentEssayRelease, !release.shorts.isEmpty {
                                 ForEach(release.shorts) { short in
                                     Button(short.title) {
@@ -110,16 +114,16 @@ struct LongformResultsView: View {
                                         .disabled(!EssayShortEditing.canEdit(short, in: release))
                                 }
                             } else {
-                                Button("Подготовить два шортса") { onOpenShorts() }
+                                Button(L10n.tr("Подготовить два шортса")) { onOpenShorts() }
                             }
                         }
                         .disabled(workspace.isWorkingOnEssayRelease)
-                        .help("Сцены, хук, тексты и субтитры каждого шортса")
+                        .help(L10n.tr("Сцены, хук, тексты и субтитры каждого шортса"))
 
                         Button {
                             NSWorkspace.shared.activateFileViewerSelecting([result.outputURL])
                         } label: {
-                            Label("В Finder", systemImage: "folder")
+                            Label(L10n.tr("В Finder"), systemImage: "folder")
                         }
                         .buttonStyle(.bordered)
                     }.fixedSize(horizontal: true, vertical: false)
@@ -134,16 +138,16 @@ struct LongformResultsView: View {
                             .foregroundStyle(.orange)
                             .padding(.top, 2)
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Пересборка не завершилась")
+                            Text(L10n.tr("Пересборка не завершилась"))
                                 .font(.subheadline.weight(.bold))
-                            Text("Показан предыдущий экспорт длительностью \(formatDuration(result.duration)). Новая версия не сохранена.")
+                            Text(L10n.tr("Показан предыдущий экспорт длительностью %1$@. Новая версия не сохранена.", String(describing: formatDuration(result.duration))))
                                 .font(.caption.weight(.medium))
                                 .foregroundStyle(.secondary)
                             if workspace.stagedArc != nil {
-                                Text("Черновик таймингов сохранён. Откройте «Монтажный стол», чтобы продолжить с него.")
+                                Text(L10n.tr("Черновик таймингов сохранён. Откройте «Монтажный стол», чтобы продолжить с него."))
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(StudioTheme.accent)
-                                Button("Повторить сборку", systemImage: "arrow.clockwise") {
+                                Button(L10n.tr("Повторить сборку"), systemImage: "arrow.clockwise") {
                                     guard let draft = workspace.stagedArc else { return }
                                     workspace.rebuildLongformWithModifiedArc(
                                         modifiedArc: draft,
@@ -167,7 +171,7 @@ struct LongformResultsView: View {
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.orange.opacity(0.35), lineWidth: 1))
                     .padding(.horizontal, 20)
                 } else if workspace.stagedArc != nil {
-                    Label("Черновик монтажа сохранён и ждёт сборки. Откройте «Монтажный стол», чтобы продолжить.",
+                    Label(L10n.tr("Черновик монтажа сохранён и ждёт сборки. Откройте «Монтажный стол», чтобы продолжить."),
                           systemImage: "film.stack")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(StudioTheme.accent)
@@ -178,7 +182,7 @@ struct LongformResultsView: View {
                 }
 
                 if let notes = result.arc.editorialNotes, !notes.isEmpty {
-                    DisclosureGroup("Замечания к монтажу (\(notes.count))") {
+                    DisclosureGroup(L10n.tr("Замечания к монтажу (%1$@)", String(describing: notes.count))) {
                         ScrollView {
                             VStack(alignment: .leading, spacing: 5) {
                                 ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
@@ -196,7 +200,7 @@ struct LongformResultsView: View {
                             .font(.title3)
                         
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("План требует внимания")
+                            Text(L10n.tr("План требует внимания"))
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.primary)
                             Text(reason)
@@ -221,10 +225,10 @@ struct LongformResultsView: View {
                             .font(.title3)
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Хронометраж скорректирован")
+                            Text(L10n.tr("Хронометраж скорректирован"))
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.primary)
-                            Text("Проект просил \(EssayDurationPolicy.format(legacyAsk)) — длина эссе рождается из материала темы и ограничена коридором 4:00–8:00.")
+                            Text(L10n.tr("Проект просил %1$@ — длина эссе рождается из материала темы и ограничена коридором 4:00–8:00.", String(describing: EssayDurationPolicy.format(legacyAsk))))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -253,7 +257,7 @@ struct LongformResultsView: View {
                                             .font(.system(size: 9, weight: .bold))
                                             .foregroundStyle(StudioTheme.accent)
                                     }
-                                    Text(act.type.displayName)
+                                    Text(L10n.tr(act.type.displayName))
                                         .font(.caption2.weight(.bold))
                                         .foregroundStyle(.primary)
                                         .lineLimit(2)
@@ -265,7 +269,7 @@ struct LongformResultsView: View {
                                 HStack(spacing: 3) {
                                     Image(systemName: act.effectiveTitleSource.isTrustworthy
                                           ? "checkmark.seal" : "exclamationmark.seal")
-                                    Text(act.effectiveTitleSource.displayCaption).lineLimit(1)
+                                    Text(L10n.tr(act.effectiveTitleSource.displayCaption)).lineLimit(1)
                                 }
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
@@ -288,13 +292,13 @@ struct LongformResultsView: View {
                         }
                         .buttonStyle(.plain)
                         .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .help("Перейти к акту «\(act.type.displayName)» в эссе")
+                        .help(L10n.tr("Перейти к акту «%1$@» в эссе", String(describing: L10n.tr(act.type.displayName))))
                     }
                 }
                 .padding(.horizontal, 20)
                 HStack(spacing: 6) {
                     Image(systemName: "cursorarrow.click")
-                    Text(activeActTitle.map { "Сейчас: \($0)" } ?? "Нажмите на акт, чтобы перейти к его сценам")
+                    Text(activeActTitle.map { L10n.tr("Сейчас: %1$@", String(describing: $0)) } ?? L10n.tr("Нажмите на акт, чтобы перейти к его сценам"))
                 }
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(StudioTheme.muted)
@@ -308,13 +312,13 @@ struct LongformResultsView: View {
 
             // Правая колонка: Упаковка, публикация и экспорт
             VStack(alignment: .leading, spacing: 14) {
-                Text("Финальный монтаж")
+                Text(L10n.tr("Финальный монтаж"))
                     .font(.headline)
 
                 // One explicit editorial approval hands the final essay to the
                 // short generator and opens the complete publication package.
                 VStack(spacing: 8) {
-                    Text("Проверьте монтаж и реплики. Когда эссе готово, переходите к подбору двух сильных моментов всего фильма.")
+                    Text(L10n.tr("Проверьте монтаж и реплики. Когда эссе готово, переходите к подбору двух сильных моментов всего фильма."))
                         .font(.caption).foregroundStyle(.secondary)
                     Button {
                         player?.pause()
@@ -324,8 +328,8 @@ struct LongformResultsView: View {
                             Image(systemName: "sparkles.tv")
                                 .font(.subheadline)
                             Text(workspace.currentEssayRelease?.hasReadyShorts == true
-                                 ? "Перейти к шортсам"
-                                 : "Эссе готово — к шортсам")
+                                 ? L10n.tr("Перейти к шортсам")
+                                 : L10n.tr("Эссе готово — к шортсам"))
                                 .font(.subheadline.weight(.semibold))
                         }
                         .frame(maxWidth: .infinity)
@@ -334,7 +338,7 @@ struct LongformResultsView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(StudioTheme.accent)
                     .disabled(workspace.isBusy)
-                    Text("Следом: два шортса → постинг выпуска")
+                    Text(L10n.tr("Следом: два шортса → постинг выпуска"))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 .padding(10)
@@ -343,27 +347,27 @@ struct LongformResultsView: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 14) {
                         HStack {
-                            Text("Оформление публикации").font(.headline)
+                            Text(L10n.tr("Оформление публикации")).font(.headline)
                             Spacer()
                             Button {
                                 Task { await workspace.refreshLongformPackaging(modelManager: modelManager) }
                             } label: {
                                 if workspace.isRefreshingLongformPackaging {
                                     ProgressView().controlSize(.small)
-                                    Text("Проверка героя и обложки…")
+                                    Text(L10n.tr("Проверка героя и обложки…"))
                                 } else {
-                                    Label("Обновить всё", systemImage: "arrow.clockwise")
+                                    Label(L10n.tr("Обновить всё"), systemImage: "arrow.clockwise")
                                 }
                             }
                             .disabled(workspace.isBusy)
-                            .accessibilityLabel("Обновить всё оформление публикации")
-                            .help("Обновить обложку и тексты публикации. Видео повторно не рендерится.")
+                            .accessibilityLabel(L10n.tr("Обновить всё оформление публикации"))
+                            .help(L10n.tr("Обновить обложку и тексты публикации. Видео повторно не рендерится."))
                         }
-                        Button("Варианты упаковки и результаты", systemImage: "rectangle.on.rectangle") {
+                        Button(L10n.tr("Варианты упаковки и результаты"), systemImage: "rectangle.on.rectangle") {
                             suspendResultsPlayback(); showPackagingExperiments = true
                         }.disabled(workspace.isBusy)
                         .sheet(isPresented: $showPackagingExperiments) { PackagingExperimentsView() }
-                        Button("Поддержка и благодарности", systemImage: "heart.text.square") {
+                        Button(L10n.tr("Поддержка и благодарности"), systemImage: "heart.text.square") {
                             suspendResultsPlayback()
                             showSupportEditor = true
                         }.disabled(workspace.isBusy)
@@ -375,15 +379,15 @@ struct LongformResultsView: View {
                         if let thumbURL = result.thumbnailURL, let nsImage = NSImage(contentsOf: thumbURL) {
                             thumbnailCard(image: nsImage, fileURL: thumbURL)
                             if let subject = result.thumbnailSubject {
-                                Text("Ведущий герой • исходник \(Int(subject.sourceTime) / 60):\(String(format: "%02d", Int(subject.sourceTime) % 60)) • проверка модели")
+                                Text(L10n.tr("Ведущий герой • исходник %1$@:%2$@ • проверка модели", String(describing: Int(subject.sourceTime) / 60), String(describing: String(format: "%02d", Int(subject.sourceTime) % 60))))
                                     .font(.caption).foregroundStyle(.secondary)
-                                    .help("Проверка по ведущему составу: " + subject.leadingCast.joined(separator: ", "))
+                                    .help(L10n.tr("Проверка по ведущему составу: ") + subject.leadingCast.joined(separator: ", "))
                             }
                         }
 
                         // 1. Заголовок
                         metadataCard(
-                            title: "Заголовок видео",
+                            title: L10n.tr("Заголовок видео"),
                             content: result.metadata.title,
                             copied: copiedTitle
                         ) {
@@ -394,7 +398,7 @@ struct LongformResultsView: View {
 
                         // 2. Описание
                         metadataCard(
-                            title: "Описание эссе",
+                            title: L10n.tr("Описание эссе"),
                             content: publicationMetadata.description,
                             copied: copiedDescription,
                             lineLimit: nil
@@ -405,7 +409,7 @@ struct LongformResultsView: View {
                         }
 
                         metadataCard(
-                            title: "Теги YouTube · ключевые слова",
+                            title: L10n.tr("Теги YouTube · ключевые слова"),
                             content: result.metadata.tags.joined(separator: ", "),
                             copied: copiedTags,
                             lineLimit: 3
@@ -417,7 +421,7 @@ struct LongformResultsView: View {
 
                         // Хештеги в описании — отдельное поле от keyword tags API.
                         metadataCard(
-                            title: "Хештеги YouTube",
+                            title: L10n.tr("Хештеги YouTube"),
                             content: result.metadata.hashtagText,
                             copied: copiedTags,
                             lineLimit: 3
@@ -429,7 +433,7 @@ struct LongformResultsView: View {
 
                         // 4. Закрепленный комментарий
                         metadataCard(
-                            title: "Закрепленный комментарий",
+                            title: L10n.tr("Закрепленный комментарий"),
                             content: publicationMetadata.pinnedComment,
                             copied: copiedComment,
                             lineLimit: nil
@@ -449,13 +453,13 @@ struct LongformResultsView: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "arrow.counterclockwise")
-                            Text("Выбрать другую тему")
+                            Text(L10n.tr("Выбрать другую тему"))
                                 .fontWeight(.semibold)
                         }
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(StudioTheme.accent)
-                    .help("Выбрать или ввести другую тему без повторного анализа фильма")
+                    .help(L10n.tr("Выбрать или ввести другую тему без повторного анализа фильма"))
 
                     Button {
                         workspace.regenerateLongformFromScratch(
@@ -467,26 +471,26 @@ struct LongformResultsView: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "sparkles")
-                            Text("Пересчитать сцены с AI")
+                            Text(L10n.tr("Пересчитать сцены с AI"))
                                 .fontWeight(.semibold)
                         }
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.green)
-                    .help("Попросить модель заново выбрать сцены и распределить их по актам на той же теме")
+                    .help(L10n.tr("Попросить модель заново выбрать сцены и распределить их по актам на той же теме"))
 
                     Button(role: .destructive) {
                         onStartNewMovie()
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "xmark.circle")
-                            Text("Новый фильм")
+                            Text(L10n.tr("Новый фильм"))
                         }
                         .font(.caption)
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .help("Сбросить текущий фильм и добавить другой")
+                    .help(L10n.tr("Сбросить текущий фильм и добавить другой"))
 
                     Spacer()
 
@@ -495,7 +499,7 @@ struct LongformResultsView: View {
                     } label: {
                         HStack {
                             Image(systemName: "square.and.arrow.down")
-                            Text("Экспорт…")
+                            Text(L10n.tr("Экспорт…"))
                         }
                     }
                     .buttonStyle(.bordered)
@@ -528,8 +532,8 @@ struct LongformResultsView: View {
                     correctionFilmKey: workspace.subtitleCorrectionFilmKey,
                     correctionLanguage: workspace.subtitleCorrectionLanguage,
                     sourceURL: workspace.job?.url,
-                    confirmButtonTitle: "Перерендерить с исправленными субтитрами",
-                    backButtonTitle: "Отмена",
+                    confirmButtonTitle: L10n.tr("Перерендерить с исправленными субтитрами"),
+                    backButtonTitle: L10n.tr("Отмена"),
                     onAutoCorrect: { input, progress in
                         try await workspace.correctLongformSubtitleDraft(
                             input,
@@ -622,8 +626,8 @@ struct LongformResultsView: View {
                     StudioPlayerSurface(player: player)
                 }
                 VStack {
-                    if playbackAudio.isPreparing { Text("Подготавливаю звук…").padding(8).background(.black.opacity(0.8)) }
-                    if let error = playbackAudio.error { Text(error).foregroundStyle(.orange).padding(8) }
+                    if playbackAudio.isPreparing { Text(L10n.tr("Подготавливаю звук…")).padding(8).background(.black.opacity(0.8)) }
+                    if let error = playbackAudio.error { Text(L10n.tr(error)).foregroundStyle(.orange).padding(8) }
                     playerControls
                 }.padding(14)
             } else {
@@ -649,7 +653,7 @@ struct LongformResultsView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(StudioTheme.accent)
-            .help(isVideoPlaying ? "Пауза" : "Воспроизвести")
+            .help(isVideoPlaying ? L10n.tr("Пауза") : L10n.tr("Воспроизвести"))
 
             Text(formatDuration(playbackTime))
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
@@ -680,7 +684,7 @@ struct LongformResultsView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.white)
-            .help("На весь экран")
+            .help(L10n.tr("На весь экран"))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -705,7 +709,7 @@ struct LongformResultsView: View {
             backing: .buffered,
             defer: false
         )
-        window.title = "КАДР & СЕНС · \(movieTitle)"
+        window.title = L10n.tr("КАДР & СЕНС · %1$@", String(describing: movieTitle))
         window.collectionBehavior = [.fullScreenPrimary]
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: content)
@@ -736,7 +740,7 @@ struct LongformResultsView: View {
 
     private var activeActTitle: String? {
         guard let activeActID else { return nil }
-        return result.arc.acts.first(where: { $0.id == activeActID })?.type.displayName
+        return result.arc.acts.first(where: { $0.id == activeActID }).map { L10n.tr($0.type.displayName) }
     }
 
     private func seekToAct(at index: Int) {
@@ -778,7 +782,7 @@ struct LongformResultsView: View {
     private func thumbnailCard(image: NSImage, fileURL: URL) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Обложка YouTube (1920×1080)")
+                Text(L10n.tr("Обложка YouTube (1920×1080)"))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
 
@@ -789,21 +793,21 @@ struct LongformResultsView: View {
                 } label: {
                     if workspace.isRegeneratingLongformCover {
                         ProgressView().controlSize(.small)
-                        Text("Подбираем кадр…")
+                        Text(L10n.tr("Подбираем кадр…"))
                     } else {
-                        Label("Другой кадр", systemImage: "arrow.clockwise")
+                        Label(L10n.tr("Другой кадр"), systemImage: "arrow.clockwise")
                     }
                 }
                 .font(.caption)
                 .buttonStyle(.borderless)
                 .foregroundStyle(StudioTheme.accent)
                 .disabled(workspace.isBusy)
-                .help("Сгенерировать отдельный вариант обложки с другим кадром подтверждённого главного актёра")
+                .help(L10n.tr("Сгенерировать отдельный вариант обложки с другим кадром подтверждённого главного актёра"))
 
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                 } label: {
-                    Label("В Finder", systemImage: "folder")
+                    Label(L10n.tr("В Finder"), systemImage: "folder")
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)
@@ -812,7 +816,7 @@ struct LongformResultsView: View {
                 Button {
                     NSWorkspace.shared.open(fileURL)
                 } label: {
-                    Label("Открыть", systemImage: "arrow.up.forward.app")
+                    Label(L10n.tr("Открыть"), systemImage: "arrow.up.forward.app")
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)
@@ -851,12 +855,12 @@ struct LongformResultsView: View {
                 Button {
                     onCopy()
                 } label: {
-                    Label(copied ? "Скопировано!" : "Копировать", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    Label(copied ? L10n.tr("Скопировано!") : L10n.tr("Копировать"), systemImage: copied ? "checkmark" : "doc.on.doc")
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(copied ? StudioTheme.success : StudioTheme.accent)
-                .accessibilityLabel((copied ? "Скопировано: " : "Копировать: ") + title)
+                .accessibilityLabel((copied ? L10n.tr("Скопировано: ") : L10n.tr("Копировать: ")) + title)
             }
 
             Text(content)
@@ -876,11 +880,11 @@ struct LongformResultsView: View {
         switch act.effectiveTitleSource {
         case .llm, .transcriptLine:
             return act.titleProvenance?.evidence
-                ?? "Реплика-основание не записана: метка есть, доказать её нечем"
+                ?? L10n.tr("Реплика-основание не записана: метка есть, доказать её нечем")
         case .template:
-            return "Название дала формула темы — ни модель, ни реплика акта его не выводили"
+            return L10n.tr("Название дала формула темы — ни модель, ни реплика акта его не выводили")
         case .unknown:
-            return "Источник названия не зафиксирован"
+            return L10n.tr("Источник названия не зафиксирован")
         }
     }
 

@@ -221,10 +221,10 @@ struct LongformActEditorView: View {
             headerBar
             actTabsBar
             HStack {
-                Label(musicSettings.backgroundMusicURL?.deletingPathExtension().lastPathComponent ?? "Без музыкальной подложки", systemImage: "music.note")
+                Label(musicSettings.backgroundMusicURL?.deletingPathExtension().lastPathComponent ?? L10n.tr("Без музыкальной подложки"), systemImage: "music.note")
                     .font(.caption).foregroundStyle(StudioTheme.muted)
                 Spacer()
-                Button("Музыка и сведение", systemImage: "waveform") { stopPreview(); showMusicEditor = true }
+                Button(L10n.tr("Музыка и сведение"), systemImage: "waveform") { stopPreview(); showMusicEditor = true }
                     .buttonStyle(.bordered)
             }.padding(.horizontal, 22).padding(.vertical, 8)
             if !editedActs.isEmpty && selectedActIndex < editedActs.count {
@@ -256,7 +256,7 @@ struct LongformActEditorView: View {
                 }
                 .padding(18)
             } else {
-                ContentUnavailableView("Нет актов для редактирования", systemImage: "film.stack")
+                ContentUnavailableView(L10n.tr("Нет актов для редактирования"), systemImage: "film.stack")
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -297,13 +297,13 @@ struct LongformActEditorView: View {
             if let message { previewError = message }
         }
         .onDisappear { timelinePlayback.close() }
-        .alert("Предпросмотр не запустился", isPresented: Binding(
+        .alert(L10n.tr("Предпросмотр не запустился"), isPresented: Binding(
             get: { previewError != nil },
             set: { if !$0 { previewError = nil } }
         )) {
-            Button("Понятно", role: .cancel) { previewError = nil }
+            Button(L10n.tr("Понятно"), role: .cancel) { previewError = nil }
         } message: {
-            Text(previewError ?? "Не удалось воспроизвести выбранный фрагмент.")
+            Text(previewError ?? L10n.tr("Не удалось воспроизвести выбранный фрагмент."))
         }
     }
 
@@ -316,7 +316,7 @@ struct LongformActEditorView: View {
             } label: {
                 HStack(spacing: 7) {
                     Image(systemName: "xmark")
-                    Text("Отмена")
+                    Text(L10n.tr("Отмена"))
                 }
             }
             .buttonStyle(.bordered)
@@ -328,7 +328,7 @@ struct LongformActEditorView: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 7) {
-                    Text("МОНТАЖНЫЙ СТОЛ")
+                    Text(L10n.tr("МОНТАЖНЫЙ СТОЛ"))
                         .font(.system(size: 10, weight: .black)).tracking(1.05)
 
                     Text("«\(concept.word.uppercased())»")
@@ -339,7 +339,7 @@ struct LongformActEditorView: View {
                         .foregroundStyle(StudioTheme.accent)
 
                     if totalEditedCount > 0 {
-                        Label("Изменено актов: \(totalEditedCount)", systemImage: "pencil.line")
+                        Label(L10n.tr("Изменено актов: %1$@", String(describing: totalEditedCount)), systemImage: "pencil.line")
                             .font(.system(size: 9, weight: .semibold))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
@@ -359,14 +359,14 @@ struct LongformActEditorView: View {
 
             HStack(spacing: 10) {
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text("ХРОНОМЕТРАЖ")
+                    Text(L10n.tr("ХРОНОМЕТРАЖ"))
                         .font(.system(size: 8, weight: .bold)).tracking(0.9)
                         .foregroundStyle(StudioTheme.muted)
                     Text(formatDuration(totalDuration))
                         .font(.system(size: 16, weight: .bold, design: .monospaced))
                         .foregroundStyle(.primary)
                     if abs(totalDiffSeconds) > 0.1 {
-                        Text(String(format: "%@%.1f с к исходному", totalDiffSeconds > 0 ? "+" : "", totalDiffSeconds))
+                        Text(String(format: L10n.tr("%@%.1f с к исходному"), totalDiffSeconds > 0 ? "+" : "", totalDiffSeconds))
                             .font(.system(size: 9, weight: .semibold, design: .monospaced))
                             .foregroundStyle(totalDiffSeconds >= 0 ? StudioTheme.success : StudioTheme.warning)
                     }
@@ -385,20 +385,20 @@ struct LongformActEditorView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(totalEditedCount == 0)
-                .help("Сбросить все изменения")
-                .accessibilityLabel("Сбросить всё")
+                .help(L10n.tr("Сбросить все изменения"))
+                .accessibilityLabel(L10n.tr("Сбросить всё"))
 
                 Button {
                     applyChangesAndProceed()
                 } label: {
-                    Label("Сохранить монтаж", systemImage: "checkmark")
+                    Label(L10n.tr("Сохранить монтаж"), systemImage: "checkmark")
                         .font(.system(size: 12, weight: .bold))
                         .padding(.horizontal, 3)
                 }
                 .buttonStyle(StudioPrimaryButtonStyle())
                 .keyboardShortcut(.defaultAction)
                 .disabled(editingProblem != nil)
-                .help("Сохранить правки и пересобрать выпуск")
+                .help(L10n.tr("Сохранить правки и пересобрать выпуск"))
             }
         }
         .padding(.horizontal, 18)
@@ -424,7 +424,7 @@ struct LongformActEditorView: View {
 
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 4) {
-                                Text("АКТ \(idx + 1)")
+                                Text(L10n.tr("АКТ %1$@", String(describing: idx + 1)))
                                     .font(.caption2.weight(.black))
                                     .foregroundStyle(isSelected ? StudioTheme.accent : .secondary)
 
@@ -435,7 +435,7 @@ struct LongformActEditorView: View {
                                 }
                             }
 
-                            Text(act.type.displayName)
+                            Text(L10n.tr(act.type.displayName))
                                 .font(.caption.weight(.semibold))
                                 .lineLimit(1)
                                 .foregroundStyle(isSelected ? .primary : .secondary)
@@ -477,18 +477,18 @@ struct LongformActEditorView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("МОНИТОР ИСХОДНИКА")
+                    Text(L10n.tr("МОНИТОР ИСХОДНИКА"))
                         .font(.system(size: 10, weight: .black)).tracking(1.1)
                         .foregroundStyle(StudioTheme.accent)
                     if let selection = selectedLocation {
-                        Text("АКТ \(selection.actIndex + 1) · СЦЕНА \(selection.sceneIndex + 1)")
+                        Text(L10n.tr("АКТ %1$@ · СЦЕНА %2$@", String(describing: selection.actIndex + 1), String(describing: selection.sceneIndex + 1)))
                             .font(.system(size: 10, weight: .semibold, design: .monospaced))
                             .foregroundStyle(StudioTheme.muted)
                     }
                 }
                 Spacer()
                 if let selection = selectedLocation {
-                    Text("ФИЛЬМ  \(formatTimecode(selection.scene.start)) → \(formatTimecode(selection.scene.end))")
+                    Text(L10n.tr("ФИЛЬМ  %1$@ → %2$@", String(describing: formatTimecode(selection.scene.start)), String(describing: formatTimecode(selection.scene.end))))
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.primary)
                 }
@@ -502,7 +502,7 @@ struct LongformActEditorView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 11))
                         .overlay(RoundedRectangle(cornerRadius: 11).stroke(StudioTheme.line, lineWidth: 1))
                 } else {
-                    ContentUnavailableView("Нет исходного видео", systemImage: "film")
+                    ContentUnavailableView(L10n.tr("Нет исходного видео"), systemImage: "film")
                         .aspectRatio(16 / 9, contentMode: .fit)
                         .frame(maxWidth: .infinity)
                         .background(StudioTheme.background, in: RoundedRectangle(cornerRadius: 11))
@@ -513,14 +513,14 @@ struct LongformActEditorView: View {
                 Button {
                     if let scene = selectedLocation?.scene { playRange(start: scene.start, end: scene.end) }
                 } label: {
-                    Label(isPreviewBusy ? "Идёт предпросмотр" : "Сцена",
+                    Label(isPreviewBusy ? L10n.tr("Идёт предпросмотр") : L10n.tr("Сцена"),
                           systemImage: isPreviewBusy ? "waveform" : "play.fill")
                 }
                 .buttonStyle(.borderedProminent).tint(StudioTheme.accent)
                 .disabled(selectedLocation == nil || previewPlayer == nil || isPreviewBusy)
 
                 if isPreviewBusy {
-                    Button("Стоп", systemImage: "stop.fill", action: stopPreview)
+                    Button(L10n.tr("Стоп"), systemImage: "stop.fill", action: stopPreview)
                         .buttonStyle(.bordered)
                 }
 
@@ -528,14 +528,14 @@ struct LongformActEditorView: View {
                     if let scene = selectedLocation?.scene {
                         playRange(start: scene.start, end: min(scene.start + 4, scene.end))
                     }
-                } label: { Label("Вход", systemImage: "arrow.right.to.line") }
+                } label: { Label(L10n.tr("Вход"), systemImage: "arrow.right.to.line") }
                     .buttonStyle(.bordered).disabled(selectedLocation == nil || previewPlayer == nil || isPreviewBusy)
 
                 Button {
                     if let scene = selectedLocation?.scene {
                         playRange(start: max(scene.start, scene.end - 4), end: scene.end)
                     }
-                } label: { Label("Выход", systemImage: "arrow.left.to.line") }
+                } label: { Label(L10n.tr("Выход"), systemImage: "arrow.left.to.line") }
                     .buttonStyle(.bordered).disabled(selectedLocation == nil || previewPlayer == nil || isPreviewBusy)
 
                 Spacer()
@@ -558,17 +558,17 @@ struct LongformActEditorView: View {
                     let scene = selection.scene
                     VStack(alignment: .leading, spacing: 9) {
                         HStack {
-                            Label("ИНСПЕКТОР СЦЕНЫ", systemImage: "slider.horizontal.3")
+                            Label(L10n.tr("ИНСПЕКТОР СЦЕНЫ"), systemImage: "slider.horizontal.3")
                                 .font(.system(size: 10, weight: .black)).tracking(1)
                                 .foregroundStyle(StudioTheme.accent)
                             Spacer()
                             if scene.isEdited {
-                                Text(scene.isAdded ? "ВСТАВЛЕНА" : "ИЗМЕНЕНА")
+                                Text(scene.isAdded ? L10n.tr("ВСТАВЛЕНА") : L10n.tr("ИЗМЕНЕНА"))
                                     .font(.system(size: 8, weight: .black)).tracking(0.5)
                                     .foregroundStyle(StudioTheme.success)
                             }
                         }
-                        Text("Акт \(selection.actIndex + 1) · Сцена \(selection.sceneIndex + 1)")
+                        Text(L10n.tr("Акт %1$@ · Сцена %2$@", String(describing: selection.actIndex + 1), String(describing: selection.sceneIndex + 1)))
                             .font(.title3.weight(.bold))
                         Text(act.title).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
                         Text(act.dramaticBeat).font(.caption).foregroundStyle(StudioTheme.muted).lineLimit(3)
@@ -576,26 +576,26 @@ struct LongformActEditorView: View {
                     .padding(13)
                     .background(StudioTheme.raised, in: RoundedRectangle(cornerRadius: 11))
 
-                    boundaryRow(title: "IN · НАЧАЛО", value: scene.start, icon: "arrow.right.to.line",
+                    boundaryRow(title: L10n.tr("IN · НАЧАЛО"), value: scene.start, icon: "arrow.right.to.line",
                         play: { playRange(start: scene.start, end: min(scene.start + 4, scene.end)) },
                         decrement: { adjustStart(actIndex: selection.actIndex, sceneIndex: selection.sceneIndex, delta: -trimStep(from: inTrimStepInput)) },
                         increment: { adjustStart(actIndex: selection.actIndex, sceneIndex: selection.sceneIndex, delta: trimStep(from: inTrimStepInput)) },
                         stepInput: $inTrimStepInput, trimsScene: false)
-                    boundaryRow(title: "OUT · КОНЕЦ", value: scene.end, icon: "arrow.left.to.line",
+                    boundaryRow(title: L10n.tr("OUT · КОНЕЦ"), value: scene.end, icon: "arrow.left.to.line",
                         play: { playRange(start: max(scene.start, scene.end - 4), end: scene.end) },
                         decrement: { adjustEnd(actIndex: selection.actIndex, sceneIndex: selection.sceneIndex, delta: -trimStep(from: outTrimStepInput)) },
                         increment: { adjustEnd(actIndex: selection.actIndex, sceneIndex: selection.sceneIndex, delta: trimStep(from: outTrimStepInput)) },
                         stepInput: $outTrimStepInput, trimsScene: true)
 
                     if let first = phrasesFor(start: scene.start, end: scene.end).first {
-                        dialogueExcerpt(title: "ПЕРВАЯ РЕПЛИКА", phrase: first)
+                        dialogueExcerpt(title: L10n.tr("ПЕРВАЯ РЕПЛИКА"), phrase: first)
                     }
                     if let last = phrasesFor(start: scene.start, end: scene.end).last,
                        last.start != phrasesFor(start: scene.start, end: scene.end).first?.start {
-                        dialogueExcerpt(title: "ПОСЛЕДНЯЯ РЕПЛИКА", phrase: last)
+                        dialogueExcerpt(title: L10n.tr("ПОСЛЕДНЯЯ РЕПЛИКА"), phrase: last)
                     }
 
-                    DisclosureGroup("Точная подрезка и список реплик") {
+                    DisclosureGroup(L10n.tr("Точная подрезка и список реплик")) {
                         VStack(alignment: .leading, spacing: 10) {
                             sceneRangeSliders(actIndex: selection.actIndex, sceneIndex: selection.sceneIndex)
                             Divider()
@@ -615,21 +615,21 @@ struct LongformActEditorView: View {
 
                     HStack(spacing: 7) {
                         Button { moveScene(scene.id, in: selection.actIndex, delta: -1) } label: {
-                            Label("Раньше", systemImage: "arrow.left")
+                            Label(L10n.tr("Раньше"), systemImage: "arrow.left")
                         }.disabled(selection.sceneIndex == 0)
                         Button { moveScene(scene.id, in: selection.actIndex, delta: 1) } label: {
-                            Label("Позже", systemImage: "arrow.right")
+                            Label(L10n.tr("Позже"), systemImage: "arrow.right")
                         }.disabled(selection.sceneIndex + 1 >= act.scenes.count)
                         Spacer(minLength: 0)
                         Button(role: .destructive) { removeScene(scene.id) } label: {
                             Image(systemName: "trash")
                         }
-                        .help("Удалить фрагмент из монтажа")
+                        .help(L10n.tr("Удалить фрагмент из монтажа"))
                         .disabled(act.scenes.count <= 1)
                     }
                     .buttonStyle(.bordered).controlSize(.small)
                 } else {
-                    ContentUnavailableView("Нет выбранной сцены", systemImage: "film")
+                    ContentUnavailableView(L10n.tr("Нет выбранной сцены"), systemImage: "film")
                 }
 
                 editorialReviewPanel
@@ -654,7 +654,7 @@ struct LongformActEditorView: View {
                     .font(.system(size: 13, weight: .bold, design: .monospaced))
                     .foregroundStyle(.primary)
             }
-            Text("Сдвиг в секундах · \(trimsScene ? "− короче · + длиннее" : "− длиннее · + короче")")
+            Text(L10n.tr("Сдвиг в секундах · %1$@", String(describing: trimsScene ? L10n.tr("− короче · + длиннее") : L10n.tr("− длиннее · + короче"))))
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(StudioTheme.muted)
             HStack(spacing: 8) {
@@ -667,16 +667,16 @@ struct LongformActEditorView: View {
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .multilineTextAlignment(.center)
                     .frame(width: 56)
-                    .help("Величина сдвига в секундах")
-                Text("с").font(.caption2).foregroundStyle(StudioTheme.muted)
-                Button("Применить −") { decrement() }
+                    .help(L10n.tr("Величина сдвига в секундах"))
+                Text(L10n.tr("с")).font(.caption2).foregroundStyle(StudioTheme.muted)
+                Button(L10n.tr("Применить −")) { decrement() }
                     .buttonStyle(.bordered).controlSize(.small)
                     .fixedSize(horizontal: true, vertical: false)
-                    .help("Сдвинуть эту границу назад по времени фильма")
-                Button("Применить +") { increment() }
+                    .help(L10n.tr("Сдвинуть эту границу назад по времени фильма"))
+                Button(L10n.tr("Применить +")) { increment() }
                     .buttonStyle(.borderedProminent).controlSize(.small).tint(StudioTheme.accent)
                     .fixedSize(horizontal: true, vertical: false)
-                    .help("Сдвинуть эту границу вперёд по времени фильма")
+                    .help(L10n.tr("Сдвинуть эту границу вперёд по времени фильма"))
             }
         }
         .padding(11)
@@ -705,10 +705,10 @@ struct LongformActEditorView: View {
         let notes = (reviewedArc ?? arc).editorialNotes ?? []
         return VStack(alignment: .leading, spacing: 9) {
             HStack {
-                Label("РЕДАКТОРСКАЯ ПРОВЕРКА", systemImage: "sparkles")
+                Label(L10n.tr("РЕДАКТОРСКАЯ ПРОВЕРКА"), systemImage: "sparkles")
                     .font(.system(size: 9, weight: .black)).tracking(0.8).foregroundStyle(StudioTheme.accent)
                 Spacer()
-                Text("\(notes.count) замеч.").font(.system(size: 9, weight: .semibold)).foregroundStyle(StudioTheme.muted)
+                Text(L10n.tr("%1$@ замеч.", String(describing: notes.count))).font(.system(size: 9, weight: .semibold)).foregroundStyle(StudioTheme.muted)
             }
             if !notes.isEmpty {
                 ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
@@ -719,11 +719,11 @@ struct LongformActEditorView: View {
                     }
                 }
             } else {
-                Text("Замечаний к сценам нет. Можно запустить дополнительную проверку перед сборкой.")
+                Text(L10n.tr("Замечаний к сценам нет. Можно запустить дополнительную проверку перед сборкой."))
                     .font(.system(size: 10)).foregroundStyle(StudioTheme.muted)
             }
             Button { runEditorialReview() } label: {
-                Label(isReviewing ? "Ищу монтажное решение…" : "Проверить и исправить",
+                Label(isReviewing ? L10n.tr("Ищу монтажное решение…") : L10n.tr("Проверить и исправить"),
                       systemImage: isReviewing ? "hourglass" : "wand.and.stars")
                     .frame(maxWidth: .infinity)
             }
@@ -733,7 +733,7 @@ struct LongformActEditorView: View {
                     if isReviewing {
                         HStack(spacing: 7) {
                             ProgressView().controlSize(.small)
-                            Text(reviewProgress.isEmpty ? "Подготовка контекста…" : reviewProgress)
+                            Text(reviewProgress.isEmpty ? L10n.tr("Подготовка контекста…") : reviewProgress)
                                 .font(.system(size: 10, weight: .semibold)).foregroundStyle(.primary)
                         }
                     }
@@ -750,7 +750,7 @@ struct LongformActEditorView: View {
                         HStack(alignment: .top, spacing: 6) {
                             Image(systemName: attempt.resolved ? "checkmark.circle.fill" : "exclamationmark.triangle")
                                 .font(.system(size: 10)).foregroundStyle(attempt.resolved ? StudioTheme.success : StudioTheme.warning)
-                            Text("Попытка \(attempt.id): \(attempt.message)")
+                            Text(L10n.tr("Попытка %1$@: %2$@", String(describing: attempt.id), String(describing: attempt.message)))
                                 .font(.system(size: 9, weight: .medium)).foregroundStyle(.primary.opacity(0.82))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -762,7 +762,7 @@ struct LongformActEditorView: View {
                     }
                     ForEach(reviewChanges) { change in
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Акт \(change.act) · сцена \(change.scene)  \(formatTimecode(change.oldRange.start))–\(formatTimecode(change.oldRange.end)) → \(formatTimecode(change.newRange.start))–\(formatTimecode(change.newRange.end))")
+                            Text(L10n.tr("Акт %1$@ · сцена %2$@  %3$@–%4$@ → %5$@–%6$@", String(describing: change.act), String(describing: change.scene), String(describing: formatTimecode(change.oldRange.start)), String(describing: formatTimecode(change.oldRange.end)), String(describing: formatTimecode(change.newRange.start)), String(describing: formatTimecode(change.newRange.end))))
                                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                             Text(change.reason).font(.system(size: 9)).foregroundStyle(StudioTheme.muted)
                         }
@@ -777,17 +777,17 @@ struct LongformActEditorView: View {
     }
 
     private var publicationTextPanel: some View {
-        DisclosureGroup("Текст выпуска и публикации") {
+        DisclosureGroup(L10n.tr("Текст выпуска и публикации")) {
             VStack(alignment: .leading, spacing: 8) {
-                TextField("Название YouTube", text: $publicationTitle)
-                TextField("Короткий текст обложки", text: $coverText)
-                TextField("Что зритель поймёт после просмотра?", text: $viewerPromise)
-                TextField("Вступительный вопрос", text: $hookText)
-                TextField("Вывод эссе", text: $conclusionText)
-                TextField("Призыв к обсуждению", text: $ctaText)
+                TextField(L10n.tr("Название YouTube"), text: $publicationTitle)
+                TextField(L10n.tr("Короткий текст обложки"), text: $coverText)
+                TextField(L10n.tr("Что зритель поймёт после просмотра?"), text: $viewerPromise)
+                TextField(L10n.tr("Вступительный вопрос"), text: $hookText)
+                TextField(L10n.tr("Вывод эссе"), text: $conclusionText)
+                TextField(L10n.tr("Призыв к обсуждению"), text: $ctaText)
                 let suspicious = UkrainianTextReview.suspiciousWords(in: publicationTitle)
                 if !suspicious.isEmpty {
-                    Text("Проверьте написание: " + suspicious.joined(separator: ", "))
+                    Text(L10n.tr("Проверьте написание: ") + suspicious.joined(separator: ", "))
                         .font(.caption2).foregroundStyle(StudioTheme.warning)
                 }
             }
@@ -806,19 +806,19 @@ struct LongformActEditorView: View {
 
         ScrollView(.vertical, showsIndicators: true) {
             VStack(alignment: .leading, spacing: 16) {
-                DisclosureGroup("Хук, вывод и текст публикации") {
+                DisclosureGroup(L10n.tr("Хук, вывод и текст публикации")) {
                     VStack(alignment: .leading, spacing: 8) {
-                        TextField("Название YouTube", text: $publicationTitle)
-                TextField("Короткий текст обложки", text: $coverText)
-                TextField("Что зритель поймёт после просмотра?", text: $viewerPromise)
+                        TextField(L10n.tr("Название YouTube"), text: $publicationTitle)
+                TextField(L10n.tr("Короткий текст обложки"), text: $coverText)
+                TextField(L10n.tr("Что зритель поймёт после просмотра?"), text: $viewerPromise)
                         let suspicious = UkrainianTextReview.suspiciousWords(in: publicationTitle)
                         if !suspicious.isEmpty {
-                            Text("Проверьте написание: " + suspicious.joined(separator: ", "))
+                            Text(L10n.tr("Проверьте написание: ") + suspicious.joined(separator: ", "))
                                 .font(.caption).foregroundStyle(.orange)
                         }
-                        TextField("Вступительный вопрос", text: $hookText)
-                        TextField("Вывод эссе", text: $conclusionText)
-                        TextField("Призыв к обсуждению", text: $ctaText)
+                        TextField(L10n.tr("Вступительный вопрос"), text: $hookText)
+                        TextField(L10n.tr("Вывод эссе"), text: $conclusionText)
+                        TextField(L10n.tr("Призыв к обсуждению"), text: $ctaText)
                     }
                     .textFieldStyle(.roundedBorder)
                     .padding(.top, 8)
@@ -829,7 +829,7 @@ struct LongformActEditorView: View {
                 }
                 if let notes = (reviewedArc ?? arc).editorialNotes, !notes.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        DisclosureGroup("Замечания редактора (\(notes.count))") {
+                        DisclosureGroup(L10n.tr("Замечания редактора (%1$@)", String(describing: notes.count))) {
                             ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
                                 Text("• " + note).font(.caption).frame(maxWidth: .infinity, alignment: .leading)
                             }
@@ -839,7 +839,7 @@ struct LongformActEditorView: View {
                             Button {
                                 runEditorialReview()
                             } label: {
-                                Label(isReviewing ? "Модель ищет решение…" : "Проверить и исправить замечания",
+                                Label(isReviewing ? L10n.tr("Модель ищет решение…") : L10n.tr("Проверить и исправить замечания"),
                                       systemImage: isReviewing ? "progress.indicator" : "wand.and.stars")
                             }
                             .buttonStyle(.borderedProminent)
@@ -854,7 +854,7 @@ struct LongformActEditorView: View {
                                 if isReviewing {
                                     HStack(spacing: 8) {
                                         ProgressView().controlSize(.small)
-                                        Text(reviewProgress.isEmpty ? "Готовлю замечания и контекст сцен…" : reviewProgress)
+                                        Text(reviewProgress.isEmpty ? L10n.tr("Готовлю замечания и контекст сцен…") : reviewProgress)
                                             .font(.caption.weight(.medium)).foregroundStyle(.primary)
                                     }
                                 }
@@ -864,7 +864,7 @@ struct LongformActEditorView: View {
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                                 ForEach(reviewAttempts) { attempt in
-                                    Label("Попытка \(attempt.id): \(attempt.message)",
+                                    Label(L10n.tr("Попытка %1$@: %2$@", String(describing: attempt.id), String(describing: attempt.message)),
                                           systemImage: attempt.resolved ? "checkmark.circle" : "exclamationmark.triangle")
                                         .font(.caption)
                                         .foregroundStyle(attempt.resolved ? .green : .yellow)
@@ -872,11 +872,11 @@ struct LongformActEditorView: View {
                                 }
                                 if !reviewChanges.isEmpty {
                                     Divider()
-                                    Text("ПРИМЕНЁННЫЕ ИЗМЕНЕНИЯ")
+                                    Text(L10n.tr("ПРИМЕНЁННЫЕ ИЗМЕНЕНИЯ"))
                                         .font(.system(size: 9, weight: .bold)).tracking(1).foregroundStyle(StudioTheme.accent)
                                     ForEach(reviewChanges) { change in
                                         VStack(alignment: .leading, spacing: 3) {
-                                            Text("Акт \(change.act) · сцена \(change.scene): \(formatTimecode(change.oldRange.start))–\(formatTimecode(change.oldRange.end)) → \(formatTimecode(change.newRange.start))–\(formatTimecode(change.newRange.end))")
+                                            Text(L10n.tr("Акт %1$@ · сцена %2$@: %3$@–%4$@ → %5$@–%6$@", String(describing: change.act), String(describing: change.scene), String(describing: formatTimecode(change.oldRange.start)), String(describing: formatTimecode(change.oldRange.end)), String(describing: formatTimecode(change.newRange.start)), String(describing: formatTimecode(change.newRange.end))))
                                                 .font(.caption.monospacedDigit().weight(.semibold))
                                             Text(change.reason).font(.caption2).foregroundStyle(.secondary)
                                         }
@@ -899,7 +899,7 @@ struct LongformActEditorView: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
-                            Text("АКТ \(actIndex + 1): \(act.type.displayName.uppercased())")
+                            Text(L10n.tr("АКТ %1$@: %2$@", String(describing: actIndex + 1), String(describing: L10n.tr(act.type.displayName).uppercased())))
                                 .font(.caption.weight(.black))
                                 .foregroundStyle(StudioTheme.accent)
 
@@ -918,7 +918,7 @@ struct LongformActEditorView: View {
                             Image(systemName: act.effectiveTitleSource.isTrustworthy
                                   ? "checkmark.seal" : "exclamationmark.seal")
                                 .font(.caption2)
-                            Text(act.effectiveTitleSource.displayCaption)
+                            Text(L10n.tr(act.effectiveTitleSource.displayCaption))
                                 .font(.caption2)
                         }
                         .foregroundStyle(.tertiary)
@@ -934,7 +934,7 @@ struct LongformActEditorView: View {
                     Button {
                         resetAct(actIndex: actIndex)
                     } label: {
-                        Label("Сбросить акт", systemImage: "arrow.counterclockwise")
+                        Label(L10n.tr("Сбросить акт"), systemImage: "arrow.counterclockwise")
                             .font(.caption)
                     }
                     .buttonStyle(.bordered)
@@ -972,7 +972,7 @@ struct LongformActEditorView: View {
                         }
                     )
 
-                    Text("Выберите блок для точной подрезки. «+» между блоками открывает поиск сцены по транскрипту.")
+                    Text(L10n.tr("Выберите блок для точной подрезки. «+» между блоками открывает поиск сцены по транскрипту."))
                         .font(.caption).foregroundStyle(StudioTheme.muted)
 
                     ForEach(0..<act.scenes.count, id: \.self) { sceneIdx in
@@ -994,10 +994,10 @@ struct LongformActEditorView: View {
             // Заголовок сцены и общий хронометраж
             HStack {
                 HStack(spacing: 8) {
-                    Text("Сцена #\(sceneIndex + 1)")
+                    Text(L10n.tr("Сцена #%1$@", String(describing: sceneIndex + 1)))
                         .font(.subheadline.weight(.bold))
 
-                    Text("Длительность: \(formatDurationWithTenths(scene.duration))")
+                    Text(L10n.tr("Длительность: %1$@", String(describing: formatDurationWithTenths(scene.duration))))
                         .font(.subheadline.monospacedDigit().weight(.semibold))
                         .foregroundStyle(StudioTheme.accent)
 
@@ -1011,7 +1011,7 @@ struct LongformActEditorView: View {
                 Spacer()
 
                 if scene.isEdited {
-                        Text(scene.isAdded ? "Добавлена вручную" : "Отредактировано")
+                        Text(scene.isAdded ? L10n.tr("Добавлена вручную") : L10n.tr("Отредактировано"))
                         .font(.caption2.bold())
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -1025,7 +1025,7 @@ struct LongformActEditorView: View {
             // Панель 1: НАЧАЛО СЦЕНЫ (In-Point)
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Label("НАЧАЛО СЦЕНЫ (IN):", systemImage: "arrow.right.to.line")
+                    Label(L10n.tr("НАЧАЛО СЦЕНЫ (IN):"), systemImage: "arrow.right.to.line")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.secondary)
 
@@ -1043,14 +1043,14 @@ struct LongformActEditorView: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.mini)
-                        .help("Проиграть вход сцены")
+                        .help(L10n.tr("Проиграть вход сцены"))
 
-                        trimButton(label: "-5с", delta: -5.0) { adjustStart(actIndex: actIndex, sceneIndex: sceneIndex, delta: -5.0) }
-                        trimButton(label: "-1с", delta: -1.0) { adjustStart(actIndex: actIndex, sceneIndex: sceneIndex, delta: -1.0) }
-                        trimButton(label: "-0.2с", delta: -0.2) { adjustStart(actIndex: actIndex, sceneIndex: sceneIndex, delta: -0.2) }
-                        trimButton(label: "+0.2с", delta: 0.2) { adjustStart(actIndex: actIndex, sceneIndex: sceneIndex, delta: 0.2) }
-                        trimButton(label: "+1с", delta: 1.0) { adjustStart(actIndex: actIndex, sceneIndex: sceneIndex, delta: 1.0) }
-                        trimButton(label: "+5с", delta: 5.0) { adjustStart(actIndex: actIndex, sceneIndex: sceneIndex, delta: 5.0) }
+                        trimButton(label: L10n.tr("-5с"), delta: -5.0) { adjustStart(actIndex: actIndex, sceneIndex: sceneIndex, delta: -5.0) }
+                        trimButton(label: L10n.tr("-1с"), delta: -1.0) { adjustStart(actIndex: actIndex, sceneIndex: sceneIndex, delta: -1.0) }
+                        trimButton(label: L10n.tr("-0.2с"), delta: -0.2) { adjustStart(actIndex: actIndex, sceneIndex: sceneIndex, delta: -0.2) }
+                        trimButton(label: L10n.tr("+0.2с"), delta: 0.2) { adjustStart(actIndex: actIndex, sceneIndex: sceneIndex, delta: 0.2) }
+                        trimButton(label: L10n.tr("+1с"), delta: 1.0) { adjustStart(actIndex: actIndex, sceneIndex: sceneIndex, delta: 1.0) }
+                        trimButton(label: L10n.tr("+5с"), delta: 5.0) { adjustStart(actIndex: actIndex, sceneIndex: sceneIndex, delta: 5.0) }
                     }
                 }
 
@@ -1059,7 +1059,7 @@ struct LongformActEditorView: View {
                         Image(systemName: "speaker.wave.2")
                             .font(.caption2)
                             .foregroundStyle(StudioTheme.accent)
-                        Text("Первая фраза входа:")
+                        Text(L10n.tr("Первая фраза входа:"))
                             .font(.caption2.weight(.medium))
                             .foregroundStyle(.secondary)
                         Text("«\(firstLine.text)»")
@@ -1071,7 +1071,7 @@ struct LongformActEditorView: View {
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    Text("Речь в начале сцены отсутствует (пауза/действие)")
+                    Text(L10n.tr("Речь в начале сцены отсутствует (пауза/действие)"))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -1082,7 +1082,7 @@ struct LongformActEditorView: View {
             // Панель 2: КОНЕЦ СЦЕНЫ (Out-Point)
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Label("КОНЕЦ СЦЕНЫ (OUT):", systemImage: "arrow.left.to.line")
+                    Label(L10n.tr("КОНЕЦ СЦЕНЫ (OUT):"), systemImage: "arrow.left.to.line")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.secondary)
 
@@ -1100,14 +1100,14 @@ struct LongformActEditorView: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.mini)
-                        .help("Проиграть выход сцены")
+                        .help(L10n.tr("Проиграть выход сцены"))
 
-                        trimButton(label: "-5с", delta: -5.0) { adjustEnd(actIndex: actIndex, sceneIndex: sceneIndex, delta: -5.0) }
-                        trimButton(label: "-1с", delta: -1.0) { adjustEnd(actIndex: actIndex, sceneIndex: sceneIndex, delta: -1.0) }
-                        trimButton(label: "-0.2с", delta: -0.2) { adjustEnd(actIndex: actIndex, sceneIndex: sceneIndex, delta: -0.2) }
-                        trimButton(label: "+0.2с", delta: 0.2) { adjustEnd(actIndex: actIndex, sceneIndex: sceneIndex, delta: 0.2) }
-                        trimButton(label: "+1с", delta: 1.0) { adjustEnd(actIndex: actIndex, sceneIndex: sceneIndex, delta: 1.0) }
-                        trimButton(label: "+5с", delta: 5.0) { adjustEnd(actIndex: actIndex, sceneIndex: sceneIndex, delta: 5.0) }
+                        trimButton(label: L10n.tr("-5с"), delta: -5.0) { adjustEnd(actIndex: actIndex, sceneIndex: sceneIndex, delta: -5.0) }
+                        trimButton(label: L10n.tr("-1с"), delta: -1.0) { adjustEnd(actIndex: actIndex, sceneIndex: sceneIndex, delta: -1.0) }
+                        trimButton(label: L10n.tr("-0.2с"), delta: -0.2) { adjustEnd(actIndex: actIndex, sceneIndex: sceneIndex, delta: -0.2) }
+                        trimButton(label: L10n.tr("+0.2с"), delta: 0.2) { adjustEnd(actIndex: actIndex, sceneIndex: sceneIndex, delta: 0.2) }
+                        trimButton(label: L10n.tr("+1с"), delta: 1.0) { adjustEnd(actIndex: actIndex, sceneIndex: sceneIndex, delta: 1.0) }
+                        trimButton(label: L10n.tr("+5с"), delta: 5.0) { adjustEnd(actIndex: actIndex, sceneIndex: sceneIndex, delta: 5.0) }
                     }
                 }
 
@@ -1116,7 +1116,7 @@ struct LongformActEditorView: View {
                         Image(systemName: "speaker.wave.2")
                             .font(.caption2)
                             .foregroundStyle(StudioTheme.accent)
-                        Text("Финальная фраза выхода:")
+                        Text(L10n.tr("Финальная фраза выхода:"))
                             .font(.caption2.weight(.medium))
                             .foregroundStyle(.secondary)
                         Text("«\(lastLine.text)»")
@@ -1128,7 +1128,7 @@ struct LongformActEditorView: View {
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    Text("Речь в конце сцены отсутствует")
+                    Text(L10n.tr("Речь в конце сцены отсутствует"))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -1139,7 +1139,7 @@ struct LongformActEditorView: View {
             sceneRangeSliders(actIndex: actIndex, sceneIndex: sceneIndex)
 
             // Список всех реплик диалога в этом интервале
-            DisclosureGroup("Диалоги в этой сцене (\(includedPhrases.count) фраз)") {
+            DisclosureGroup(L10n.tr("Диалоги в этой сцене (%1$@ фраз)", String(describing: includedPhrases.count))) {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(includedPhrases, id: \.start) { s in
                         HStack(alignment: .top, spacing: 8) {
@@ -1194,16 +1194,16 @@ struct LongformActEditorView: View {
         let lastIndex = max(0, act.scenes.count - 1)
 
         return VStack(alignment: .leading, spacing: 10) {
-            Text("Обрезка акта целиком")
+            Text(L10n.tr("Обрезка акта целиком"))
                 .font(.subheadline.weight(.bold))
 
-            Text("Меняет вход первой сцены и выход последней. Титры актов, субтитры и музыка пересчитаются при перерендере.")
+            Text(L10n.tr("Меняет вход первой сцены и выход последней. Титры актов, субтитры и музыка пересчитаются при перерендере."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label("НАЧАЛО АКТА (IN)", systemImage: "arrow.right.to.line")
+                    Label(L10n.tr("НАЧАЛО АКТА (IN)"), systemImage: "arrow.right.to.line")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.secondary)
                     Text(formatTimecode(first?.start ?? 0))
@@ -1218,16 +1218,16 @@ struct LongformActEditorView: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.mini)
-                        trimButton(label: "-1с", delta: -1.0) { adjustStart(actIndex: actIndex, sceneIndex: 0, delta: -1.0) }
-                        trimButton(label: "-0.2с", delta: -0.2) { adjustStart(actIndex: actIndex, sceneIndex: 0, delta: -0.2) }
-                        trimButton(label: "+0.2с", delta: 0.2) { adjustStart(actIndex: actIndex, sceneIndex: 0, delta: 0.2) }
-                        trimButton(label: "+1с", delta: 1.0) { adjustStart(actIndex: actIndex, sceneIndex: 0, delta: 1.0) }
+                        trimButton(label: L10n.tr("-1с"), delta: -1.0) { adjustStart(actIndex: actIndex, sceneIndex: 0, delta: -1.0) }
+                        trimButton(label: L10n.tr("-0.2с"), delta: -0.2) { adjustStart(actIndex: actIndex, sceneIndex: 0, delta: -0.2) }
+                        trimButton(label: L10n.tr("+0.2с"), delta: 0.2) { adjustStart(actIndex: actIndex, sceneIndex: 0, delta: 0.2) }
+                        trimButton(label: L10n.tr("+1с"), delta: 1.0) { adjustStart(actIndex: actIndex, sceneIndex: 0, delta: 1.0) }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Label("КОНЕЦ АКТА (OUT)", systemImage: "arrow.left.to.line")
+                    Label(L10n.tr("КОНЕЦ АКТА (OUT)"), systemImage: "arrow.left.to.line")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.secondary)
                     Text(formatTimecode(last?.end ?? 0))
@@ -1242,10 +1242,10 @@ struct LongformActEditorView: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.mini)
-                        trimButton(label: "-1с", delta: -1.0) { adjustEnd(actIndex: actIndex, sceneIndex: lastIndex, delta: -1.0) }
-                        trimButton(label: "-0.2с", delta: -0.2) { adjustEnd(actIndex: actIndex, sceneIndex: lastIndex, delta: -0.2) }
-                        trimButton(label: "+0.2с", delta: 0.2) { adjustEnd(actIndex: actIndex, sceneIndex: lastIndex, delta: 0.2) }
-                        trimButton(label: "+1с", delta: 1.0) { adjustEnd(actIndex: actIndex, sceneIndex: lastIndex, delta: 1.0) }
+                        trimButton(label: L10n.tr("-1с"), delta: -1.0) { adjustEnd(actIndex: actIndex, sceneIndex: lastIndex, delta: -1.0) }
+                        trimButton(label: L10n.tr("-0.2с"), delta: -0.2) { adjustEnd(actIndex: actIndex, sceneIndex: lastIndex, delta: -0.2) }
+                        trimButton(label: L10n.tr("+0.2с"), delta: 0.2) { adjustEnd(actIndex: actIndex, sceneIndex: lastIndex, delta: 0.2) }
+                        trimButton(label: L10n.tr("+1с"), delta: 1.0) { adjustEnd(actIndex: actIndex, sceneIndex: lastIndex, delta: 1.0) }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1258,10 +1258,10 @@ struct LongformActEditorView: View {
     private var actPreviewPlayer: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Предпросмотр исходника")
+                Text(L10n.tr("Предпросмотр исходника"))
                     .font(.subheadline.weight(.bold))
                 Spacer()
-                Button("Стоп") {
+                Button(L10n.tr("Стоп")) {
                     stopPreview()
                 }
                 .buttonStyle(.bordered)
@@ -1586,10 +1586,10 @@ struct LongformActEditorView: View {
 
     private func runEditorialReview() {
         guard !isReviewing else { return }
-        OperationJournal.shared.begin("Редакторская проверка монтажа")
+        OperationJournal.shared.begin(L10n.tr("Редакторская проверка монтажа"))
         isReviewing = true
         reviewMessage = nil
-        reviewProgress = "Запускаю редакторскую проверку…"
+        reviewProgress = L10n.tr("Запускаю редакторскую проверку…")
         reviewAttempts = []
         reviewEvents = []
         reviewChanges = []
@@ -1609,7 +1609,7 @@ struct LongformActEditorView: View {
                 reviewChanges = outcome.changes
                 guard result.acts.count == editedActs.count,
                       zip(result.acts, editedActs).allSatisfy({ $0.0.segments.count == $0.1.scenes.count }) else {
-                    reviewMessage = "Ответ модели не совпал со сценами. Монтаж сохранён."
+                    reviewMessage = L10n.tr("Ответ модели не совпал со сценами. Монтаж сохранён.")
                     return
                 }
                 for (actIndex, reviewedAct) in result.acts.enumerated() {
@@ -1622,7 +1622,7 @@ struct LongformActEditorView: View {
                 reviewMessage = outcome.summary
             } catch {
                 OperationJournal.shared.append(error.localizedDescription, level: .error)
-                reviewMessage = "Не удалось запустить проверку: \(error.localizedDescription)"
+                reviewMessage = L10n.tr("Не удалось запустить проверку: %1$@", String(describing: error.localizedDescription))
             }
         }
     }
@@ -1639,14 +1639,14 @@ struct LongformActEditorView: View {
             if !range.start.isFinite || !range.end.isFinite || range.start < 0
                 || range.duration < minimumRenderableClipDuration
                 || (sourceDuration.isFinite && range.end > sourceDuration) {
-                return "Проверьте границы: фрагмент должен находиться внутри исходного фильма и длиться не менее 0,1 секунды."
+                return L10n.tr("Проверьте границы: фрагмент должен находиться внутри исходного фильма и длиться не менее 0,1 секунды.")
             }
         }
         if coverText.trimmed.isEmpty || coverText.count > 42 || coverText.split(whereSeparator: \.isWhitespace).count > 5 {
-            return "Текст обложки: от одного до пяти слов, не больше 42 символов."
+            return L10n.tr("Текст обложки: от одного до пяти слов, не больше 42 символов.")
         }
         if publicationTitle.count > 120 || hookText.count > 180 || conclusionText.count > 140 || ctaText.count > 200 {
-            return "Сократите текст: название до 120, хук до 180, вывод до 140, CTA до 200 символов."
+            return L10n.tr("Сократите текст: название до 120, хук до 180, вывод до 140, CTA до 200 символов.")
         }
         return nil
     }
@@ -1658,11 +1658,11 @@ struct LongformActEditorView: View {
         switch act.effectiveTitleSource {
         case .llm, .transcriptLine:
             return act.titleProvenance?.evidence
-                ?? "Реплика-основание не записана: метка есть, доказать её нечем"
+                ?? L10n.tr("Реплика-основание не записана: метка есть, доказать её нечем")
         case .template:
-            return "Название дала формула темы — ни модель, ни реплика акта его не выводили"
+            return L10n.tr("Название дала формула темы — ни модель, ни реплика акта его не выводили")
         case .unknown:
-            return "Источник названия не зафиксирован"
+            return L10n.tr("Источник названия не зафиксирован")
         }
     }
 

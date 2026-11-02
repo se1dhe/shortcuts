@@ -33,15 +33,25 @@ struct SettingsView: View {
         @Bindable var settings = settings
         VStack(spacing: 0) {
             HStack {
-                Text("Настройки студии").font(.system(size: 18, weight: .semibold))
+                Text(L10n.tr("Настройки студии")).font(.system(size: 18, weight: .semibold))
                 Spacer()
-                Button("Готово") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(L10n.tr("Готово")) { dismiss() }.keyboardShortcut(.cancelAction)
             }.padding(20).background(StudioTheme.panel)
             Divider()
             Form {
-            Section("Аккаунты публикации") {
+            Section(L10n.tr("Язык интерфейса")) {
+                @Bindable var localization = InterfaceLocalization.shared
+                Picker(L10n.tr("Язык приложения"), selection: $localization.language) {
+                    ForEach(AppInterfaceLanguage.allCases) { language in
+                        Text(language.nativeName).tag(language)
+                    }
+                }
+                Text(L10n.tr("Язык интерфейса не меняет озвучку, субтитры и тексты выпуска."))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section(L10n.tr("Аккаунты публикации")) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Эссе и шортсы публикуются в ваши аккаунты YouTube и TikTok. Войдите один раз в открывшемся окне браузера.")
+                    Text(L10n.tr("Эссе и шортсы публикуются в ваши аккаунты YouTube и TikTok. Войдите один раз в открывшемся окне браузера."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -49,13 +59,13 @@ struct SettingsView: View {
                         Button {
                             openBrowserLogin()
                         } label: {
-                            Label("Войти в аккаунты", systemImage: "person.crop.circle.badge.checkmark")
+                            Label(L10n.tr("Войти в аккаунты"), systemImage: "person.crop.circle.badge.checkmark")
                         }
                         .buttonStyle(StudioPrimaryButtonStyle())
                         .tint(StudioTheme.accent)
                         .disabled(isOpeningBrowserLogin)
 
-                        Button("Проверить статус") {
+                        Button(L10n.tr("Проверить статус")) {
                             checkBrowserAuth()
                         }
                         .disabled(isCheckingBrowserAuth)
@@ -79,46 +89,46 @@ struct SettingsView: View {
                             .foregroundStyle(.orange)
                     }
 
-                    Text("Профиль и сохранённые сессии хранятся локально: ~/Library/Application Support/Shortcast/BrowserProfile")
+                    Text(L10n.tr("Профиль и сохранённые сессии хранятся локально: ~/Library/Application Support/Shortcast/BrowserProfile"))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
             }
 
-            Section("Telegram выпуска") {
-                SecureField("Токен бота Telegram", text: $settings.telegramBotToken)
-                TextField("Канал (username или ID)", text: $settings.telegramChannelId)
+            Section(L10n.tr("Telegram выпуска")) {
+                SecureField(L10n.tr("Токен бота Telegram"), text: $settings.telegramBotToken)
+                TextField(L10n.tr("Канал (username или ID)"), text: $settings.telegramChannelId)
 
 
-                Text("Добавьте бота администратором своего канала с правом публикации. Тексты постов формируются из текущего выпуска.")
+                Text(L10n.tr("Добавьте бота администратором своего канала с правом публикации. Тексты постов формируются из текущего выпуска."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 HStack(spacing: 10) {
-                    Button("Проверить бота", action: testTelegramConnection)
+                    Button(L10n.tr("Проверить бота"), action: testTelegramConnection)
                         .disabled(settings.telegramBotToken.trimmed.isEmpty || telegramConnection == .checking)
                     telegramConnectionStatus
                     Spacer()
-                    Link("Создать бота (@BotFather) ↗", destination: URL(string: "https://t.me/BotFather")!)
+                    Link(L10n.tr("Создать бота (@BotFather) ↗"), destination: URL(string: "https://t.me/BotFather")!)
                         .foregroundStyle(StudioTheme.accent)
                 }
             }
 
-            Section("Поддержка канала") {
-                TextField("Ссылка Donatello", text: $settings.donatelloURL)
-                Button("Благодарности донатерам…", systemImage: "heart.text.square") { showSupportEditor = true }
-                Text("Настройки используются в новых эссе. Финал готового эссе меняется в его оформлении публикации.")
+            Section(L10n.tr("Поддержка канала")) {
+                TextField(L10n.tr("Ссылка Donatello"), text: $settings.donatelloURL)
+                Button(L10n.tr("Благодарности донатерам…"), systemImage: "heart.text.square") { showSupportEditor = true }
+                Text(L10n.tr("Настройки используются в новых эссе. Финал готового эссе меняется в его оформлении публикации."))
                     .font(.caption).foregroundStyle(.secondary)
             }
 
             Section("TMDB") {
                 SecureField("TMDB API key", text: $settings.tmdbAPIKey)
-                Text("Данные о фильме: название, год, актёры и постер. Ключ можно получить на themoviedb.org.")
+                Text(L10n.tr("Данные о фильме: название, год, актёры и постер. Ключ можно получить на themoviedb.org."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Section("Рабочая папка") {
+            Section(L10n.tr("Рабочая папка")) {
                 HStack(spacing: 8) {
                     Image(systemName: "folder")
                         .foregroundStyle(.secondary)
@@ -127,7 +137,7 @@ struct SettingsView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer()
-                    Button("Выбрать…") { selectWorkingFolder() }
+                    Button(L10n.tr("Выбрать…")) { selectWorkingFolder() }
                         .buttonStyle(.borderless)
                     Button { settings.workingDirectory = nil } label: {
                         Image(systemName: "xmark.circle.fill")
@@ -136,12 +146,12 @@ struct SettingsView: View {
                     .buttonStyle(.borderless)
                     .disabled(settings.workingDirectory == nil)
                 }
-                Text("Здесь хранятся исходники проекта и материалы обработки.")
+                Text(L10n.tr("Здесь хранятся исходники проекта и материалы обработки."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Section("Папка экспорта") {
+            Section(L10n.tr("Папка экспорта")) {
                 HStack(spacing: 8) {
                     Image(systemName: "folder")
                         .foregroundStyle(.secondary)
@@ -150,7 +160,7 @@ struct SettingsView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer()
-                    Button("Выбрать…") { selectOutputFolder() }
+                    Button(L10n.tr("Выбрать…")) { selectOutputFolder() }
                         .buttonStyle(.borderless)
                     Button { settings.outputDirectory = nil } label: {
                         Image(systemName: "xmark.circle.fill")
@@ -159,18 +169,18 @@ struct SettingsView: View {
                     .buttonStyle(.borderless)
                     .disabled(settings.outputDirectory == nil)
                 }
-                Text("Готовые эссе, шортсы и обложки сохраняются в папке экспорта.")
+                Text(L10n.tr("Готовые эссе, шортсы и обложки сохраняются в папке экспорта."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Section("Хранилище") {
+            Section(L10n.tr("Хранилище")) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Очистка временных файлов")
+                            Text(L10n.tr("Очистка временных файлов"))
                                 .font(.callout.weight(.medium))
-                            Text("Удаляет только временные файлы приложения. Фильмы, проекты и готовые выпуски сохраняются.")
+                            Text(L10n.tr("Удаляет только временные файлы приложения. Фильмы, проекты и готовые выпуски сохраняются."))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -181,7 +191,7 @@ struct SettingsView: View {
                             if isCleaning {
                                 ProgressView().controlSize(.small)
                             } else {
-                                Text("Очистить")
+                                Text(L10n.tr("Очистить"))
                             }
                         }
                         .disabled(isCleaning || workspace.isBusy)
@@ -189,12 +199,12 @@ struct SettingsView: View {
 
                     HStack(spacing: 8) {
                         if let bytes = removableSizeBytes {
-                            Text("Можно освободить: **\(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))**")
+                            Text(L10n.tr("Можно освободить: **%1$@**", String(describing: ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         } else if isCalculatingSize {
                             ProgressView().controlSize(.mini)
-                            Text("Подсчитываем временные файлы…")
+                            Text(L10n.tr("Подсчитываем временные файлы…"))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -219,38 +229,38 @@ struct SettingsView: View {
                     }
                 }
                 .confirmationDialog(
-                    "Очистить временные файлы?",
+                    L10n.tr("Очистить временные файлы?"),
                     isPresented: $showCleanupConfirm,
                     titleVisibility: .visible
                 ) {
-                    Button("Удалить временные файлы", role: .destructive) {
+                    Button(L10n.tr("Удалить временные файлы"), role: .destructive) {
                         runDeepClean()
                     }
-                    Button("Отмена", role: .cancel) {}
+                    Button(L10n.tr("Отмена"), role: .cancel) {}
                 } message: {
-                    Text("Удалятся временные файлы и кэш компиляции. Исходные фильмы, сохранённые проекты, модели и экспортированные видео сохраняются.")
+                    Text(L10n.tr("Удалятся временные файлы и кэш компиляции. Исходные фильмы, сохранённые проекты, модели и экспортированные видео сохраняются."))
                 }
             }
 
-            Section("Модель режиссёра") {
-                Picker("Модель", selection: $settings.copywriterModel) {
+            Section(L10n.tr("Модель режиссёра")) {
+                Picker(L10n.tr("Модель"), selection: $settings.copywriterModel) {
                     ForEach(AppSettings.CopywriterModel.allCases) { model in
                         Text(model.displayName).tag(model)
                     }
                 }
-                Text("Выбирает тему эссе, сцены и два шортса. Загружается по необходимости.")
+                Text(L10n.tr("Выбирает тему эссе, сцены и два шортса. Загружается по необходимости."))
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Транскрипция") {
-                TextField("Язык озвучки", text: $settings.languageOverride, prompt: Text("uk"))
-                Text("Сначала используются субтитры рядом с фильмом. Если их нет — локальная транскрипция WhisperKit.")
+            Section(L10n.tr("Транскрипция")) {
+                TextField(L10n.tr("Язык озвучки"), text: $settings.languageOverride, prompt: Text("uk"))
+                Text(L10n.tr("Сначала используются субтитры рядом с фильмом. Если их нет — локальная транскрипция WhisperKit."))
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Обработка эссе") {
-                Toggle("Логотип канала", isOn: $settings.channelLogoWatermarkEnabled)
+            Section(L10n.tr("Обработка эссе")) {
+                Toggle(L10n.tr("Логотип канала"), isOn: $settings.channelLogoWatermarkEnabled)
             }
-            Section("Этот Mac") {
-                LabeledContent("Память", value: "\(modelManager.systemRAMGB) GB")
+            Section(L10n.tr("Этот Mac")) {
+                LabeledContent(L10n.tr("Память"), value: "\(modelManager.systemRAMGB) GB")
             }
         }
         .formStyle(.grouped)
@@ -375,7 +385,7 @@ struct SettingsView: View {
                     botToken: botToken,
                     channelId: channelId
                 )
-                telegramConnection = .ok("Бот \(botUsername) подключен к «\(channelTitle)»")
+                telegramConnection = .ok(L10n.tr("Бот %1$@ подключен к «%2$@»", String(describing: botUsername), String(describing: channelTitle)))
             } catch {
                 telegramConnection = .failed(error.localizedDescription)
             }
@@ -388,7 +398,7 @@ struct SettingsView: View {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
-        panel.message = "Выберите рабочую папку студии"
+        panel.message = L10n.tr("Выберите рабочую папку студии")
         panel.begin { response in
             if response == .OK, let url = panel.url {
                 settings.workingDirectory = url
@@ -402,7 +412,7 @@ struct SettingsView: View {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
-        panel.message = "Выберите папку готовых эссе и шортсов"
+        panel.message = L10n.tr("Выберите папку готовых эссе и шортсов")
         panel.begin { response in
             if response == .OK, let url = panel.url {
                 settings.outputDirectory = url
@@ -450,61 +460,61 @@ struct EssaySupportEditor: View {
         VStack(alignment: .leading, spacing: 18) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Поддержка и благодарности").font(.title2.bold())
-                    Text(defaultsOnly ? "Настройки для новых эссе" : "Финальный экран этого эссе")
+                    Text(L10n.tr("Поддержка и благодарности")).font(.title2.bold())
+                    Text(defaultsOnly ? L10n.tr("Настройки для новых эссе") : L10n.tr("Финальный экран этого эссе"))
                         .font(.caption).foregroundStyle(StudioTheme.muted)
                 }
                 Spacer()
-                Button("Закрыть") { dismiss() }.disabled(saving)
+                Button(L10n.tr("Закрыть")) { dismiss() }.disabled(saving)
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-            TextField("Ссылка Donatello", text: $url).textFieldStyle(.roundedBorder)
-            Text("Ссылка добавляется в описание YouTube. Ники появляются в видео только при включённых благодарностях.")
+            TextField(L10n.tr("Ссылка Donatello"), text: $url).textFieldStyle(.roundedBorder)
+            Text(L10n.tr("Ссылка добавляется в описание YouTube. Ники появляются в видео только при включённых благодарностях."))
                 .font(.caption).foregroundStyle(StudioTheme.muted)
-            Toggle("Благодарить донатеров в конце эссе", isOn: $enabled).toggleStyle(.switch)
+            Toggle(L10n.tr("Благодарить донатеров в конце эссе"), isOn: $enabled).toggleStyle(.switch)
                 .onChange(of: enabled) { _, value in if value && rows.isEmpty { addNickname() } }
             if enabled {
                 HStack {
-                    Text("Ники · \(support.nicknames.count) / 24").font(.headline)
+                    Text(L10n.tr("Ники · %1$@ / 24", String(describing: support.nicknames.count))).font(.headline)
                     Spacer()
-                    Button("Ввести списком", systemImage: "list.bullet") { showList = true }
-                    Button("Добавить ник", systemImage: "plus") { addNickname() }.disabled(rows.count >= 24)
+                    Button(L10n.tr("Ввести списком"), systemImage: "list.bullet") { showList = true }
+                    Button(L10n.tr("Добавить ник"), systemImage: "plus") { addNickname() }.disabled(rows.count >= 24)
                 }
                 ScrollView {
                     VStack(spacing: 8) {
                         ForEach($rows) { $row in
                             HStack {
-                                TextField("Ник донатера", text: $row.text)
+                                TextField(L10n.tr("Ник донатера"), text: $row.text)
                                     .textFieldStyle(.roundedBorder).focused($focusedNickname, equals: row.id)
                                 Button { rows.removeAll { $0.id == row.id } } label: {
                                     Image(systemName: "minus.circle")
-                                }.buttonStyle(.plain).help("Убрать ник")
+                                }.buttonStyle(.plain).help(L10n.tr("Убрать ник"))
                             }
                         }
                     }.padding(2)
                 }.frame(maxHeight: 150)
-                Text("Без сумм и личных данных: только введённые ники. Повторы и пустые строки пропускаются.")
+                Text(L10n.tr("Без сумм и личных данных: только введённые ники. Повторы и пустые строки пропускаются."))
                     .font(.caption).foregroundStyle(StudioTheme.muted)
             }
             if let issue = support.validationIssue {
                 Label(issue, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.yellow)
             }
-            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+            if let error { Text(L10n.tr(error)).font(.caption).foregroundStyle(.red) }
             if support.validationIssue == nil {
                 DonorCreditsPreview(support: support, ctaText: ctaText, theme: theme)
                     .aspectRatio(16 / 9, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
-                Text("Предпросмотр финала · \(support.finaleDuration(text: ctaText), specifier: "%.1f") с. Благодарности идут одновременно с призывом к обсуждению.")
+                Text(L10n.tr("Предпросмотр финала · %1$@ с. Благодарности идут одновременно с призывом к обсуждению.", String(format: "%.1f", support.finaleDuration(text: ctaText))))
                     .font(.caption).foregroundStyle(StudioTheme.muted)
             }
                 }
             }
             HStack {
-                Text(defaultsOnly ? "Настройки будут использованы в новых эссе." : changesVideo ? "Сохранение пересоберёт видео с новым финалом." : "Ссылка обновится без пересборки видео.")
+                Text(defaultsOnly ? L10n.tr("Настройки будут использованы в новых эссе.") : changesVideo ? L10n.tr("Сохранение пересоберёт видео с новым финалом.") : L10n.tr("Ссылка обновится без пересборки видео."))
                     .font(.caption).foregroundStyle(StudioTheme.muted)
                 Spacer()
-                Button(saving ? "Сохраняю…" : changesVideo ? "Сохранить и пересобрать" : "Сохранить") {
+                Button(saving ? L10n.tr("Сохраняю…") : changesVideo ? L10n.tr("Сохранить и пересобрать") : L10n.tr("Сохранить")) {
                     saving = true; error = nil
                     Task { @MainActor in
                         defer { saving = false }
@@ -517,14 +527,14 @@ struct EssaySupportEditor: View {
             .interactiveDismissDisabled(saving)
             .sheet(isPresented: $showList) {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Добавить ники списком").font(.title2.bold())
-                    Text("Разделяйте ники запятой или переносом строки.").foregroundStyle(StudioTheme.muted)
+                    Text(L10n.tr("Добавить ники списком")).font(.title2.bold())
+                    Text(L10n.tr("Разделяйте ники запятой или переносом строки.")).foregroundStyle(StudioTheme.muted)
                     TextEditor(text: $listText).font(.system(.body, design: .monospaced))
                         .frame(height: 180).scrollContentBackground(.hidden).studioPanel(padding: 10)
                     HStack {
-                        Button("Отмена") { showList = false }
+                        Button(L10n.tr("Отмена")) { showList = false }
                         Spacer()
-                        Button("Добавить в список") {
+                        Button(L10n.tr("Добавить в список")) {
                             let names = EssaySupport.names(from: (rows.map(\.text) + [listText.replacingOccurrences(of: ",", with: "\n")]).joined(separator: "\n"))
                             rows = names.map { NicknameRow(text: $0) }
                             listText = ""; showList = false

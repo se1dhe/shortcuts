@@ -49,7 +49,7 @@ struct ThematicConceptSelectionSheet: View {
         isRegenerating: Bool = false,
         essayPlan: EssayPlan? = nil,
         planningError: String? = nil,
-        cancelTitle: String = "Отмена",
+        cancelTitle: String = L10n.tr("Отмена"),
         onSelect: @escaping (ThematicConcept, String, LongformAudioSettings, EssayPlan) -> Void,
         onCancel: @escaping () -> Void,
         onRegenerate: ((EssayFormat) -> Void)? = nil
@@ -85,33 +85,33 @@ struct ThematicConceptSelectionSheet: View {
         switch effectiveProvenance {
         case .llm:
             return (
-                "Нейросеть проанализировала диалоги и выбрала фундаментальную тему для 4–8-минутного кино-эссе:",
-                "ВЫБОР ИИ • ГЛАВНАЯ ТЕМА ЭССЕ",
+                L10n.tr("Нейросеть проанализировала диалоги и выбрала фундаментальную тему для 4–8-минутного кино-эссе:"),
+                L10n.tr("ВЫБОР ИИ • ГЛАВНАЯ ТЕМА ЭССЕ"),
                 "sparkles",
-                "Почему модель выбрала именно эту тему:",
+                L10n.tr("Почему модель выбрала именно эту тему:"),
                 "brain.head.profile",
                 nil
             )
         case .manual:
             return (
-                "Тему выбрали вы, а не модель — это фиксированный лейтмотив для 4–8-минутного кино-эссе:",
-                "ВЫБРАНО ВАМИ • ГЛАВНАЯ ТЕМА ЭССЕ",
+                L10n.tr("Тему выбрали вы, а не модель — это фиксированный лейтмотив для 4–8-минутного кино-эссе:"),
+                L10n.tr("ВЫБРАНО ВАМИ • ГЛАВНАЯ ТЕМА ЭССЕ"),
                 "hand.tap.fill",
-                "Почему вы выбрали эту тему:",
+                L10n.tr("Почему вы выбрали эту тему:"),
                 "hand.tap.fill",
                 nil
             )
         case .unknown:
-            let base = "Провенанс темы не записан: она могла прийти из проекта, сохранённого до учёта источников, поэтому мы не утверждаем, что её выбрала модель."
+            let base = L10n.tr("Провенанс темы не записан: она могла прийти из проекта, сохранённого до учёта источников, поэтому мы не утверждаем, что её выбрала модель.")
             return (
-                "Источник этой темы не записан, поэтому сказать, кто её выбрал, невозможно. Ниже тема, на которой стоит собрать 4–8-минутное кино-эссе:",
-                "ИСТОЧНИК НЕ ЗАПИСАН • ГЛАВНАЯ ТЕМА ЭССЕ",
+                L10n.tr("Источник этой темы не записан, поэтому сказать, кто её выбрал, невозможно. Ниже тема, на которой стоит собрать 4–8-минутное кино-эссе:"),
+                L10n.tr("ИСТОЧНИК НЕ ЗАПИСАН • ГЛАВНАЯ ТЕМА ЭССЕ"),
                 "questionmark.circle",
-                "Обоснование темы (кто её выбрал — не записано):",
+                L10n.tr("Обоснование темы (кто её выбрал — не записано):"),
                 "questionmark.circle",
                 onRegenerate == nil
                     ? base
-                    : "\(base) Нажмите «Пересчитать темы с AI», чтобы тему действительно выбрала нейросеть."
+                    : L10n.tr("%1$@ Нажмите «Пересчитать темы с AI», чтобы тему действительно выбрала нейросеть.", String(describing: base))
             )
         }
     }
@@ -123,12 +123,12 @@ struct ThematicConceptSelectionSheet: View {
     /// Что сказать, когда тем ещё нет: экран не выдумывает лейтмотив за модель.
     private var emptyConceptsNote: String {
         if isRegenerating {
-            return "Director ещё анализирует сценарий — тем пока нет."
+            return L10n.tr("Director ещё анализирует сценарий — тем пока нет.")
         }
         if onRegenerate != nil {
-            return "Тем от нейросети пока нет: нажмите «Пересчитать темы с AI», чтобы тему выбрала модель."
+            return L10n.tr("Тем от нейросети пока нет: нажмите «Пересчитать темы с AI», чтобы тему выбрала модель.")
         }
-        return "Тем от нейросети пока нет — экран не выдумывает тему за модель."
+        return L10n.tr("Тем от нейросети пока нет — экран не выдумывает тему за модель.")
     }
 
     private var alternativeConcepts: [ThematicConcept] {
@@ -194,8 +194,8 @@ struct ThematicConceptSelectionSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("Формат выпуска", selection: $essayFormat) {
-                ForEach(EssayFormat.allCases) { format in Text(format.title).tag(format) }
+            Picker(L10n.tr("Формат выпуска"), selection: $essayFormat) {
+                ForEach(EssayFormat.allCases) { format in Text(L10n.tr(format.title)).tag(format) }
             }.pickerStyle(.segmented).disabled(isRegenerating).padding(.horizontal, 28).padding(.top, 14)
             // Заголовок и блок названия фильма
             VStack(spacing: 10) {
@@ -203,7 +203,7 @@ struct ThematicConceptSelectionSheet: View {
                     Image(systemName: "film.fill")
                         .font(.title2)
                         .foregroundStyle(StudioTheme.accent)
-                    Text("Центральная тема кино-эссе (Shortcast Cinema)")
+                    Text(L10n.tr("Центральная тема кино-эссе (Shortcast Cinema)"))
                         .font(.title2.weight(.bold))
 
                     if let onRegenerate {
@@ -216,24 +216,24 @@ struct ThematicConceptSelectionSheet: View {
                                 } else {
                                     Image(systemName: "sparkles")
                                 }
-                                Text(isRegenerating ? "Анализ сценария..." : "Пересчитать темы с AI")
+                                Text(isRegenerating ? L10n.tr("Анализ сценария...") : L10n.tr("Пересчитать темы с AI"))
                             }
                             .font(.caption.weight(.semibold))
                         }
                         .buttonStyle(.bordered)
                         .tint(StudioTheme.accent)
                         .disabled(isRegenerating)
-                        .help("Повторно запустить глубокий анализ сценария через нейросеть Director")
+                        .help(L10n.tr("Повторно запустить глубокий анализ сценария через нейросеть Director"))
                     }
                 }
 
                 // Поле подтверждения / редактирования названия фильма
                 HStack(spacing: 12) {
-                    Label("Фильм:", systemImage: "sparkles.tv")
+                    Label(L10n.tr("Фильм:"), systemImage: "sparkles.tv")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
                     
-                    TextField("Название фильма (например, Револьвер)", text: $editedMovieTitle)
+                    TextField(L10n.tr("Название фильма (например, Револьвер)"), text: $editedMovieTitle)
                         .textFieldStyle(.plain)
                         .font(.system(size: 14, weight: .bold))
                         .padding(.horizontal, 10)
@@ -319,7 +319,7 @@ struct ThematicConceptSelectionSheet: View {
                                     .clipShape(Capsule())
 
                                     if isGenerated {
-                                        Text("УЖЕ СМОНТИРОВАНО ✓")
+                                        Text(L10n.tr("УЖЕ СМОНТИРОВАНО ✓"))
                                             .font(.system(size: 9, weight: .black))
                                             .padding(.horizontal, 6)
                                             .padding(.vertical, 2)
@@ -330,7 +330,7 @@ struct ThematicConceptSelectionSheet: View {
 
                                     Spacer()
 
-                                    Text("РЕКОМЕНДОВАНО ДЛЯ YOUTUBE")
+                                    Text(L10n.tr("РЕКОМЕНДОВАНО ДЛЯ YOUTUBE"))
                                         .font(.system(size: 10, weight: .heavy))
                                         .foregroundStyle(StudioTheme.accent.opacity(0.85))
                                 }
@@ -419,7 +419,7 @@ struct ThematicConceptSelectionSheet: View {
                     if !alternativeConcepts.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
-                                Text("Альтернативные грани и темы фильма:")
+                                Text(L10n.tr("Альтернативные грани и темы фильма:"))
                                     .font(.caption.weight(.bold))
                                     .foregroundStyle(.secondary)
                                 Spacer()
@@ -442,7 +442,7 @@ struct ThematicConceptSelectionSheet: View {
                                                     .foregroundStyle(isSelected ? .white : .primary)
 
                                                 if isGenerated {
-                                                    Text("СМОНТИРОВАНО ✓")
+                                                    Text(L10n.tr("СМОНТИРОВАНО ✓"))
                                                         .font(.system(size: 9, weight: .black))
                                                         .padding(.horizontal, 6)
                                                         .padding(.vertical, 2)
@@ -503,7 +503,7 @@ struct ThematicConceptSelectionSheet: View {
                             HStack {
                                 Image(systemName: showCustomInput ? "chevron.down" : "plus.circle.fill")
                                     .foregroundStyle(StudioTheme.accent)
-                                Text("Ввести своё философское слово/тему вручную")
+                                Text(L10n.tr("Ввести своё философское слово/тему вручную"))
                                     .font(.subheadline.weight(.medium))
                                 Spacer()
                             }
@@ -512,14 +512,14 @@ struct ThematicConceptSelectionSheet: View {
 
                         if showCustomInput {
                             VStack(spacing: 10) {
-                                TextField("Главное слово (например: Честь, Гордость, Гнев)", text: $customWord)
+                                TextField(L10n.tr("Главное слово (например: Честь, Гордость, Гнев)"), text: $customWord)
                                     .textFieldStyle(.roundedBorder)
 
-                                TextField("Заголовок YouTube для этого эссе", text: $customTitle)
+                                TextField(L10n.tr("Заголовок YouTube для этого эссе"), text: $customTitle)
                                     .textFieldStyle(.roundedBorder)
 
                                 // Честно говорим, чего у ручной темы нет и почему.
-                                Text("Слогана и философского тезиса у этой темы не будет: их пишет только модель, а экран за модель ничего не сочиняет. Заголовок возьмём из вашего поля; если оно пустое, публикация получит название из слова темы и имени фильма. Тема помечена как выбранная вами, а не моделью.")
+                                Text(L10n.tr("Слогана и философского тезиса у этой темы не будет: их пишет только модель, а экран за модель ничего не сочиняет. Заголовок возьмём из вашего поля; если оно пустое, публикация получит название из слова темы и имени фильма. Тема помечена как выбранная вами, а не моделью."))
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -535,7 +535,7 @@ struct ThematicConceptSelectionSheet: View {
 
             // Один явный выбор модели, а не меню и не нулевой пункт массива.
             VStack(alignment: .leading, spacing: 8) {
-                Label("Хук, выбранный моделью", systemImage: "sparkles")
+                Label(L10n.tr("Хук, выбранный моделью"), systemImage: "sparkles")
                     .font(.subheadline.weight(.semibold))
                 if let hook = applicableEssayPlan?.selectedHook, hook.source == .llm {
                     Text(hook.text).font(.body).textSelection(.enabled)
@@ -543,7 +543,7 @@ struct ThematicConceptSelectionSheet: View {
                         Text(reason).font(.caption).foregroundStyle(.secondary)
                     }
                 } else {
-                    Text("Модель определит один подходящий хук при анализе выбранной темы.")
+                    Text(L10n.tr("Модель определит один подходящий хук при анализе выбранной темы."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -552,7 +552,7 @@ struct ThematicConceptSelectionSheet: View {
             .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.05)))
 
             // Хронометраж эссе не выбирается: он растёт из выбранной темы
-            Text("Хронометраж не выбирается: он рождается из темы — от 4:00 до 8:00.")
+            Text(L10n.tr("Хронометраж не выбирается: он рождается из темы — от 4:00 до 8:00."))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
@@ -565,7 +565,7 @@ struct ThematicConceptSelectionSheet: View {
                         Image(systemName: "waveform.badge.magnifyingglass")
                             .font(.headline)
                             .foregroundStyle(StudioTheme.accent)
-                        Text("Звукорежиссура и аудиомастеринг")
+                        Text(L10n.tr("Звукорежиссура и аудиомастеринг"))
                             .font(.headline)
                     }
 
@@ -575,12 +575,12 @@ struct ThematicConceptSelectionSheet: View {
                     Toggle(isOn: $coldOpenEnabled) {
                         HStack(spacing: 4) {
                             Image(systemName: "film.stack")
-                            Text("Cold Open (2.5с интро)")
+                            Text(L10n.tr("Cold Open (2.5с интро)"))
                         }
                         .font(.caption.weight(.medium))
                     }
                     .toggleStyle(.checkbox)
-                    .help("Плавное кинематографическое вступление в затемнении перед первым кадром фильма")
+                    .help(L10n.tr("Плавное кинематографическое вступление в затемнении перед первым кадром фильма"))
                 }
 
                 // 1. Секция диалогов фильма: Dialogue Focus (Center Channel Extraction)
@@ -588,9 +588,9 @@ struct ThematicConceptSelectionSheet: View {
                     Toggle(isOn: $dialogueFocusEnabled) {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
-                                Text("Фокус на диалогах (Dialogue Focus)")
+                                Text(L10n.tr("Фокус на диалогах (Dialogue Focus)"))
                                     .font(.subheadline.weight(.semibold))
-                                Text("5.1 / СТЕРЕО")
+                                Text(L10n.tr("5.1 / СТЕРЕО"))
                                     .font(.system(size: 9, weight: .black))
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
@@ -598,7 +598,7 @@ struct ThematicConceptSelectionSheet: View {
                                     .foregroundStyle(StudioTheme.accent)
                                     .clipShape(Capsule())
                             }
-                            Text("Приглушать оригинальную музыку фильма, сохраняя чёткие голоса актеров дубляжа")
+                            Text(L10n.tr("Приглушать оригинальную музыку фильма, сохраняя чёткие голоса актеров дубляжа"))
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -609,7 +609,7 @@ struct ThematicConceptSelectionSheet: View {
 
                     if dialogueFocusEnabled {
                         HStack(spacing: 8) {
-                            Text("Подавление музыки:")
+                            Text(L10n.tr("Подавление музыки:"))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Slider(value: $originalMusicDucking, in: 0.40...1.00, step: 0.05)
@@ -619,7 +619,7 @@ struct ThematicConceptSelectionSheet: View {
                                 .foregroundStyle(StudioTheme.accent)
                                 .frame(width: 50, alignment: .trailing)
                         }
-                        .help("Уровень приглушения фоновой музыки и шумов оригинального фильма (по умолчанию -82%)")
+                        .help(L10n.tr("Уровень приглушения фоновой музыки и шумов оригинального фильма (по умолчанию -82%)"))
                     }
                 }
                 .padding(.horizontal, 12)
@@ -629,36 +629,36 @@ struct ThematicConceptSelectionSheet: View {
                 // 2. Секция фоновой музыки: Cinematic Dark Ambient
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Toggle("Фоновая музыка", isOn: $ambientMusicEnabled)
+                        Toggle(L10n.tr("Фоновая музыка"), isOn: $ambientMusicEnabled)
                             .font(.subheadline.weight(.semibold))
                             .toggleStyle(.switch)
 
                         Spacer()
 
                         if ambientMusicEnabled {
-                            Toggle("Приглушать под речью (Sidechain Ducking)", isOn: $duckingEnabled)
+                            Toggle(L10n.tr("Приглушать под речью (Sidechain Ducking)"), isOn: $duckingEnabled)
                                 .font(.caption.weight(.medium))
                                 .toggleStyle(.checkbox)
-                                .help("Автоматически снижать громкость саундтрека во время реплик персонажей")
+                                .help(L10n.tr("Автоматически снижать громкость саундтрека во время реплик персонажей"))
                         }
                     }
 
                     if ambientMusicEnabled {
                         if let directory = musicLibrary.directory {
-                            Text("\(directory.path) · треков: \(musicLibrary.tracks.count)")
+                            Text(L10n.tr("%1$@ · треков: %2$@", String(describing: directory.path), String(describing: musicLibrary.tracks.count)))
                                 .font(.caption).foregroundStyle(.secondary)
                                 .lineLimit(1).truncationMode(.middle)
                         }
                         if let error = musicLibrary.error {
-                            Text(error).font(.caption).foregroundStyle(StudioTheme.warning)
+                            Text(L10n.tr(error)).font(.caption).foregroundStyle(StudioTheme.warning)
                         }
                         HStack(spacing: 12) {
-                            Picker("Саундтрек:", selection: Binding(
+                            Picker(L10n.tr("Саундтрек:"), selection: Binding(
                                 get: { selectedMusicPath },
                                 set: { path in
                                     selectedMusicPath = FileManager.default.isReadableFile(atPath: path) ? path : ""
                                 })) {
-                                Text("Без трека").tag("")
+                                Text(L10n.tr("Без трека")).tag("")
                                 ForEach(musicLibrary.tracks) { track in
                                     Text(track.name).tag(track.url.path)
                                 }
@@ -666,12 +666,12 @@ struct ThematicConceptSelectionSheet: View {
                             .pickerStyle(.menu)
                             .frame(maxWidth: 320)
 
-                            Button("Папка с музыкой…", systemImage: "folder") {
+                            Button(L10n.tr("Папка с музыкой…"), systemImage: "folder") {
                                 musicLibrary.chooseFolder()
                                 reconcileMusicSelection()
                             }
                             .buttonStyle(.bordered)
-                            .help(musicLibrary.directory?.path ?? "Подключить папку с музыкой")
+                            .help(musicLibrary.directory?.path ?? L10n.tr("Подключить папку с музыкой"))
 
                             // Кнопка предпрослушивания саундтрека
                             Button {
@@ -679,7 +679,7 @@ struct ThematicConceptSelectionSheet: View {
                             } label: {
                                 HStack(spacing: 5) {
                                     Image(systemName: previewController.isPlaying ? "pause.fill" : "play.fill")
-                                    Text(previewController.isPlaying ? "Пауза" : "Слушать")
+                                    Text(previewController.isPlaying ? L10n.tr("Пауза") : L10n.tr("Слушать"))
                                 }
                                 .font(.subheadline.weight(.medium))
                             }
@@ -711,16 +711,16 @@ struct ThematicConceptSelectionSheet: View {
                 // 3. Optional image and audio effects
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Toggle("Обработка изображения и звука", isOn: $antiCopyrightEnabled)
+                        Toggle(L10n.tr("Обработка изображения и звука"), isOn: $antiCopyrightEnabled)
                             .font(.subheadline.weight(.semibold))
                             .toggleStyle(.switch)
 
                         Spacer()
 
                         if antiCopyrightEnabled {
-                            Picker("Пресет:", selection: $antiCopyrightPreset) {
+                            Picker(L10n.tr("Пресет:"), selection: $antiCopyrightPreset) {
                                 ForEach(AntiCopyrightPreset.allCases) { preset in
-                                    Text(preset.displayName).tag(preset)
+                                    Text(L10n.tr(preset.displayName)).tag(preset)
                                 }
                             }
                             .pickerStyle(.menu)
@@ -729,7 +729,7 @@ struct ThematicConceptSelectionSheet: View {
                     }
 
                     if antiCopyrightEnabled {
-                        Text("Микро-зум, кинозерно и обработка звука. Эти эффекты не гарантируют отсутствие Content ID, претензий или ограничений монетизации.")
+                        Text(L10n.tr("Микро-зум, кинозерно и обработка звука. Эти эффекты не гарантируют отсутствие Content ID, претензий или ограничений монетизации."))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -781,7 +781,7 @@ struct ThematicConceptSelectionSheet: View {
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "wand.and.stars")
-                        Text("Смонтировать кино-эссе (4:00–8:00)")
+                        Text(L10n.tr("Смонтировать кино-эссе (4:00–8:00)"))
                     }
                     .font(.headline)
                     .padding(.horizontal, 16)

@@ -12,13 +12,13 @@ struct ShortLayoutPreview: View {
     @State private var error: String?
     var body: some View {
         VStack(spacing: 16) {
-            HStack { Text("Оформление шортса").font(.title2.bold()); Spacer(); Button("Закрыть") { dismiss() } }
+            HStack { Text(L10n.tr("Оформление шортса")).font(.title2.bold()); Spacer(); Button(L10n.tr("Закрыть")) { dismiss() } }
             HStack(spacing: 24) {
-                sample(opening, title: "Первые 2 секунды")
-                sample(clean, title: "Основная часть")
+                sample(opening, title: L10n.tr("Первые 2 секунды"))
+                sample(clean, title: L10n.tr("Основная часть"))
             }
-            Text(short.showsSubtitles ? "Субтитры включены и появятся во время реплик." : "Субтитры выключены. В основной части остаётся только логотип.").font(.caption).foregroundStyle(.secondary)
-            if let error { Text(error).foregroundStyle(.red) }
+            Text(short.showsSubtitles ? L10n.tr("Субтитры включены и появятся во время реплик.") : L10n.tr("Субтитры выключены. В основной части остаётся только логотип.")).font(.caption).foregroundStyle(.secondary)
+            if let error { Text(L10n.tr(error)).foregroundStyle(.red) }
         }.padding(24).frame(width: 680, height: 710)
         .task {
             do {

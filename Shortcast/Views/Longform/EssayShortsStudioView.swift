@@ -23,23 +23,23 @@ struct EssayShortsStudioView: View {
             VStack(alignment: .leading, spacing: 24) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 9) {
-                        Text("СИЛЬНЫЕ МОМЕНТЫ ФИЛЬМА").font(.system(size: 10, weight: .bold)).tracking(2).foregroundStyle(StudioTheme.accent)
-                        Text("Коротко. Но со смыслом.").font(.system(size: 30, weight: .medium, design: .serif))
-                        Text("Узнаваемые сцены, конфликты и эмоциональные пики из всего фильма.")
+                        Text(L10n.tr("СИЛЬНЫЕ МОМЕНТЫ ФИЛЬМА")).font(.system(size: 10, weight: .bold)).tracking(2).foregroundStyle(StudioTheme.accent)
+                        Text(L10n.tr("Коротко. Но со смыслом.")).font(.system(size: 30, weight: .medium, design: .serif))
+                        Text(L10n.tr("Узнаваемые сцены, конфликты и эмоциональные пики из всего фильма."))
                             .font(.system(size: 13)).foregroundStyle(StudioTheme.muted)
                     }
                     Spacer()
                     if release?.hasReadyShorts == true {
-                        Button(action: onOpenPosting) { Label("К постингу", systemImage: "arrow.right") }
+                        Button(action: onOpenPosting) { Label(L10n.tr("К постингу"), systemImage: "arrow.right") }
                             .buttonStyle(StudioPrimaryButtonStyle()).disabled(workspace.isWorkingOnEssayRelease)
                     }
                 }
                 if let release, !release.usesWholeFilmSelection, !isPreparing {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Эти шортсы подготовлены по прежнему подбору из эссе.")
+                        Text(L10n.tr("Эти шортсы подготовлены по прежнему подбору из эссе."))
                             .font(.callout).foregroundStyle(StudioTheme.muted)
                         if !release.hasProtectedDeliveries {
-                            Button("Подобрать сильные моменты всего фильма", action: prepare)
+                            Button(L10n.tr("Подобрать сильные моменты всего фильма"), action: prepare)
                                 .buttonStyle(StudioPrimaryButtonStyle())
                         }
                     }
@@ -47,17 +47,17 @@ struct EssayShortsStudioView: View {
                 if let release, release.usesWholeFilmSelection,
                    release.shorts.contains(where: { $0.visualEvidence == nil }), !isPreparing {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Сохранённые шортсы выбраны по диалогам. Визуальные пробы при их подборе не проверялись.")
+                        Text(L10n.tr("Сохранённые шортсы выбраны по диалогам. Визуальные пробы при их подборе не проверялись."))
                             .font(.callout).foregroundStyle(StudioTheme.muted)
                         if !release.hasProtectedDeliveries {
-                            Button("Переподобрать с проверкой кадров") { prepare(forceReplan: true) }
+                            Button(L10n.tr("Переподобрать с проверкой кадров")) { prepare(forceReplan: true) }
                                 .buttonStyle(StudioPrimaryButtonStyle())
                                 .disabled(workspace.job == nil)
                         }
                     }
                 }
                 if isPreparing { preparationWorkspace }
-                if let error { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).textSelection(.enabled) }
+                if let error { Label(L10n.tr(error), systemImage: "exclamationmark.triangle").foregroundStyle(.orange).textSelection(.enabled) }
                 if !isPreparing, let release, !release.shorts.isEmpty {
                     HStack(alignment: .top, spacing: 22) {
                         ForEach(Array(release.shorts.enumerated()), id: \.element.id) { index, short in
@@ -72,16 +72,16 @@ struct EssayShortsStudioView: View {
                                 .overlay(Image(systemName: "scissors").font(.system(size: 30)).foregroundStyle(StudioTheme.accent))
                         }.frame(width: 150, height: 170)
                         VStack(alignment: .leading, spacing: 14) {
-                            Text("Найдём два самых сильных момента фильма.").font(.system(size: 18, weight: .semibold))
-                            Text("Каждый шортс получит свой монтаж и обложку: короткая карточка фильма в начале, затем чистое видео. Субтитры можно включить отдельно в редакторе.")
+                            Text(L10n.tr("Найдём два самых сильных момента фильма.")).font(.system(size: 18, weight: .semibold))
+                            Text(L10n.tr("Каждый шортс получит свой монтаж и обложку: короткая карточка фильма в начале, затем чистое видео. Субтитры можно включить отдельно в редакторе."))
                                 .font(.callout).foregroundStyle(StudioTheme.muted).lineSpacing(4)
-                            Button(action: prepare) { Label("Подготовить два шортса", systemImage: "sparkles") }
+                            Button(action: prepare) { Label(L10n.tr("Подготовить два шортса"), systemImage: "sparkles") }
                                 .buttonStyle(StudioPrimaryButtonStyle()).disabled(preparing)
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading).studioPanel(padding: 32)
                 }
                 if release?.hasReadyShorts != true, release?.shorts.isEmpty == false, !preparing {
-                    Button("Продолжить подготовку", action: prepare).buttonStyle(StudioPrimaryButtonStyle())
+                    Button(L10n.tr("Продолжить подготовку"), action: prepare).buttonStyle(StudioPrimaryButtonStyle())
                 }
             }.padding(32).frame(maxWidth: 1180).frame(maxWidth: .infinity)
         }
@@ -122,11 +122,11 @@ struct EssayShortsStudioView: View {
 
     private var preparationHeadline: String {
         switch workspace.essayShortPreparationPhase {
-        case .idle, .loadingModel: return "Открываем монтажную."
-        case .planning: return "Весь фильм.\nСильнейшие моменты."
-        case .rendering(1): return "Первый сюжет\nобретает форму."
-        case .rendering: return "Собираем\nвторой ракурс."
-        case .ready: return "Два сюжета. Готово."
+        case .idle, .loadingModel: return L10n.tr("Открываем монтажную.")
+        case .planning: return L10n.tr("Весь фильм.\nСильнейшие моменты.")
+        case .rendering(1): return L10n.tr("Первый сюжет\nобретает форму.")
+        case .rendering: return L10n.tr("Собираем\nвторой ракурс.")
+        case .ready: return L10n.tr("Два сюжета. Готово.")
         }
     }
 
@@ -135,25 +135,25 @@ struct EssayShortsStudioView: View {
             HStack {
                 HStack(spacing: 8) {
                     Circle().fill(StudioTheme.accent).frame(width: 6, height: 6)
-                    Text("МОНТАЖНАЯ В РАБОТЕ").font(.system(size: 10, weight: .bold)).tracking(1.8)
+                    Text(L10n.tr("МОНТАЖНАЯ В РАБОТЕ")).font(.system(size: 10, weight: .bold)).tracking(1.8)
                 }.foregroundStyle(StudioTheme.accent)
                 Spacer()
                 Text(workspace.essayShortPreparationStartedAt ?? preparationStartedAt, style: .timer)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(StudioTheme.muted)
-                    .accessibilityLabel("Время подготовки")
+                    .accessibilityLabel(L10n.tr("Время подготовки"))
             }
             HStack(alignment: .center, spacing: 32) {
                 VStack(alignment: .leading, spacing: 18) {
                     Text(preparationHeadline).font(.system(size: 34, weight: .medium, design: .serif))
                         .fixedSize(horizontal: false, vertical: true)
-                    Text(status.isEmpty ? "Ищем сцены во всём фильме." : status)
+                    Text(status.isEmpty ? L10n.tr("Ищем сцены во всём фильме.") : status)
                         .font(.system(size: 14)).foregroundStyle(StudioTheme.muted)
                         .lineSpacing(4).fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 8) {
                         Image(systemName: "film.stack")
                         Text(result.arc.movieTitle).fontWeight(.bold)
-                        Text("· весь фильм")
+                        Text(L10n.tr("· весь фильм"))
                     }.font(.caption).foregroundStyle(StudioTheme.accent)
                     if !preparationEvents.isEmpty {
                         VStack(alignment: .leading, spacing: 9) {
@@ -175,7 +175,7 @@ struct EssayShortsStudioView: View {
             }
             Divider().overlay(StudioTheme.line)
             HStack(alignment: .top, spacing: 12) {
-                ForEach(Array(["Два сюжета", "Шортс 01", "Шортс 02", "Выпуск готов"].enumerated()), id: \.offset) { index, title in
+                ForEach(Array([L10n.tr("Два сюжета"), L10n.tr("Шортс 01"), L10n.tr("Шортс 02"), L10n.tr("Выпуск готов")].enumerated()), id: \.offset) { index, title in
                     HStack(spacing: 10) {
                         ZStack {
                             Circle().fill(index <= preparationStep ? StudioTheme.accent.opacity(0.15) : StudioTheme.raised)
@@ -190,7 +190,7 @@ struct EssayShortsStudioView: View {
                     }.frame(maxWidth: .infinity)
                 }
             }
-            Text("Кадры из фильма · выбранные сцены появятся после подбора")
+            Text(L10n.tr("Кадры из фильма · выбранные сцены появятся после подбора"))
                 .font(.system(size: 10)).foregroundStyle(StudioTheme.muted)
         }.studioPanel(padding: 28)
     }
@@ -222,7 +222,7 @@ struct EssayShortsStudioView: View {
                         Text("9:16").font(.system(size: 9, design: .monospaced))
                     }.foregroundStyle(.white.opacity(0.8))
                     Spacer()
-                    Text(index == 0 ? "СЦЕНА 01" : "СЦЕНА 02")
+                    Text(index == 0 ? L10n.tr("СЦЕНА 01") : L10n.tr("СЦЕНА 02"))
                         .font(.system(size: 8, weight: .bold)).tracking(1).foregroundStyle(StudioTheme.accent)
                     Text(short?.hook ?? result.arc.movieTitle)
                         .font(.system(size: 15, weight: .semibold, design: .serif)).foregroundStyle(.white)
@@ -232,7 +232,7 @@ struct EssayShortsStudioView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(StudioTheme.accent.opacity(preparationStep == index + 1 ? 0.7 : 0.25)))
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.7), value: frameIndex)
-            Label(ready ? "Сохранён" : (short == nil ? "Выбор истории" : "Монтаж и субтитры"),
+            Label(ready ? L10n.tr("Сохранён") : (short == nil ? L10n.tr("Выбор истории") : L10n.tr("Монтаж и субтитры")),
                   systemImage: ready ? "checkmark.circle.fill" : "circle.dotted")
                 .font(.system(size: 10)).foregroundStyle(ready ? StudioTheme.success : StudioTheme.muted)
         }
@@ -241,10 +241,10 @@ struct EssayShortsStudioView: View {
     private func shortCard(_ short: EssayShort, index: Int, release: EssayRelease) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text(index == 0 ? "01 / МОМЕНТ ФИЛЬМА" : "02 / МОМЕНТ ФИЛЬМА")
+                Text(index == 0 ? L10n.tr("01 / МОМЕНТ ФИЛЬМА") : L10n.tr("02 / МОМЕНТ ФИЛЬМА"))
                     .font(.system(size: 10, weight: .bold)).tracking(1.4).foregroundStyle(StudioTheme.accent)
                 Spacer()
-                Text("9:16 · \(Int(short.duration.rounded())) с").font(.system(size: 11, design: .monospaced)).foregroundStyle(StudioTheme.muted)
+                Text(L10n.tr("9:16 · %1$@ с", String(describing: Int(short.duration.rounded())))).font(.system(size: 11, design: .monospaced)).foregroundStyle(StudioTheme.muted)
             }
             HStack(alignment: .top, spacing: 18) {
                 if let url = short.outputURL, FileManager.default.fileExists(atPath: url.path) {
@@ -259,37 +259,37 @@ struct EssayShortsStudioView: View {
                     Text(short.title).font(.system(size: 19, weight: .semibold))
                     Text(short.hook).font(.system(size: 14)).foregroundStyle(StudioTheme.accent)
                     Text(short.angle).font(.system(size: 12)).foregroundStyle(StudioTheme.muted).lineSpacing(4)
-                    Text("\(short.segments.count) сцен · \(short.showsSubtitles ? "субтитры включены" : "без субтитров")").font(.system(size: 11)).foregroundStyle(StudioTheme.muted)
+                    Text(L10n.tr("%1$@ сцен · %2$@", String(describing: short.segments.count), String(describing: short.showsSubtitles ? L10n.tr("субтитры включены") : L10n.tr("без субтитров")))).font(.system(size: 11)).foregroundStyle(StudioTheme.muted)
                     Spacer(minLength: 0)
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
             Button { editingShort = short } label: {
-                Label("Редактировать шортс", systemImage: "slider.horizontal.3").frame(maxWidth: .infinity)
+                Label(L10n.tr("Редактировать шортс"), systemImage: "slider.horizontal.3").frame(maxWidth: .infinity)
             }.buttonStyle(.bordered).controlSize(.large)
                 .disabled(preparing || workspace.isWorkingOnEssayRelease || !EssayShortEditing.canEdit(short, in: release))
             if !EssayShortEditing.canEdit(short, in: release) {
-                Text("Уже отправлялся на площадки. Статусы сохранены на шаге «Постинг».")
+                Text(L10n.tr("Уже отправлялся на площадки. Статусы сохранены на шаге «Постинг»."))
                     .font(.caption).foregroundStyle(StudioTheme.muted)
             }
-            DisclosureGroup("Почему выбрана эта сцена") {
+            DisclosureGroup(L10n.tr("Почему выбрана эта сцена")) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(short.why)
                     Text(short.question).bold(); Text("«\(short.payoffQuote)»")
                     if let visual = short.visualEvidence {
                         let retained = visual.retainedSampleCount(in: short.segments)
-                        Text("Визуальные пробы исходной сцены: \(visual.score)/5 · уверенность \(Int(visual.confidence * 100))%")
+                        Text(L10n.tr("Визуальные пробы исходной сцены: %1$@/5 · уверенность %2$@%", String(describing: visual.score), String(describing: Int(visual.confidence * 100))))
                         Text(visual.observation)
-                        Text("Три кадра: " + visual.sampledTimes.map { String(format: "%.1f с", $0) }.joined(separator: ", "))
+                        Text(L10n.tr("Три кадра: ") + visual.sampledTimes.map { String(format: L10n.tr("%.1f с"), $0) }.joined(separator: ", "))
                         if retained < visual.sampledTimes.count {
-                            Label("В текущем монтаже осталось проб: \(retained) из \(visual.sampledTimes.count). Оценка относится к исходной сцене; изменённые границы повторно не проверялись.",
+                            Label(L10n.tr("В текущем монтаже осталось проб: %1$@ из %2$@. Оценка относится к исходной сцене; изменённые границы повторно не проверялись.", String(describing: retained), String(describing: visual.sampledTimes.count)),
                                   systemImage: "exclamationmark.triangle")
                                 .foregroundStyle(.orange)
                         } else {
-                            Text("Все пробы входят в текущий монтаж. Добавленный за пределами исходной сцены материал ими не проверен.")
+                            Text(L10n.tr("Все пробы входят в текущий монтаж. Добавленный за пределами исходной сцены материал ими не проверен."))
                         }
-                        Text("Это оценка отдельных кадров, а не полного движения и звука сцены.")
+                        Text(L10n.tr("Это оценка отдельных кадров, а не полного движения и звука сцены."))
                     } else {
-                        Text("Визуальные пробы не проверялись: выбор основан на диалогах.")
+                        Text(L10n.tr("Визуальные пробы не проверялись: выбор основан на диалогах."))
                     }
                 }.font(.caption).foregroundStyle(StudioTheme.muted).padding(.top, 6)
             }.font(.system(size: 12))
@@ -302,7 +302,7 @@ struct EssayShortsStudioView: View {
 
     private func prepare(forceReplan: Bool) {
         guard !isPreparing else { return }
-        OperationJournal.shared.begin("Подготовка двух шортсов")
+        OperationJournal.shared.begin(L10n.tr("Подготовка двух шортсов"))
         preparationStartedAt = Date()
         preparationEvents = []
         preparing = true; error = nil

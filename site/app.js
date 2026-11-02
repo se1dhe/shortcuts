@@ -1,10 +1,15 @@
 'use strict';
-const steps = [
- {kicker:'КРОК 01 · ДЖЕРЕЛО',title:'Почніть із фільму',copy:'Додайте локальне відео або виберіть фільм із бібліотеки контент-плану. Підготуйте MP4 та потрібну аудіодоріжку.',points:['Локальна транскрипція WhisperKit','Контроль мови й походження субтитрів','Керована підготовка джерела та очищення MKV'],slate:'Історія\nпочинається тут.',label:'01 / ФІЛЬМ'},
- {kicker:'КРОК 02 · ЕСЕ',title:'Тема, підкріплена сценами',copy:'Director аналізує репліки та події, пропонує тему й план. Оберіть емоційну історію у чотирьох актах або аналітичне есе у п’яти.',points:['Каталог сцен і докази для теми','Перевірки структури, меж та повторів','Ручний монтаж і перегляд кожної сцени'],slate:'Від кадру\nдо сенсу.',label:'02 / ЕСЕ'},
- {kicker:'КРОК 03 · SHORTS',title:'Сильні моменти всього фільму',copy:'Знайдіть самостійні сцени, що чіпляють з першої секунди. Відбір не обмежується монтажем готового есе.',points:['Візуальна перевірка реальних фрагментів','Власний монтаж і текст для кожного ролика','Коротка картка фільму та стриманий логотип'],slate:'Момент,\nякий лишається.',label:'03 / SHORTS'},
- {kicker:'КРОК 04 · ВИПУСК',title:'Оформіть і перевірте результат',copy:'Підготуйте обкладинку, заголовок, опис, розділи та закріплений коментар. Перегляньте все перед відправленням.',points:['Варіанти обкладинок із глибиною','YouTube, TikTok і Telegram після налаштування','Окремі статуси й підтвердження публікацій'],slate:'Історія\nзнаходить глядача.',label:'04 / ВИПУСК'}
-];
+const steps = JSON.parse(document.getElementById('workflow-data').textContent);
+const languagePicker = document.querySelector('.language-picker');
+document.addEventListener('pointerdown', e => {
+ if (!languagePicker.contains(e.target)) languagePicker.open = false;
+});
+document.addEventListener('keydown', e => {
+ if (e.key === 'Escape' && languagePicker.open) {
+  languagePicker.open = false;
+  languagePicker.querySelector('summary').focus();
+ }
+});
 const tabs = [...document.querySelectorAll('.step')];
 function showStep(i,focus=false){
  tabs.forEach((tab,n)=>{tab.classList.toggle('active',i===n);tab.setAttribute('aria-selected',String(i===n));tab.tabIndex=i===n?0:-1});

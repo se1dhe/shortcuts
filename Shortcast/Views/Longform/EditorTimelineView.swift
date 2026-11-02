@@ -73,10 +73,10 @@ struct EditorTimelineView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Label("МОНТАЖНАЯ ЛИНИЯ", systemImage: "film.stack")
+                    Label(L10n.tr("МОНТАЖНАЯ ЛИНИЯ"), systemImage: "film.stack")
                         .font(.system(size: 11, weight: .bold)).tracking(1.2)
                         .foregroundStyle(StudioTheme.accent)
-                    Text("Линейка — переход · два пальца влево/вправо — перемотка · ⌥ + прокрутка — сдвиг шкалы")
+                    Text(L10n.tr("Линейка — переход · два пальца влево/вправо — перемотка · ⌥ + прокрутка — сдвиг шкалы"))
                         .font(.system(size: 10, weight: .medium)).foregroundStyle(StudioTheme.muted)
                 }
                 Spacer()
@@ -86,12 +86,12 @@ struct EditorTimelineView: View {
                             Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                         }
                         .buttonStyle(.bordered).controlSize(.small)
-                        .help(isPlaying ? "Пауза монтажа" : "Воспроизвести монтаж с текущего места")
-                        .accessibilityLabel(isPlaying ? "Пауза монтажа" : "Воспроизвести монтаж")
+                        .help(isPlaying ? L10n.tr("Пауза монтажа") : L10n.tr("Воспроизвести монтаж с текущего места"))
+                        .accessibilityLabel(isPlaying ? L10n.tr("Пауза монтажа") : L10n.tr("Воспроизвести монтаж"))
                         Text(timecode(playhead))
                             .font(.system(size: 12, weight: .semibold, design: .monospaced))
                             .foregroundStyle(StudioTheme.accent)
-                            .accessibilityLabel("Позиция воспроизведения")
+                            .accessibilityLabel(L10n.tr("Позиция воспроизведения"))
                             .accessibilityValue(timecode(playhead))
                     }
                     metric(clips.count, label: sceneLabel(clips.count))
@@ -99,18 +99,18 @@ struct EditorTimelineView: View {
                     VStack(alignment: .trailing, spacing: 2) {
                         Text(timecode(totalDuration))
                             .font(.system(size: 13, weight: .bold, design: .monospaced))
-                        Text("ДЛИТЕЛЬНОСТЬ")
+                        Text(L10n.tr("ДЛИТЕЛЬНОСТЬ"))
                             .font(.system(size: 8, weight: .bold)).tracking(0.9)
                             .foregroundStyle(StudioTheme.muted)
                     }
                     HStack(spacing: 4) {
                         Button { zoom = max(1, zoom / 1.25) } label: { Image(systemName: "minus.magnifyingglass") }
-                            .help("Уменьшить масштаб, не меньше режима «Вписать»")
-                        Button("Вписать") { zoom = 1 }
+                            .help(L10n.tr("Уменьшить масштаб, не меньше режима «Вписать»"))
+                        Button(L10n.tr("Вписать")) { zoom = 1 }
                             .font(.system(size: 9, weight: .semibold))
-                            .help("Показать всю последовательность")
+                            .help(L10n.tr("Показать всю последовательность"))
                         Button { zoom = min(3, zoom * 1.25) } label: { Image(systemName: "plus.magnifyingglass") }
-                            .help("Увеличить масштаб")
+                            .help(L10n.tr("Увеличить масштаб"))
                     }
                     .buttonStyle(.bordered).controlSize(.mini)
                     .tint(StudioTheme.accent)
@@ -119,7 +119,7 @@ struct EditorTimelineView: View {
 
             if clips.isEmpty {
                 Button { onInsertAt(0) } label: {
-                    Label("Добавить первую сцену из фильма", systemImage: "plus.viewfinder")
+                    Label(L10n.tr("Добавить первую сцену из фильма"), systemImage: "plus.viewfinder")
                         .font(.system(size: 12, weight: .semibold))
                         .frame(maxWidth: .infinity, minHeight: 92)
                 }
@@ -195,7 +195,7 @@ struct EditorTimelineView: View {
                                 .frame(width: 18)
                                 .offset(x: geometry.x(for: playhead) - 9)
                                 .accessibilityElement(children: .ignore)
-                                .accessibilityLabel("Указатель воспроизведения")
+                                .accessibilityLabel(L10n.tr("Указатель воспроизведения"))
                                 .accessibilityValue(timecode(playhead))
                                 .accessibilityAdjustableAction { direction in
                                     let time = playhead + (direction == .increment ? 1 : -1)
@@ -263,7 +263,7 @@ struct EditorTimelineView: View {
                 .padding(.trailing, 2)
         }
         .foregroundStyle(StudioTheme.muted)
-        .accessibilityLabel("Линейка времени, длительность \(timecode(totalDuration))")
+        .accessibilityLabel(L10n.tr("Линейка времени, длительность %1$@", String(describing: timecode(totalDuration))))
         .background(alignment: .bottom) { Rectangle().fill(StudioTheme.line).frame(height: 1) }
     }
 
@@ -287,20 +287,20 @@ struct EditorTimelineView: View {
                 .overlay(Circle().stroke(StudioTheme.background, lineWidth: 2))
         }
         .buttonStyle(.plain)
-        .help(index == 0 ? "Вставить в начало" : index == clips.count ? "Вставить в конец" : "Вставить в этот стык")
-        .accessibilityLabel(index == 0 ? "Вставить в начало" : index == clips.count ? "Вставить в конец" : "Вставить между сценами")
+        .help(index == 0 ? L10n.tr("Вставить в начало") : index == clips.count ? L10n.tr("Вставить в конец") : L10n.tr("Вставить в этот стык"))
+        .accessibilityLabel(index == 0 ? L10n.tr("Вставить в начало") : index == clips.count ? L10n.tr("Вставить в конец") : L10n.tr("Вставить между сценами"))
     }
 
     private func sceneLabel(_ count: Int) -> String {
         let tail = count % 100
-        if (11...14).contains(tail) { return "сцен" }
-        return switch count % 10 { case 1: "сцена"; case 2...4: "сцены"; default: "сцен" }
+        if (11...14).contains(tail) { return L10n.tr("сцен") }
+        return switch count % 10 { case 1: L10n.tr("сцена"); case 2...4: L10n.tr("сцены"); default: L10n.tr("сцен") }
     }
 
     private func cutLabel(_ count: Int) -> String {
         let tail = count % 100
-        if (11...14).contains(tail) { return "стыков" }
-        return switch count % 10 { case 1: "стык"; case 2...4: "стыка"; default: "стыков" }
+        if (11...14).contains(tail) { return L10n.tr("стыков") }
+        return switch count % 10 { case 1: L10n.tr("стык"); case 2...4: L10n.tr("стыка"); default: L10n.tr("стыков") }
     }
 
     fileprivate func timecode(_ seconds: Double) -> String {
@@ -343,32 +343,32 @@ private struct EditorTimelineClipBlock: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 5) {
                     if let actNumber = clip.actNumber {
-                        Text("АКТ \(actNumber)")
+                        Text(L10n.tr("АКТ %1$@", String(describing: actNumber)))
                             .foregroundStyle(actColor)
                     }
-                    Text("СЦЕНА \(String(format: "%02d", clip.sceneNumber ?? index + 1))")
+                    Text(L10n.tr("СЦЕНА %1$@", String(describing: String(format: "%02d", clip.sceneNumber ?? index + 1))))
                         .foregroundStyle(.primary)
                     Spacer(minLength: 2)
                     if clip.isAdded { Image(systemName: "plus.circle.fill").foregroundStyle(StudioTheme.success) }
                 }
                 .font(.system(size: 9, weight: .black, design: .monospaced))
-                Text(clip.quote?.trimmed.isEmpty == false ? clip.quote! : (clip.actTitle ?? "Фрагмент фильма"))
+                Text(clip.quote?.trimmed.isEmpty == false ? clip.quote! : (clip.actTitle ?? L10n.tr("Фрагмент фильма")))
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.white.opacity(0.82))
                     .lineLimit(1)
                 HStack(spacing: 4) {
-                    Text("В РОЛИКЕ").foregroundStyle(StudioTheme.muted)
+                    Text(L10n.tr("В РОЛИКЕ")).foregroundStyle(StudioTheme.muted)
                     Text("\(timecode(sequenceStart))–\(timecode(sequenceStart + clip.duration))")
                         .foregroundStyle(.white.opacity(0.92))
                 }
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 Spacer(minLength: 0)
                 HStack {
-                    Text("ФИЛЬМ  \(timecode(clip.start))–\(timecode(clip.end))")
+                    Text(L10n.tr("ФИЛЬМ  %1$@–%2$@", String(describing: timecode(clip.start)), String(describing: timecode(clip.end))))
                         .font(.system(size: 8, weight: .medium, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.6))
                     Spacer(minLength: 2)
-                    Text(String(format: "%.1f с", clip.duration))
+                    Text(String(format: L10n.tr("%.1f с"), clip.duration))
                         .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .foregroundStyle(actColor)
                 }
@@ -392,13 +392,13 @@ private struct EditorTimelineClipBlock: View {
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(selected ? actColor : StudioTheme.line,
                                                           lineWidth: selected ? 1.5 : 1))
         .contextMenu {
-            if let onMoveEarlier { Button("Переместить раньше", systemImage: "arrow.left", action: onMoveEarlier) }
-            if let onMoveLater { Button("Переместить позже", systemImage: "arrow.right", action: onMoveLater) }
-            if let onRemove { Button("Удалить сцену", systemImage: "trash", role: .destructive, action: onRemove) }
+            if let onMoveEarlier { Button(L10n.tr("Переместить раньше"), systemImage: "arrow.left", action: onMoveEarlier) }
+            if let onMoveLater { Button(L10n.tr("Переместить позже"), systemImage: "arrow.right", action: onMoveLater) }
+            if let onRemove { Button(L10n.tr("Удалить сцену"), systemImage: "trash", role: .destructive, action: onRemove) }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(clip.actNumber.map { "Акт \($0), " } ?? "")сцена \(clip.sceneNumber ?? index + 1), \(String(format: "%.1f", clip.duration)) секунд")
-        .accessibilityHint("Выбрать сцену. Перетаскивайте края клипа для подрезки.")
+        .accessibilityLabel(L10n.tr("%1$@сцена %2$@, %3$@ секунд", String(describing: clip.actNumber.map { L10n.tr("Акт %1$@, ", String(describing: $0)) } ?? ""), String(describing: clip.sceneNumber ?? index + 1), String(describing: String(format: "%.1f", clip.duration))))
+        .accessibilityHint(L10n.tr("Выбрать сцену. Перетаскивайте края клипа для подрезки."))
         }
     }
 
@@ -435,7 +435,7 @@ private struct EditorTimelineClipBlock: View {
                         if isLeading { inOrigin = nil } else { outOrigin = nil }
                     }
             )
-            .help(isLeading ? "Перетащите, чтобы изменить IN" : "Перетащите, чтобы изменить OUT")
+            .help(isLeading ? L10n.tr("Перетащите, чтобы изменить IN") : L10n.tr("Перетащите, чтобы изменить OUT"))
     }
 
     private func timecode(_ seconds: Double) -> String {

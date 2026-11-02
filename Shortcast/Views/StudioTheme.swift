@@ -15,20 +15,20 @@ enum StudioTheme {
 enum StudioStage: Int, CaseIterable, Identifiable {
     case film, essay, shorts, posting
     var id: Int { rawValue }
-    var title: String {
+    @MainActor var title: String {
         switch self {
-        case .film: "Фильм"
-        case .essay: "Эссе"
-        case .shorts: "Шортсы"
-        case .posting: "Постинг"
+        case .film: L10n.tr("Фильм")
+        case .essay: L10n.tr("Эссе")
+        case .shorts: L10n.tr("Шортсы")
+        case .posting: L10n.tr("Постинг")
         }
     }
-    var detail: String {
+    @MainActor var detail: String {
         switch self {
-        case .film: "Источник и озвучка"
-        case .essay: "Тема и монтаж"
-        case .shorts: "Сильные моменты фильма"
-        case .posting: "Выпуск на площадки"
+        case .film: L10n.tr("Источник и озвучка")
+        case .essay: L10n.tr("Тема и монтаж")
+        case .shorts: L10n.tr("Сильные моменты фильма")
+        case .posting: L10n.tr("Выпуск на площадки")
         }
     }
     var symbol: String {
@@ -81,7 +81,7 @@ struct StudioOperationProgress: View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             VStack(alignment: .leading, spacing: 26) {
                 HStack {
-                    Label("КАДР & СЕНС / В РАБОТЕ", systemImage: "viewfinder")
+                    Label(L10n.tr("КАДР & СЕНС / В РАБОТЕ"), systemImage: "viewfinder")
                         .font(.system(size: 11, weight: .bold)).tracking(2).foregroundStyle(StudioTheme.accent)
                     Spacer()
                     Text(Self.clock(context.date.timeIntervalSince(started)))
@@ -110,13 +110,13 @@ struct StudioOperationProgress: View {
                         Text(stages[index]).font(.system(size: 14, weight: index == current ? .semibold : .regular))
                             .foregroundStyle(index == current ? Color.primary : StudioTheme.muted)
                         Spacer()
-                        if index == current { Text("СЕЙЧАС").font(.system(size: 9, weight: .bold)).tracking(2).foregroundStyle(StudioTheme.accent) }
+                        if index == current { Text(L10n.tr("СЕЙЧАС")).font(.system(size: 9, weight: .bold)).tracking(2).foregroundStyle(StudioTheme.accent) }
                     }
                 }
                 Divider()
                 Text(detail).font(.callout).foregroundStyle(StudioTheme.accent)
                     .frame(minHeight: 40, alignment: .topLeading)
-                Text("Готовый файл заменит предыдущую версию только после проверки. Время до завершения зависит от сложности монтажа.")
+                Text(L10n.tr("Готовый файл заменит предыдущую версию только после проверки. Время до завершения зависит от сложности монтажа."))
                     .font(.caption).foregroundStyle(StudioTheme.muted)
             }
             .padding(30).background(StudioTheme.panel, in: RoundedRectangle(cornerRadius: 22))
@@ -163,11 +163,11 @@ struct OperationLogPanel: View {
                         Button {
                             expanded.toggle()
                         } label: {
-                            Label("Журнал действий · \(entries.count)", systemImage: expanded ? "chevron.down" : "chevron.right")
+                            Label(L10n.tr("Журнал действий · %1$@", String(describing: entries.count)), systemImage: expanded ? "chevron.down" : "chevron.right")
                         }.buttonStyle(.plain).font(.system(size: 12, weight: .semibold, design: .monospaced))
                         Spacer()
-                        Toggle("Следить", isOn: $followsTail).toggleStyle(.checkbox).font(.caption)
-                        Button("Копировать весь лог", systemImage: "doc.on.doc") {
+                        Toggle(L10n.tr("Следить"), isOn: $followsTail).toggleStyle(.checkbox).font(.caption)
+                        Button(L10n.tr("Копировать весь лог"), systemImage: "doc.on.doc") {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(transcript, forType: .string)
                         }.buttonStyle(.borderless).font(.caption)

@@ -52,13 +52,13 @@ struct LongformSceneInsertSheet: View {
     }
 
     private var validationMessage: String? {
-        guard selectedSegment != nil else { return "Выберите реплику или момент в транскрипте." }
+        guard selectedSegment != nil else { return L10n.tr("Выберите реплику или момент в транскрипте.") }
         guard start.isFinite, end.isFinite, start >= 0, end <= effectiveDuration else {
-            return "Границы выходят за пределы исходного фильма."
+            return L10n.tr("Границы выходят за пределы исходного фильма.")
         }
-        guard end - start >= 0.1 else { return "Фрагмент должен длиться не менее 0,1 секунды." }
+        guard end - start >= 0.1 else { return L10n.tr("Фрагмент должен длиться не менее 0,1 секунды.") }
         if !allowOverlap, !existingRanges.allSatisfy({ $0.end <= start || end <= $0.start }) {
-            return "Этот фрагмент пересекается с уже выбранной сценой."
+            return L10n.tr("Этот фрагмент пересекается с уже выбранной сценой.")
         }
         return nil
     }
@@ -66,16 +66,16 @@ struct LongformSceneInsertSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Добавить сцену из фильма")
+                Text(L10n.tr("Добавить сцену из фильма"))
                     .font(.title2.weight(.bold))
-                Text("Найдите реплику, проверьте контекст и вставьте фрагмент в выбранное место акта.")
+                Text(L10n.tr("Найдите реплику, проверьте контекст и вставьте фрагмент в выбранное место акта."))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
 
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 8) {
-                    TextField("Поиск по репликам фильма", text: $query)
+                    TextField(L10n.tr("Поиск по репликам фильма"), text: $query)
                         .textFieldStyle(.roundedBorder)
                     ScrollView {
                         LazyVStack(spacing: 4) {
@@ -115,18 +115,18 @@ struct LongformSceneInsertSheet: View {
                             .aspectRatio(16 / 9, contentMode: .fit)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                     } else {
-                        ContentUnavailableView("Исходное видео недоступно", systemImage: "film")
+                        ContentUnavailableView(L10n.tr("Исходное видео недоступно"), systemImage: "film")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
 
                     if let selectedSegment {
-                        Text("Выбрано: «\(selectedSegment.text)»")
+                        Text(L10n.tr("Выбрано: «%1$@»", String(describing: selectedSegment.text)))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
                     }
 
-                    Button(isPreviewBusy ? "Подготавливаю предпросмотр…" : "Предпросмотр выбранного фрагмента",
+                    Button(isPreviewBusy ? L10n.tr("Подготавливаю предпросмотр…") : L10n.tr("Предпросмотр выбранного фрагмента"),
                            systemImage: isPreviewBusy ? "waveform" : "play.fill") {
                         playSelection()
                     }
@@ -145,10 +145,10 @@ struct LongformSceneInsertSheet: View {
                     }
 
                     HStack(spacing: 6) {
-                        adjustmentButton("IN −1с") { start = max(0, start - 1) }
-                        adjustmentButton("IN +1с") { start = min(max(0, end - 0.1), start + 1) }
-                        adjustmentButton("OUT −1с") { end = max(start + 0.1, end - 1) }
-                        adjustmentButton("OUT +1с") { end = min(effectiveDuration, end + 1) }
+                        adjustmentButton(L10n.tr("IN −1с")) { start = max(0, start - 1) }
+                        adjustmentButton(L10n.tr("IN +1с")) { start = min(max(0, end - 0.1), start + 1) }
+                        adjustmentButton(L10n.tr("OUT −1с")) { end = max(start + 0.1, end - 1) }
+                        adjustmentButton(L10n.tr("OUT +1с")) { end = min(effectiveDuration, end + 1) }
                     }
                 }
                 .frame(minWidth: 300, maxWidth: .infinity)
@@ -161,14 +161,14 @@ struct LongformSceneInsertSheet: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 } else {
-                    Label("Фрагмент готов к вставке", systemImage: "checkmark.circle")
+                    Label(L10n.tr("Фрагмент готов к вставке"), systemImage: "checkmark.circle")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(StudioTheme.success)
                 }
                 Spacer()
-                Button("Отмена") { dismiss() }
+                Button(L10n.tr("Отмена")) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Вставить сцену", systemImage: "plus") {
+                Button(L10n.tr("Вставить сцену"), systemImage: "plus") {
                     onInsert(selectedRange)
                     dismiss()
                 }

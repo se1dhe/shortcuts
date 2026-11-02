@@ -14,30 +14,30 @@ struct CompilationSourceView: View {
     let onChooseFile: (URL, VideoSourceMetadata?) -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack { Text("Несколько источников в одном эссе").font(.title2.bold()); Spacer(); Button("Закрыть") { dismiss() }.disabled(busy) }
-            Text("Добавьте фильмы, серии или интервью, выберите дорожки и нужные фрагменты. Названия и исходные таймкоды сохранятся. Оригиналы останутся на месте.").font(.callout).foregroundStyle(.secondary)
-            TextField("Название тематической подборки", text: $title).textFieldStyle(.roundedBorder)
+            HStack { Text(L10n.tr("Несколько источников в одном эссе")).font(.title2.bold()); Spacer(); Button(L10n.tr("Закрыть")) { dismiss() }.disabled(busy) }
+            Text(L10n.tr("Добавьте фильмы, серии или интервью, выберите дорожки и нужные фрагменты. Названия и исходные таймкоды сохранятся. Оригиналы останутся на месте.")).font(.callout).foregroundStyle(.secondary)
+            TextField(L10n.tr("Название тематической подборки"), text: $title).textFieldStyle(.roundedBorder)
             ScrollView {
                 ForEach($sources) { $source in
                     VStack(alignment: .leading, spacing: 8) {
-                        TextField("Название фильма / сериала / интервью", text: $source.title)
+                        TextField(L10n.tr("Название фильма / сериала / интервью"), text: $source.title)
                         Text(source.url.path).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                         HStack {
-                            Text("От, с"); TextField("In", value: $source.start, format: .number).frame(width: 90)
-                            Text("До, с"); TextField("Out", value: $source.end, format: .number).frame(width: 90)
-                            Picker("Озвучка", selection: $source.audioStreamIndex) { ForEach(tracks[source.id] ?? []) { track in Text(track.displayName).tag(track.id) } }
+                            Text(L10n.tr("От, с")); TextField("In", value: $source.start, format: .number).frame(width: 90)
+                            Text(L10n.tr("До, с")); TextField("Out", value: $source.end, format: .number).frame(width: 90)
+                            Picker(L10n.tr("Озвучка"), selection: $source.audioStreamIndex) { ForEach(tracks[source.id] ?? []) { track in Text(track.interfaceDisplayName).tag(track.id) } }
                             Button(role: .destructive) { sources.removeAll { $0.id == source.id } } label: { Image(systemName: "minus.circle") }
                         }.textFieldStyle(.roundedBorder)
                     }.padding(14).background(StudioTheme.panel, in: RoundedRectangle(cornerRadius: 12))
                 }
             }
-            if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
-            if busy { ProgressView("Готовлю монтажную основу… Подробности — в журнале операций.") }
+            if let error { Text(L10n.tr(error)).foregroundStyle(.red).textSelection(.enabled) }
+            if busy { ProgressView(L10n.tr("Готовлю монтажную основу… Подробности — в журнале операций.")) }
             HStack {
-                Button("Добавить источники…", systemImage: "plus") { choose() }.disabled(busy)
+                Button(L10n.tr("Добавить источники…"), systemImage: "plus") { choose() }.disabled(busy)
                 Spacer()
-                if busy { Button("Остановить") { preparation?.cancel() } }
-                Button("Подготовить и открыть") { build() }.buttonStyle(StudioPrimaryButtonStyle()).disabled(busy || sources.count < 2 || title.trimmed.isEmpty || settings.workingDirectory == nil)
+                if busy { Button(L10n.tr("Остановить")) { preparation?.cancel() } }
+                Button(L10n.tr("Подготовить и открыть")) { build() }.buttonStyle(StudioPrimaryButtonStyle()).disabled(busy || sources.count < 2 || title.trimmed.isEmpty || settings.workingDirectory == nil)
             }
             OperationLogPanel(isActive: busy)
         }.padding(24).frame(width: 1040, height: 700)
@@ -50,7 +50,7 @@ struct CompilationSourceView: View {
         preparation = Task { defer { busy = false }
             for url in urls {
                 let audio = await MediaExtractor.inspectAudioTracks(sourceURL: url, workingDirectory: working)
-                guard let recommended = MediaExtractor.pickRecommendedAudioTrack(from: audio) else { error = "Нет аудиодорожки: " + url.lastPathComponent; continue }
+                guard let recommended = MediaExtractor.pickRecommendedAudioTrack(from: audio) else { error = L10n.tr("Нет аудиодорожки: ") + url.lastPathComponent; continue }
                 let source = CompilationSource(title: url.deletingPathExtension().lastPathComponent, url: url, start: 0, end: 180, audioStreamIndex: recommended.id)
                 sources.append(source); tracks[source.id] = audio
             }

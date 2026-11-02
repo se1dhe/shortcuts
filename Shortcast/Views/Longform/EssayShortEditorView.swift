@@ -93,13 +93,13 @@ struct EssayShortEditorView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Монтаж шортса").font(.title2.bold())
-                    Text("\(Int(editedShort.duration.rounded())) с · \(scenes.count) сцен · порядок, границы, хук и субтитры")
+                    Text(L10n.tr("Монтаж шортса")).font(.title2.bold())
+                    Text(L10n.tr("%1$@ с · %2$@ сцен · порядок, границы, хук и субтитры", String(describing: Int(editedShort.duration.rounded())), String(describing: scenes.count)))
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Отмена") { dismiss() }.disabled(busy)
-                Button(busy ? "Рендеринг…" : "Сохранить и пересобрать") { save() }
+                Button(L10n.tr("Отмена")) { dismiss() }.disabled(busy)
+                Button(busy ? L10n.tr("Рендеринг…") : L10n.tr("Сохранить и пересобрать")) { save() }
                     .buttonStyle(StudioPrimaryButtonStyle()).disabled(busy || validationError != nil)
             }.padding(.horizontal, 20).padding(.vertical, 16)
             Divider()
@@ -116,14 +116,14 @@ struct EssayShortEditorView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(StudioTheme.line, lineWidth: 1))
                     HStack {
-                        Label("Предпросмотр исходника", systemImage: "play.rectangle")
+                        Label(L10n.tr("Предпросмотр исходника"), systemImage: "play.rectangle")
                         Spacer()
                         if let selectedSceneID,
                            let scene = scenes.first(where: { $0.id == selectedSceneID }) {
-                            Text("Сцена \(scenes.firstIndex(where: { $0.id == scene.id }).map { $0 + 1 } ?? 1) · \(timecode(scene.duration))")
+                            Text(L10n.tr("Сцена %1$@ · %2$@", String(describing: scenes.firstIndex(where: { $0.id == scene.id }).map { $0 + 1 } ?? 1), String(describing: timecode(scene.duration))))
                                 .font(.caption.monospacedDigit().weight(.semibold)).foregroundStyle(StudioTheme.accent)
                         } else {
-                            Text("Выберите сцену на шкале")
+                            Text(L10n.tr("Выберите сцену на шкале"))
                         }
                     }
                     .font(.caption).foregroundStyle(.secondary)
@@ -133,38 +133,38 @@ struct EssayShortEditorView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
-                        GroupBox("Содержание") {
+                        GroupBox(L10n.tr("Содержание")) {
                             VStack(spacing: 9) {
-                                TextField("Название", text: $draft.title)
-                                TextField("Хук публикации", text: $draft.hook, axis: .vertical)
-                                Button("Предпросмотр оформления", systemImage: "rectangle.portrait") { showLayoutPreview = true }
+                                TextField(L10n.tr("Название"), text: $draft.title)
+                                TextField(L10n.tr("Хук публикации"), text: $draft.hook, axis: .vertical)
+                                Button(L10n.tr("Предпросмотр оформления"), systemImage: "rectangle.portrait") { showLayoutPreview = true }
                                     .sheet(isPresented: $showLayoutPreview) { ShortLayoutPreview(sourceURL: sourceURL, short: editedShort, result: result) }
-                                Toggle("Субтитры в видео", isOn: Binding(get: { draft.showsSubtitles }, set: { draft.subtitlesEnabled = $0 }))
-                                Text("Первые 2 секунды — карточка фильма. Далее — видео и небольшой логотип.").font(.caption).foregroundStyle(.secondary)
-                                TextField("Основная мысль", text: $draft.angle, axis: .vertical)
-                                TextField("Вопрос зрителю", text: $draft.question, axis: .vertical)
-                                TextField("Ключевая реплика", text: $draft.payoffQuote, axis: .vertical)
+                                Toggle(L10n.tr("Субтитры в видео"), isOn: Binding(get: { draft.showsSubtitles }, set: { draft.subtitlesEnabled = $0 }))
+                                Text(L10n.tr("Первые 2 секунды — карточка фильма. Далее — видео и небольшой логотип.")).font(.caption).foregroundStyle(.secondary)
+                                TextField(L10n.tr("Основная мысль"), text: $draft.angle, axis: .vertical)
+                                TextField(L10n.tr("Вопрос зрителю"), text: $draft.question, axis: .vertical)
+                                TextField(L10n.tr("Ключевая реплика"), text: $draft.payoffQuote, axis: .vertical)
                             }.textFieldStyle(.roundedBorder).padding(5)
                         }
-                        GroupBox("Музыка и сведение") {
+                        GroupBox(L10n.tr("Музыка и сведение")) {
                             HStack {
-                                Label(musicSettings.backgroundMusicURL?.deletingPathExtension().lastPathComponent ?? "Без музыки", systemImage: "music.note")
+                                Label(musicSettings.backgroundMusicURL?.deletingPathExtension().lastPathComponent ?? L10n.tr("Без музыки"), systemImage: "music.note")
                                     .font(.callout).lineLimit(2)
                                 Spacer()
-                                Button("Настроить", systemImage: "waveform") {
+                                Button(L10n.tr("Настроить"), systemImage: "waveform") {
                                     timelinePlayback.pause()
                                     showMusicEditor = true
                                 }
                             }.padding(8)
                         }
-                        GroupBox("Сцены и точная подрезка") {
+                        GroupBox(L10n.tr("Сцены и точная подрезка")) {
                             VStack(spacing: 10) {
                                 ForEach($scenes) { scene in sceneRow(scene) }
                             }.padding(5)
                         }
-                        GroupBox("Субтитры выбранных сцен") {
+                        GroupBox(L10n.tr("Субтитры выбранных сцен")) {
                             VStack(alignment: .leading, spacing: 9) {
-                                Text("Изменения применяются только к этому шортсу.")
+                                Text(L10n.tr("Изменения применяются только к этому шортсу."))
                                     .font(.caption).foregroundStyle(.secondary)
                                 ForEach(Array(selectedCaptions.enumerated()), id: \.offset) { _, segment in
                                     HStack(alignment: .top, spacing: 8) {
@@ -174,7 +174,7 @@ struct EssayShortEditorView: View {
                                         Button { preview(TimeSegment(start: segment.start, end: segment.end)) } label: {
                                             Image(systemName: "play.fill")
                                         }.buttonStyle(.borderless).disabled(isPreviewBusy)
-                                        TextField("Субтитр", text: captionBinding(segment), axis: .vertical)
+                                        TextField(L10n.tr("Субтитр"), text: captionBinding(segment), axis: .vertical)
                                             .textFieldStyle(.roundedBorder)
                                     }
                                 }
@@ -239,8 +239,8 @@ struct EssayShortEditorView: View {
             if busy {
                 ZStack {
                     StudioTheme.background.opacity(0.97)
-                    StudioOperationProgress(title: "Собираем ваш шортс", detail: workspace.shortRenderDetail,
-                        stages: ["Исходник", "Кадрирование", "Оформление", "Экспорт", "Shield", "Звук и проверка", "Обложка"],
+                    StudioOperationProgress(title: L10n.tr("Собираем ваш шортс"), detail: workspace.shortRenderDetail,
+                        stages: [L10n.tr("Исходник"), L10n.tr("Кадрирование"), L10n.tr("Оформление"), L10n.tr("Экспорт"), "Shield", L10n.tr("Звук и проверка"), L10n.tr("Обложка")],
                         current: workspace.shortRenderStage, started: renderStarted)
                         .frame(width: 760).padding(40)
                 }
@@ -282,7 +282,7 @@ struct EssayShortEditorView: View {
         .onChange(of: scenes) { _, _ in timelinePlayback.setClips(timelineClips) }
         .onChange(of: timelinePlayback.activeClipID) { _, id in selectedSceneID = id }
         .onChange(of: timelinePlayback.error) { _, message in
-            if let message { error = "Предпросмотр: " + message }
+            if let message { error = L10n.tr("Предпросмотр: ") + message }
         }
         .onDisappear { timelinePlayback.close() }
     }
@@ -294,9 +294,9 @@ struct EssayShortEditorView: View {
         return VStack(alignment: .leading, spacing: 9) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("СЦЕНА \(String(format: "%02d", index + 1))")
+                    Text(L10n.tr("СЦЕНА %1$@", String(describing: String(format: "%02d", index + 1))))
                         .font(.system(size: 10, weight: .black)).tracking(0.7)
-                    Text("\(timecode(current.start)) → \(timecode(current.end))  ·  \(Int(current.duration.rounded())) с")
+                    Text(L10n.tr("%1$@ → %2$@  ·  %3$@ с", String(describing: timecode(current.start)), String(describing: timecode(current.end)), String(describing: Int(current.duration.rounded()))))
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
                         .foregroundStyle(StudioTheme.muted)
                 }
@@ -307,17 +307,17 @@ struct EssayShortEditorView: View {
                 } label: {
                     Image(systemName: "play.fill")
                 }
-                .buttonStyle(.bordered).controlSize(.small).help("Просмотреть сцену")
+                .buttonStyle(.bordered).controlSize(.small).help(L10n.tr("Просмотреть сцену"))
                 .disabled(isPreviewBusy)
                 Menu {
-                    Button("Переместить раньше", systemImage: "arrow.up") {
+                    Button(L10n.tr("Переместить раньше"), systemImage: "arrow.up") {
                         moveScene(id, delta: -1)
                     }.disabled(index == 0)
-                    Button("Переместить позже", systemImage: "arrow.down") {
+                    Button(L10n.tr("Переместить позже"), systemImage: "arrow.down") {
                         moveScene(id, delta: 1)
                     }.disabled(index + 1 == scenes.count)
                     Divider()
-                    Button("Удалить сцену", systemImage: "trash", role: .destructive) {
+                    Button(L10n.tr("Удалить сцену"), systemImage: "trash", role: .destructive) {
                         guard scenes.count > 1 else { return }
                         scenes.removeAll { $0.id == id }
                     }.disabled(scenes.count <= 1)
@@ -325,7 +325,7 @@ struct EssayShortEditorView: View {
                     Image(systemName: "ellipsis")
                 }
                 .menuStyle(.borderlessButton)
-                .help("Действия со сценой")
+                .help(L10n.tr("Действия со сценой"))
             }
             HStack(spacing: 8) {
                 Label("IN", systemImage: "arrow.right.to.line")
@@ -396,8 +396,8 @@ struct EssayShortEditorView: View {
     }
 
     private func save() {
-        renderStarted = Date(); workspace.shortRenderStage = 0; workspace.shortRenderDetail = "Подготовка исходника"
-        OperationJournal.shared.begin("Пересборка шортса")
+        renderStarted = Date(); workspace.shortRenderStage = 0; workspace.shortRenderDetail = L10n.tr("Подготовка исходника")
+        OperationJournal.shared.begin(L10n.tr("Пересборка шортса"))
         busy = true; error = nil; timelinePlayback.pause()
         Task { @MainActor in
             defer { busy = false }

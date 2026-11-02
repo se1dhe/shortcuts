@@ -14,7 +14,7 @@ struct FilmSourceOverview: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("ИСХОДНЫЙ МАТЕРИАЛ").font(.system(size: 10, weight: .bold)).tracking(2).foregroundStyle(StudioTheme.accent)
+                    Text(L10n.tr("ИСХОДНЫЙ МАТЕРИАЛ")).font(.system(size: 10, weight: .bold)).tracking(2).foregroundStyle(StudioTheme.accent)
                     Text(workspace.currentProject?.movieTitle ?? job.effectiveTitle)
                         .font(.system(size: 30, weight: .medium, design: .serif))
                 }
@@ -47,15 +47,15 @@ struct FilmSourceOverview: View {
                     .aspectRatio(16 / 9, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     VStack(alignment: .leading, spacing: 20) {
-                        Label("Фильм в проекте", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                        LabeledContent("Длительность", value: job.durationLabel)
-                        LabeledContent("Транскрипция", value: workspace.storedTranscript == nil ? "Подготовка" : "Сохранена")
-                        LabeledContent("Эссе", value: workspace.longformResult == nil ? "В работе" : "Собрано")
+                        Label(L10n.tr("Фильм в проекте"), systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                        LabeledContent(L10n.tr("Длительность"), value: job.durationLabel)
+                        LabeledContent(L10n.tr("Транскрипция"), value: workspace.storedTranscript == nil ? L10n.tr("Подготовка") : L10n.tr("Сохранена"))
+                        LabeledContent(L10n.tr("Эссе"), value: workspace.longformResult == nil ? L10n.tr("В работе") : L10n.tr("Собрано"))
                         Divider()
                         Text(job.fileName).font(.caption).foregroundStyle(StudioTheme.muted).textSelection(.enabled)
-                        Text("Исходный фильм используется для монтажа эссе и шортсов. Готовые версии сохраняются отдельно.")
+                        Text(L10n.tr("Исходный фильм используется для монтажа эссе и шортсов. Готовые версии сохраняются отдельно."))
                             .font(.callout).foregroundStyle(StudioTheme.muted)
-                        Button(action: onContinue) { Label("К монтажу эссе", systemImage: "arrow.right") }
+                        Button(action: onContinue) { Label(L10n.tr("К монтажу эссе"), systemImage: "arrow.right") }
                             .buttonStyle(StudioPrimaryButtonStyle())
                     }.frame(width: 300).studioPanel()
                 }

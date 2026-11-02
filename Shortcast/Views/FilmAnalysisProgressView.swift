@@ -46,15 +46,15 @@ struct FilmAnalysisProgressView: View {
                         Image(systemName: "info.circle")
                             .foregroundStyle(StudioTheme.accent)
                         Text(isAnalyzing
-                             ? "Director сравнивает диалоги и собирает доказательный план по актам. Это может занять несколько минут."
-                             : "Сначала извлекаем реплики из фильма, затем Director соберёт тему и план сцен.")
+                             ? L10n.tr("Director сравнивает диалоги и собирает доказательный план по актам. Это может занять несколько минут.")
+                             : L10n.tr("Сначала извлекаем реплики из фильма, затем Director соберёт тему и план сцен."))
                             .font(.callout)
                             .foregroundStyle(StudioTheme.muted)
                         Spacer(minLength: 12)
                         Button(role: .cancel) {
                             workspace.cancelPipeline()
                         } label: {
-                            Label("Отменить", systemImage: "xmark")
+                            Label(L10n.tr("Отменить"), systemImage: "xmark")
                         }
                         .buttonStyle(.bordered)
                     }
@@ -74,19 +74,19 @@ struct FilmAnalysisProgressView: View {
     private func pageHeading(isAnalyzing: Bool) -> some View {
         HStack(alignment: .bottom, spacing: 20) {
             VStack(alignment: .leading, spacing: 7) {
-                Label("СТУДИЯ · ЭССЕ", systemImage: "sparkles")
+                Label(L10n.tr("СТУДИЯ · ЭССЕ"), systemImage: "sparkles")
                     .font(.system(size: 11, weight: .bold)).tracking(1.8)
                     .foregroundStyle(StudioTheme.accent)
-                Text(isAnalyzing ? "Ищем историю внутри фильма" : "Готовим фильм к разбору")
+                Text(isAnalyzing ? L10n.tr("Ищем историю внутри фильма") : L10n.tr("Готовим фильм к разбору"))
                     .font(.system(size: 30, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
-                Text("Сцены, тема и аргумент будущего кино-эссе")
+                Text(L10n.tr("Сцены, тема и аргумент будущего кино-эссе"))
                     .font(.system(size: 14)).foregroundStyle(StudioTheme.muted)
             }
             Spacer()
             HStack(spacing: 8) {
                 Circle().fill(StudioTheme.accent).frame(width: 7, height: 7)
-                Text(isAnalyzing ? "DIRECTOR РАБОТАЕТ" : "АНАЛИЗ ФИЛЬМА")
+                Text(isAnalyzing ? L10n.tr("DIRECTOR РАБОТАЕТ") : L10n.tr("АНАЛИЗ ФИЛЬМА"))
                     .font(.system(size: 10, weight: .bold)).tracking(1.2)
             }
             .foregroundStyle(StudioTheme.accent)
@@ -106,7 +106,7 @@ struct FilmAnalysisProgressView: View {
                 .background(StudioTheme.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
             VStack(alignment: .leading, spacing: 3) {
                 Text(movieTitle).font(.system(size: 15, weight: .semibold)).lineLimit(1)
-                Text(workspace.job?.fileName ?? "Исходный фильм")
+                Text(workspace.job?.fileName ?? L10n.tr("Исходный фильм"))
                     .font(.system(size: 11)).foregroundStyle(StudioTheme.muted).lineLimit(1)
             }
             Spacer(minLength: 8)
@@ -123,7 +123,7 @@ struct FilmAnalysisProgressView: View {
     private var movieTitle: String {
         guard let movie = workspace.detectedMovie,
               !MovieMetadataService.isGarbageTitle(movie.title) else {
-            return workspace.job?.effectiveTitle ?? "Новый фильм"
+            return workspace.job?.effectiveTitle ?? L10n.tr("Новый фильм")
         }
         return movie.year.isEmpty ? movie.title : "\(movie.title) · \(movie.year)"
     }
@@ -134,7 +134,7 @@ struct FilmAnalysisProgressView: View {
             VStack(spacing: 12) {
                 Image(systemName: "film.stack")
                     .font(.system(size: 36, weight: .light)).foregroundStyle(StudioTheme.accent)
-                Text("Подготавливаем изображение")
+                Text(L10n.tr("Подготавливаем изображение"))
                     .font(.callout.weight(.medium)).foregroundStyle(StudioTheme.muted)
             }
         }
@@ -149,10 +149,10 @@ struct FilmAnalysisProgressView: View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(isAnalyzing ? "ШАГ 02 ИЗ 03 · DIRECTOR" : "ШАГ 01 ИЗ 03 · ДИАЛОГИ")
+                    Text(isAnalyzing ? L10n.tr("ШАГ 02 ИЗ 03 · DIRECTOR") : L10n.tr("ШАГ 01 ИЗ 03 · ДИАЛОГИ"))
                         .font(.system(size: 10, weight: .bold)).tracking(1.2)
                         .foregroundStyle(StudioTheme.muted)
-                    Text(isAnalyzing ? "План эссе" : "Транскрипция")
+                    Text(isAnalyzing ? L10n.tr("План эссе") : L10n.tr("Транскрипция"))
                         .font(.system(size: 21, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
                 }
@@ -166,7 +166,7 @@ struct FilmAnalysisProgressView: View {
 
             VStack(alignment: .leading, spacing: 9) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(isAnalyzing ? "Собираем смысл" : tracker.statusMessage)
+                    Text(isAnalyzing ? L10n.tr("Собираем смысл") : tracker.statusMessage)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.92))
                     Spacer(minLength: 0)
@@ -184,29 +184,29 @@ struct FilmAnalysisProgressView: View {
                         .progressViewStyle(.linear).tint(StudioTheme.accent)
                 }
                 Text(isAnalyzing
-                     ? "Модель сопоставляет реплики с темой и распределяет сцены по актам."
+                     ? L10n.tr("Модель сопоставляет реплики с темой и распределяет сцены по актам.")
                      : tracker.detailedMetrics)
                     .font(.system(size: 12)).foregroundStyle(StudioTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             VStack(spacing: 0) {
-                progressStep(number: "01", title: "Источник и диалоги", state: isAnalyzing ? .complete : .active,
-                             detail: isAnalyzing ? "Материал готов" : "Извлекаем реплики")
+                progressStep(number: "01", title: L10n.tr("Источник и диалоги"), state: isAnalyzing ? .complete : .active,
+                             detail: isAnalyzing ? L10n.tr("Материал готов") : L10n.tr("Извлекаем реплики"))
                 stepConnector
-                progressStep(number: "02", title: "Тема и сцены", state: isAnalyzing ? .active : .upcoming,
-                             detail: isAnalyzing ? "Director строит план по актам" : "Следующий этап")
+                progressStep(number: "02", title: L10n.tr("Тема и сцены"), state: isAnalyzing ? .active : .upcoming,
+                             detail: isAnalyzing ? L10n.tr("Director строит план по актам") : L10n.tr("Следующий этап"))
                 stepConnector
-                progressStep(number: "03", title: "Монтаж эссе", state: .upcoming,
-                             detail: "После подтверждения плана")
+                progressStep(number: "03", title: L10n.tr("Монтаж эссе"), state: .upcoming,
+                             detail: L10n.tr("После подтверждения плана"))
             }
 
             HStack(spacing: 8) {
                 Image(systemName: "clock")
                     .foregroundStyle(StudioTheme.accent)
                 Text(tracker.formattedETA == "Вычисление..."
-                     ? "Время зависит от скорости модели"
-                     : "Осталось \(tracker.formattedETA)")
+                     ? L10n.tr("Время зависит от скорости модели")
+                     : L10n.tr("Осталось %1$@", String(describing: tracker.formattedETA)))
                     .foregroundStyle(StudioTheme.muted)
             }
             .font(.system(size: 11, weight: .medium))
@@ -293,7 +293,7 @@ private struct CinematicScanner: View {
                     HStack(spacing: 6) {
                         Circle().fill(.red).frame(width: 7, height: 7)
                             .opacity(sweep ? 1 : 0.3)
-                        Text("АНАЛИЗ ФИЛЬМА")
+                        Text(L10n.tr("АНАЛИЗ ФИЛЬМА"))
                             .font(.system(size: 10, weight: .heavy)).kerning(1.5)
                             .foregroundStyle(.white.opacity(0.9))
                         Spacer()

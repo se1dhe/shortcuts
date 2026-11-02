@@ -35,6 +35,8 @@ Local AI video essay studio for Apple Silicon. Built with SwiftUI, MLX, WhisperK
 
 AI пропонує рішення, але не гарантує художньої якості чи відсутності помилок. Перевіряйте сцени, український текст, звук і метадані перед публікацією.
 
+[Повна галерея застосунку](https://se1dhe.github.io/shortcuts/app-gallery.html) · [Лендинг на п’яти мовах](https://se1dhe.github.io/shortcuts/landing-gallery.html)
+
 ## Усередині студії
 
 | Есе та акти | Субтитри |

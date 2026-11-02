@@ -49,6 +49,10 @@ enum JSONVariantParser {
         // Restore only this unambiguous scene-object shape. A valid string array
         // item cannot be followed by a sibling `role` property in this layout.
         s = restoreMissingSceneObjectStart(s)
+        // A compact selection row can lose its closing `]` while retaining the
+        // next-row comma. Repair only a line that starts with a catalogue scene
+        // ID and is not already closed, leaving all values untouched.
+        s = restoreMissingSceneArrayRowEnd(s)
         // Duplicate commas inside lists or objects: `,,` or `, ,` -> `,`
         s = regexReplace(s, #",(?:\s*,)+"#, with: ",")
         // Leading comma after an opening bracket/brace: `[,` or `{,` -> `[` or `{`
@@ -85,6 +89,18 @@ enum JSONVariantParser {
             withTemplate: "$1{\"id\": \"$2\",\n$3\"role\":"
         )
         log("restored \(hits) missing scene object start(s) and id key(s)")
+        return repaired
+    }
+
+    private static func restoreMissingSceneArrayRowEnd(_ json: String) -> String {
+        let pattern = #"(?m)^([ \t]*)(\[\"S[0-9]{4,}\"[^\r\n]*?)(?<!\]),([ \t]*)$"#
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return json }
+        let range = NSRange(json.startIndex..., in: json)
+        let hits = re.numberOfMatches(in: json, range: range)
+        guard hits > 0 else { return json }
+        let repaired = re.stringByReplacingMatches(
+            in: json, range: range, withTemplate: "$1$2],$3")
+        log("restored \(hits) missing scene-row closing bracket(s)")
         return repaired
     }
 

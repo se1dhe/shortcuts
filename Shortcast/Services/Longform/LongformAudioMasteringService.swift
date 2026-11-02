@@ -770,3 +770,177 @@ final class LongformLoudnessService: LongformLoudnessNormalizing, Sendable {
         String(format: "%.2f", value)
     }
 }
+
+/// Music automation shared by the essay and short exporters. All times are on
+/// the output timeline; source-film speech remains on its own untouched track.
+enum MusicBedMixing {
+    static func resolvedSettings(_ settings: LongformAudioSettings, for arc: LongformNarrativeArc,
+                                 coldOpenEnabled: Bool) -> LongformAudioSettings {
+        resolvingActEnvelope(settings, points: storyEnvelope(for: arc, coldOpenEnabled: coldOpenEnabled))
+    }
+
+    static func resolvingActEnvelope(_ settings: LongformAudioSettings,
+                                     points: [MusicEnvelopePoint]) -> LongformAudioSettings {
+        guard settings.musicEnvelopeFollowsActs == true else { return settings }
+        var resolved = settings
+        resolved.musicEnvelope = points.enumerated().map { index, point in
+            var point = point
+            if let previous = settings.musicEnvelope, previous.indices.contains(index) {
+                point.id = previous[index].id
+            }
+            return point
+        }
+        return resolved
+    }
+
+    /// An editable starting point, keyed to the actual output positions of acts.
+    /// This is applied only by the user's preset action, never on archive load.
+    static func storyEnvelope(for arc: LongformNarrativeArc, coldOpenEnabled: Bool) -> [MusicEnvelopePoint] {
+        let timeline = LongformTimeline(arc: arc, coldOpenEnabled: coldOpenEnabled)
+        guard timeline.duration.isFinite, timeline.duration > 0 else { return [] }
+        func level(_ type: LongformActType) -> Double {
+            switch type {
+            case .hook: return 0.75
+            case .downfall: return 0.45
+            case .struggle: return 0.70
+            case .catharsis: return 1
+            case .form: return 0.55
+            case .psychology: return 0.65
+            case .philosophy: return 0.60
+            }
+        }
+        var points: [MusicEnvelopePoint] = []
+        var previous = arc.acts.first.map { level($0.type) } ?? 0.75
+        points.append(.init(time: 0, gain: previous))
+        for (index, act) in arc.acts.enumerated() {
+            guard let start = timeline.start(ofAct: index) else { continue }
+            let end = timeline.placements.last { $0.actIndex == index }?.end ?? start
+            let target = level(act.type)
+            // Change smoothly after the act boundary, without a volume jump.
+            if target != previous {
+                points.append(.init(time: start, gain: previous))
+                points.append(.init(time: min(end, start + 2), gain: target))
+            }
+            previous = target
+        }
+        points.append(.init(time: timeline.speechEnd, gain: previous))
+        points.append(.init(time: timeline.duration, gain: min(previous, 0.65)))
+        return normalizedEnvelope(points, duration: timeline.duration)
+    }
+
+    static func normalizedEnvelope(_ points: [MusicEnvelopePoint], duration: Double) -> [MusicEnvelopePoint] {
+        var byTime: [Double: MusicEnvelopePoint] = [:]
+        for point in points where point.time.isFinite && point.time >= 0 && point.time <= duration && point.gain.isFinite {
+            // Duplicate timestamps are editable in the inspector; the last entry wins.
+            byTime[point.time] = .init(time: point.time, gain: min(1, max(0, point.gain)))
+        }
+        return byTime.values.sorted { $0.time < $1.time }
+    }
+
+    static func speechForDucking(_ speech: [TimeSegment], duration: Double) -> [TimeSegment] {
+        let valid = speech.compactMap { line -> TimeSegment? in
+            guard line.start.isFinite, line.end.isFinite else { return nil }
+            let start = max(0, line.start), end = min(duration, line.end)
+            return end > start ? .init(start: start, end: end) : nil
+        }.sorted { $0.start < $1.start }
+        var merged: [TimeSegment] = []
+        for line in valid {
+            if let last = merged.last, line.start <= last.end + 0.8 {
+                merged[merged.count - 1] = .init(start: last.start, end: max(last.end, line.end))
+            } else { merged.append(line) }
+        }
+        return merged
+    }
+
+    static func add(to composition: AVMutableComposition, settings: LongformAudioSettings,
+                    duration: Double, speech: [TimeSegment], isolation: isolated (any Actor)? = #isolation) async throws -> AVMutableAudioMixInputParameters? {
+        guard let url = settings.backgroundMusicURL else { return nil }
+        guard FileManager.default.isReadableFile(atPath: url.path) else {
+            throw NSError(domain: "MusicBed", code: 1, userInfo: [NSLocalizedDescriptionKey: "Музыкальный трек не найден: \(url.lastPathComponent). Выберите доступный файл в панели музыки."])
+        }
+        let offset = settings.musicOffsetSeconds ?? 0
+        let fadeIn = settings.musicFadeInSeconds ?? 2
+        let fadeOut = settings.musicFadeOutSeconds ?? 4
+        let depth = settings.musicDuckingDepth ?? 0.7
+        guard duration.isFinite, duration > 0, offset.isFinite, offset >= 0,
+              fadeIn.isFinite, fadeIn >= 0, fadeOut.isFinite, fadeOut >= 0,
+              settings.musicVolume.isFinite, (0...1).contains(settings.musicVolume),
+              depth.isFinite, (0...1).contains(depth) else {
+            throw NSError(domain: "MusicBed", code: 2, userInfo: [NSLocalizedDescriptionKey: "Некорректные настройки музыкальной дорожки."])
+        }
+        guard (settings.musicEnvelope ?? []).allSatisfy({ $0.time.isFinite && $0.time >= 0 && $0.gain.isFinite && (0...1).contains($0.gain) }) else {
+            throw NSError(domain: "MusicBed", code: 5, userInfo: [NSLocalizedDescriptionKey: "Некорректная точка музыкальной огибающей."])
+        }
+        let original = AVURLAsset(url: url)
+        let originalLength = try await original.load(.duration).seconds
+        guard originalLength.isFinite, offset < originalLength else {
+            throw NSError(domain: "MusicBed", code: 3, userInfo: [NSLocalizedDescriptionKey: "Начало музыки находится за концом трека."])
+        }
+        let effectiveURL: URL
+        if settings.musicLoopEnabled ?? true {
+            effectiveURL = try await SeamlessAudioLoopService().createSeamlessLoop(
+                sourceURL: url, targetDuration: duration + offset + 2, crossfadeDuration: 2)
+        } else { effectiveURL = url }
+        let asset = AVURLAsset(url: effectiveURL)
+        guard let source = try await asset.loadTracks(withMediaType: .audio).first,
+              let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            throw NSError(domain: "MusicBed", code: 4, userInfo: [NSLocalizedDescriptionKey: "В выбранном файле нет аудиодорожки."])
+        }
+        let length = try await asset.load(.duration).seconds
+        let end = min(duration, length - offset)
+        try track.insertTimeRange(CMTimeRange(start: CMTime(seconds: offset, preferredTimescale: 600),
+            duration: CMTime(seconds: end, preferredTimescale: 600)), of: source, at: .zero)
+        let params = AVMutableAudioMixInputParameters(track: track)
+        let points = automation(duration: end, settings: settings, speech: speech)
+        if let first = points.first { params.setVolume(first.gain, at: .zero) }
+        for (a, b) in zip(points, points.dropFirst()) where b.time > a.time {
+            params.setVolumeRamp(fromStartVolume: a.gain, toEndVolume: b.gain,
+                timeRange: CMTimeRange(start: CMTime(seconds: a.time, preferredTimescale: 600),
+                                      end: CMTime(seconds: b.time, preferredTimescale: 600)))
+        }
+        return params
+    }
+
+    static func envelopeGain(at time: Double, points: [MusicEnvelopePoint]) -> Double {
+        guard let first = points.first, let last = points.last else { return 1 }
+        if time <= first.time { return min(1, max(0, first.gain)) }
+        if time >= last.time { return min(1, max(0, last.gain)) }
+        for (a, b) in zip(points, points.dropFirst()) where time >= a.time && time <= b.time {
+            let fraction = b.time > a.time ? (time - a.time) / (b.time - a.time) : 1
+            return min(1, max(0, a.gain + (b.gain - a.gain) * fraction))
+        }
+        return 1
+    }
+    struct Point { let time: Double; let gain: Float }
+    static func automation(duration: Double, settings: LongformAudioSettings, speech: [TimeSegment]) -> [Point] {
+        guard duration.isFinite, duration > 0 else { return [] }
+        let fadeIn = min(duration, max(0, settings.musicFadeInSeconds ?? 2))
+        let fadeOut = min(duration, max(0, settings.musicFadeOutSeconds ?? 4))
+        let depth = Double(settings.musicDuckingDepth ?? 0.7)
+        // Keep short breath pauses quiet instead of swelling the bed between words.
+        let dialogue = settings.duckingEnabled ? speechForDucking(speech, duration: duration) : []
+        let envelope = normalizedEnvelope(settings.musicEnvelope ?? [], duration: duration)
+        var times = [0.0, duration, fadeIn, duration - fadeOut] + envelope.map(\.time)
+        if fadeIn + fadeOut > duration {
+            // The fades meet inside the range. Without this knot a short bed
+            // whose two endpoints are zero would be exported as total silence.
+            times.append(duration * fadeIn / (fadeIn + fadeOut))
+        }
+        for line in dialogue { times += [line.start - 0.15, line.start, line.end, line.end + 0.3] }
+        return Set(times.map { min(duration, max(0, $0)) }).sorted().map { time in
+            let entrance = fadeIn > 0 ? min(1, time / fadeIn) : 1
+            let exit = fadeOut > 0 ? min(1, (duration - time) / fadeOut) : 1
+            var duck = 1.0
+            for line in dialogue {
+                let factor: Double
+                if time >= line.start && time <= line.end { factor = 1 - depth }
+                else if time < line.start && time > line.start - 0.15 { factor = 1 - depth * (time - line.start + 0.15) / 0.15 }
+                else if time > line.end && time < line.end + 0.3 { factor = 1 - depth * (1 - (time - line.end) / 0.3) }
+                else { factor = 1 }
+                duck = min(duck, factor)
+            }
+            let storyGain = envelopeGain(at: time, points: envelope)
+            return Point(time: time, gain: settings.musicVolume * Float(max(0, min(entrance, exit) * duck * storyGain)))
+        }
+    }
+}

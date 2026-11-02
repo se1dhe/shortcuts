@@ -5,17 +5,21 @@ struct PlatformUploadContent: Sendable, Codable, Equatable {
     var title: String?
     var caption: String
     var hashtags: [String]
+    /// YouTube keyword tags, distinct from hashtags embedded in the description.
+    var keywordTags: [String]? = nil
     var thumbnailPath: String?
 
     init(
         title: String? = nil,
         caption: String,
         hashtags: [String] = [],
+        keywordTags: [String]? = nil,
         thumbnailPath: String? = nil
     ) {
         self.title = title
         self.caption = caption
         self.hashtags = hashtags
+        self.keywordTags = keywordTags
         self.thumbnailPath = thumbnailPath
     }
 }
@@ -29,6 +33,8 @@ struct BrowserUploadJob: Sendable, Codable, Equatable {
     var title: String
     var caption: String
     var hashtags: [String]
+    /// YouTube keyword tags, distinct from hashtags embedded in the description.
+    var keywordTags: [String]? = nil
     var isPublic: Bool
     var headless: Bool
     var isShort: Bool? = nil
@@ -44,6 +50,7 @@ struct BrowserUploadJob: Sendable, Codable, Equatable {
         title: String,
         caption: String,
         hashtags: [String] = [],
+        keywordTags: [String]? = nil,
         isPublic: Bool = true,
         headless: Bool = true,
         isShort: Bool = false,
@@ -58,6 +65,7 @@ struct BrowserUploadJob: Sendable, Codable, Equatable {
         self.title = title
         self.caption = caption
         self.hashtags = hashtags
+        self.keywordTags = keywordTags
         self.isPublic = isPublic
         self.headless = headless
         self.isShort = isShort

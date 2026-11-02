@@ -6,6 +6,68 @@ import Testing
 
 @Suite("Essay publication packaging")
 struct LongformPackagingTests {
+    @Test("Old packaging remains readable and revisions keep its measurement history intact")
+    func packagingRevisionHistory() throws {
+        let old = #"{"id":"A149F61E-1234-4567-8901-123456789012","createdAt":0,"title":"Ціна правди","coverText":"ПРАВДА","rationale":"Рішення героя","observations":[{"id":"A149F61E-1234-4567-8901-123456789013","date":0,"views":42,"source":"YouTube Studio","notes":"Перший тиждень"}]}"#
+        let original = try JSONDecoder().decode(PackagingExperiment.self, from: Data(old.utf8))
+        #expect(original.needsCoverRefresh)
+        #expect(original.observations[0].claimStatus == nil)
+        let revised = original.newRevision()
+        #expect(revised.id != original.id)
+        #expect(revised.sourceVariantID == original.id)
+        #expect(revised.observations.isEmpty)
+        #expect(original.observations[0].views == 42)
+        #expect(revised.title == original.title && revised.needsCoverRefresh)
+        let roundTrip = try JSONDecoder().decode(PackagingExperiment.self, from: JSONEncoder().encode(revised))
+        #expect(roundTrip == revised)
+    }
+
+    @Test("Editorial rejection and missing distinct angles cannot masquerade as valid packaging")
+    func editorialApproval() throws {
+        try PackagingVariantParser.requireEditorialApproval(#"{"approved":true,"issues":[]}"#)
+        #expect(throws: (any Error).self) { try PackagingVariantParser.requireEditorialApproval(#"{"approved":false,"issues":["Усі три заголовки обіцяють те саме"]}"#) }
+        #expect(throws: (any Error).self) { try PackagingVariantParser.requireEditorialApproval(#"{"approved":true,"issues":["Помилка у слові"]}"#) }
+        #expect(throws: (any Error).self) { try PackagingVariantParser.requireEditorialApproval("not JSON") }
+        let angles = ["viewerChoice", "characterConflict", "decisionCost"]
+        var variants = angles.map { PackagingExperiment(title: $0, coverText: $0, rationale: "Репліка героя", editorialAngle: $0) }
+        try PackagingVariantParser.requireDistinctAngles(variants)
+        variants[2].editorialAngle = "viewerChoice"
+        #expect(throws: (any Error).self) { try PackagingVariantParser.requireDistinctAngles(variants) }
+    }
+
+    @Test("Saving observations from stale sheets merges by identity without reverting packaging")
+    func staleMeasurementSnapshot() {
+        var original = PackagingExperiment(title: "Початкова назва", coverText: "ВИБІР", rationale: "Конфлікт")
+        let first = PackagingExperiment.Observation(views: 12, source: "Studio", notes: "Перший")
+        original.observations = [first]
+        var current = original
+        current.title = "Виправлена назва"
+        let second = PackagingExperiment.Observation(views: 25, source: "Studio", notes: "Другий")
+        current.observations.append(second)
+        var stale = original
+        let third = PackagingExperiment.Observation(views: 31, source: "Studio", notes: "Третій")
+        stale.observations.append(third)
+        let merged = current.mergingObservations(from: stale)
+        #expect(merged.title == current.title)
+        #expect(Set(merged.observations.map(\.id)) == Set([first.id, second.id, third.id]))
+        #expect(merged.mergingObservations(from: stale) == merged)
+    }
+
+    @Test("Platform status is recorded from Studio independently of publication or view counts")
+    func manualPlatformObservations() throws {
+        let observation = PackagingExperiment.Observation(views: 100, source: "YouTube Studio", notes: "Перевірено вручну", periodStart: Date(timeIntervalSince1970: 0), periodEnd: Date(timeIntervalSince1970: 100), claimStatus: .claimed, monetizationStatus: .disabled)
+        let saved = try JSONDecoder().decode(PackagingExperiment.Observation.self, from: JSONEncoder().encode(observation))
+        #expect(saved.claimStatus == .claimed && saved.monetizationStatus == .disabled)
+        #expect(saved.ctr == nil && saved.retentionPercent == nil)
+        #expect(saved.periodStart == observation.periodStart && saved.periodEnd == observation.periodEnd)
+        var variant = PackagingExperiment(title: "Питання", coverText: "ВИБІР", rationale: "Конфлікт")
+        #expect(PackagingExperiment.measurementContext([variant]) == nil)
+        variant.observations = [saved]
+        let feedback = try #require(PackagingExperiment.measurementContext([variant]))
+        #expect(feedback.contains("YouTube Studio") && feedback.contains("claimed"))
+        #expect(!feedback.contains("retentionPercent"))
+    }
+
     private func result() -> LongformBuildResult {
         let concept = ThematicConcept(word: "СПОЖИВАЧ", tagline: "Ціна відмови від речей",
             philosophicalPremise: "Залежність від речей змінює ідентичність", suggestedTitle: "Ціна виходу з системи споживання", source: .llm)

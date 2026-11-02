@@ -32,9 +32,13 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
            і ти обирав би слово зі словника замість слова з фільму. Теми не буває в ім'ї героя,
            в жанровій бирці й у службових словах — тема є висновок з аналізу КРОКУ 1.
         2. Сформулюй драматургічний розбір (aiReasoning) — не більше 600 символів: чому саме ця тема є прихованим двигуном сюжету.
-        3. Запропонуй гострий слоган (tagline), філософський тез (philosophicalPremise) та вірусний YouTube-заголовок (suggestedTitle).
-        4. Склади план есе (essayPlan): thesis, один найкращий hook, 2 ctaVariants, actFocus.
-        5. ВИЗНАЧ 14-22 КОНКРЕТНИХ МОМЕНТІВ для есе (selectedMoments) з таймкодами та ролями — НЕ БІЛЬШЕ 22.
+        3. Запропонуй tagline і philosophicalPremise. Для suggestedTitle дай глядачеві особисту причину подивитися:
+           природне питання або конкретне звернення на 35–85 символів, спираючись на конфлікт цього фільму.
+           Не починай з назви фільму й не підмінюй обіцянку абстрактною назвою теми.
+        4. Окремо заповни coverText: емоційний гачок для обкладинки з 1–3 коротких слів (до 24 символів),
+           який підсилює title, але не повторює його. Не вставляй довге речення чи переказ сюжету.
+        5. Склади план есе (essayPlan): thesis, один найкращий hook, 2 ctaVariants, actFocus.
+        6. ВИЗНАЧ 14-22 КОНКРЕТНИХ МОМЕНТІВ для есе (selectedMoments) з таймкодами та ролями — НЕ БІЛЬШЕ 22.
 
         СТРУКТУРА ЕСЕ (5 актів, саме в цьому порядку; хук — 0:00–0:40):
         1. hook — перша сцена есе: обіцянка/парадокс, який утримує глядача; 1-2 речення, без переказу фіналу.
@@ -84,6 +88,7 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
             "tagline": "<СЛОГАН ДО 20 СЛІВ>",
             "philosophicalPremise": "<ФІЛОСОФСЬКИЙ ТЕЗ ДО 20 СЛІВ>",
             "suggestedTitle": "<НАЗВА ДЛЯ YouTube>",
+            "coverText": "<КОРОТКИЙ ГАЧОК ОБКЛАДИНКИ>",
             "accentColorHex": "#F5D020"
           },
           "essayPlan": {
@@ -197,7 +202,8 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         movieTitle: String,
         movieOverview: String?,
         modelManager: ModelManager,
-        directorProfile: ChatModelProfile
+        directorProfile: ChatModelProfile,
+        format: EssayFormat = .analytical
     ) async throws -> ThematicAnalysisResult {
         let sampleText = Self.stratifiedThematicSample(from: transcript)
         guard !sampleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -209,7 +215,8 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
             transcriptSample: sampleText,
             movieTitle: movieTitle,
             movieOverview: movieOverview,
-            transcript: transcript
+            transcript: transcript,
+            format: format
         )
     }
 

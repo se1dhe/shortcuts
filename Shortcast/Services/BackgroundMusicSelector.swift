@@ -1,5 +1,7 @@
 import Foundation
 import AVFoundation
+import AppKit
+import Observation
 
 /// Domain model for an available background music track.
 public struct BackgroundMusicTrack: Identifiable, Hashable, Sendable {
@@ -248,5 +250,108 @@ public final class BackgroundMusicService: BackgroundMusicSelecting, Sendable {
 public enum BackgroundMusicSelector {
     public static func selectBestTrack(from directory: URL?, mood: String? = nil) async -> URL? {
         await BackgroundMusicService.shared.selectBestTrack(from: directory, mood: mood)
+    }
+}
+
+/// A shared, persistent folder library. Views monitor it only while visible;
+/// rescanning also catches file additions/removals inside nested folders.
+@MainActor
+@Observable
+final class MusicFolderLibrary {
+    static let shared = MusicFolderLibrary()
+    private(set) var directory: URL?
+    private(set) var tracks: [BackgroundMusicTrack] = []
+    private(set) var error: String?
+    private var scopedDirectory: URL?
+    private let defaults: UserDefaults
+    private static let bookmarkKey = "shortcast.musicFolderBookmark"
+    private static let extensions: Set<String> = ["mp3", "wav", "m4a", "aac", "aiff", "aif", "caf", "flac", "mp4"]
+
+    init(directory: URL? = nil, defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        self.directory = directory
+        if directory == nil, let bookmark = defaults.data(forKey: Self.bookmarkKey) {
+            do {
+                var stale = false
+                let url = try URL(resolvingBookmarkData: bookmark, options: .withSecurityScope,
+                                  relativeTo: nil, bookmarkDataIsStale: &stale)
+                self.directory = url
+                if url.startAccessingSecurityScopedResource() { scopedDirectory = url }
+                if stale {
+                    defaults.set(try url.bookmarkData(options: .withSecurityScope,
+                        includingResourceValuesForKeys: nil, relativeTo: nil), forKey: Self.bookmarkKey)
+                }
+            } catch {
+                self.error = "Папка с музыкой недоступна. Выберите её снова."
+            }
+        }
+        refresh()
+    }
+
+    func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Выберите папку с музыкой. Список треков обновляется автоматически."
+        panel.prompt = "Подключить папку"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let accessed = url.startAccessingSecurityScopedResource()
+        do {
+            let bookmark = try url.bookmarkData(options: .withSecurityScope,
+                includingResourceValuesForKeys: nil, relativeTo: nil)
+            scopedDirectory?.stopAccessingSecurityScopedResource()
+            scopedDirectory = accessed ? url : nil
+            directory = url
+            defaults.set(bookmark, forKey: Self.bookmarkKey)
+            refresh()
+        } catch {
+            if accessed { url.stopAccessingSecurityScopedResource() }
+            self.error = "Не удалось подключить папку: \(error.localizedDescription)"
+        }
+    }
+
+    func refresh() {
+        let fm = FileManager.default
+        let bundledMusic = Bundle.main.resourceURL?.appendingPathComponent("Music")
+        let builtInRoot = bundledMusic.flatMap { fm.fileExists(atPath: $0.path) ? $0 : nil }
+            ?? Bundle.main.resourceURL ?? BackgroundMusicService.shared.defaultMusicDirectory()
+        let root = directory ?? builtInRoot
+        var isDirectory: ObjCBool = false
+        guard fm.fileExists(atPath: root.path, isDirectory: &isDirectory), isDirectory.boolValue,
+              fm.isReadableFile(atPath: root.path) else {
+            tracks = []
+            error = "Папка с музыкой недоступна. Выберите её снова."
+            return
+        }
+        guard let files = fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey],
+                                        options: [.skipsHiddenFiles, .skipsPackageDescendants]) else {
+            tracks = []
+            error = "Не удалось прочитать папку с музыкой."
+            return
+        }
+        var discovered: [BackgroundMusicTrack] = []
+        for case let url as URL in files {
+            guard Self.extensions.contains(url.pathExtension.lowercased()),
+                  (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
+                  fm.isReadableFile(atPath: url.path) else { continue }
+            discovered.append(BackgroundMusicTrack(
+                name: url.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "_", with: " "),
+                moodTag: "cinematic", url: url, isBuiltIn: directory == nil))
+        }
+        discovered.sort {
+            let comparison = $0.name.localizedStandardCompare($1.name)
+            return comparison == .orderedSame ? $0.url.path < $1.url.path : comparison == .orderedAscending
+        }
+        if tracks != discovered { tracks = discovered }
+        error = nil
+    }
+
+    func monitor() async {
+        while !Task.isCancelled {
+            refresh()
+            do { try await Task.sleep(for: .seconds(1)) }
+            catch { return }
+        }
     }
 }

@@ -39,6 +39,16 @@ struct LongformBuildResult: Codable, Equatable, Sendable {
 struct LongformAudioSettings: Codable, Sendable, Equatable {
     var backgroundMusicURL: URL? = nil
     var musicVolume: Float = 0.18
+    var musicOffsetSeconds: Double? = nil
+    var musicFadeInSeconds: Double? = nil
+    var musicFadeOutSeconds: Double? = nil
+    var musicDuckingDepth: Float? = nil
+    var musicLoopEnabled: Bool? = nil
+    var musicEnvelope: [MusicEnvelopePoint]? = nil
+    /// nil/false keeps legacy and hand-edited points on their saved timeline.
+    var musicEnvelopeFollowsActs: Bool? = nil
+    var musicSource: String? = nil
+    var musicUsageTerms: String? = nil
     var duckingEnabled: Bool = true
     var dialogueFocusEnabled: Bool = true
     var originalMusicDucking: Float = 0.82
@@ -81,6 +91,7 @@ protocol LongformPipelineCoordinating: Sendable {
         essayPlan: EssayPlan?,
         audioSettings: LongformAudioSettings,
         existingArc: LongformNarrativeArc?,
+        allowUserApprovedScenes: Bool,
         workingDirectory: URL?,
         channelLogoEnabled: Bool,
         progressHandler: (@Sendable (Double, String) -> Void)?
@@ -113,6 +124,7 @@ extension LongformPipelineCoordinating {
             essayPlan: nil,
             audioSettings: settings,
             existingArc: nil,
+            allowUserApprovedScenes: false,
             workingDirectory: workingDirectory,
             channelLogoEnabled: true,
             progressHandler: progressHandler
@@ -145,6 +157,7 @@ extension LongformPipelineCoordinating {
             essayPlan: nil,
             audioSettings: settings,
             existingArc: nil,
+            allowUserApprovedScenes: false,
             workingDirectory: workingDirectory,
             channelLogoEnabled: channelLogoEnabled,
             progressHandler: progressHandler
@@ -169,6 +182,7 @@ extension LongformPipelineCoordinating {
             essayPlan: nil,
             audioSettings: audioSettings,
             existingArc: nil,
+            allowUserApprovedScenes: false,
             workingDirectory: workingDirectory,
             channelLogoEnabled: true,
             progressHandler: progressHandler
@@ -194,6 +208,7 @@ extension LongformPipelineCoordinating {
             essayPlan: nil,
             audioSettings: audioSettings,
             existingArc: nil,
+            allowUserApprovedScenes: false,
             workingDirectory: workingDirectory,
             channelLogoEnabled: channelLogoEnabled,
             progressHandler: progressHandler
@@ -217,6 +232,7 @@ extension LongformPipelineCoordinating {
             essayPlan: nil,
             audioSettings: audioSettings,
             existingArc: nil,
+            allowUserApprovedScenes: false,
             workingDirectory: nil,
             channelLogoEnabled: true,
             progressHandler: progressHandler
@@ -245,9 +261,16 @@ extension LongformPipelineCoordinating {
             essayPlan: nil,
             audioSettings: settings,
             existingArc: nil,
+            allowUserApprovedScenes: false,
             workingDirectory: nil,
             channelLogoEnabled: true,
             progressHandler: progressHandler
         )
     }
+}
+
+struct MusicEnvelopePoint: Codable, Equatable, Identifiable, Sendable {
+    var id = UUID()
+    var time: Double
+    var gain: Double
 }

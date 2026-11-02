@@ -20,7 +20,8 @@ export function classifyYouTubeStatus(snapshot) {
     || /processing (?:sd|hd|video)|(?:sd|hd) processing|обработка (?:видео|(?:в )?(?:sd|hd))|обробка (?:відео|(?:у )?(?:sd|hd))|checks complete|проверки завершены|проверка (?:завершена|:)|перевірки завершено|перевірка (?:завершена|:)/i.test(progress)
   );
   const checking = /checks? (?:running|in progress)|checking|still checking|проверяется|перевіряється|проверка(?:\s+.*)?(?:выполняется|продолжается)|ид[её]т проверка|перевірка триває/i.test(checks);
-  const checksComplete = !checking && (
+  const footerChecksComplete = /checks complete|проверка завершена|проверки завершены|перевірки завершено|перевірка завершена/i.test(progress);
+  const checksComplete = !checking && (footerChecksComplete ||
     /checks complete|проверки завершены|проверка завершена|перевірки завершено|no issues found|проблем не (?:обнаружено|выявлено|найдено)|порушень не виявлено|проблем не виявлено/i.test(checks)
   );
   const copyrightClaim = /copyright.protected content (?:found|detected)|copyright claim(?:\s*:|$)|найден(?:ы)? (?:контент|материалы).*(?:авторск|защищ)|обнаружен.*авторск|на (?:этот )?контент заявлены права|на (?:який|который) заявлен[ыі] права|(?:виявлено|знайдено).*авторськ/i.test(checks);
@@ -30,11 +31,13 @@ export function classifyYouTubeStatus(snapshot) {
   const strike = /(?:received|issued|applied|active) (?:a )?copyright strike|copyright strike (?:issued|received|active)|(?:вынесено|получено|вынесли|получили) (?:вам )?предупреждение|предупреждение за нарушение авторских прав/i.test(checks)
     && !/no copyright strike|not a copyright strike|не вынесли вам предупреждения|предупреждени[ея] (?:не вынесено|нет)/i.test(checks);
   const claimDoesNotRestrict = /does(?:n't| not) affect (?:your|the) video|no (?:impact|restrictions?) on (?:your|the) video|не (?:повлияло|влияет) на (?:охват )?видео|заявка не повлияла на доступ к видео и его функции|не впливає на (?:ваше )?відео|заявка не вплинула на доступ до відео/i.test(checks);
-  const harmlessClaim = copyrightClaim && claimDoesNotRestrict && !blocked && !strike;
+  const monetizationOnly = /(?:only|solely) affects? (?:the |your )?(?:monetization|revenue)|(?:влияет|влияние) (?:только|лишь) на (?:монетизацию|доход)|впливає (?:лише|тільки) на (?:монетизацію|дохід)/i.test(checks);
+  const harmlessClaim = copyrightClaim && (claimDoesNotRestrict || monetizationOnly) && !blocked && !strike;
+  const claimPolicy = blocked ? 'blocked' : strike ? 'strike' : harmlessClaim ? 'monetization-or-no-video-impact' : copyrightClaim ? 'unknown' : 'none';
   const contentIssue = blocked || strike || (copyrightClaim && !harmlessClaim);
   const processingPending = /processing.*(?:\d+\s*%|will begin|in progress)|(?:sd|hd) processing(?!.*complete)|обработка.*(?:\d+\s*%|начн|продолж)|обработка в (?:sd|hd)|начн[её]тся обработка|обробка.*(?:\d+\s*%|трива)|обробка у (?:sd|hd)|почнеться обробка/i.test(progress);
   return { progress, checks, uploadPending, uploadComplete: Boolean(uploadComplete), checksComplete,
-    processingPending, checking, contentIssue, copyrightClaim, harmlessClaim, blocked, strike, error,
+    processingPending, checking, contentIssue, copyrightClaim, harmlessClaim, claimPolicy, blocked, strike, error,
     percentage: percentage ? Number(percentage[1]) : null };
 }
 
@@ -107,7 +110,7 @@ export async function waitForYouTubePhase(page, phase, options = {}) {
       report(message); lastMessage = message; lastReportAt = now();
     }
     if (status.error) throw new Error('YouTube сообщил об ошибке: ' + status.error);
-    if (status.contentIssue) throw new Error('YouTube обнаружил ограничение контента: ' + status.checks
+    if (status.blocked || status.strike || (phase === 'checks' && status.checksComplete && status.contentIssue)) throw new Error('YouTube обнаружил ограничение контента: ' + status.checks
       + '. Публикация остановлена для проверки.');
     if (phase === 'upload' && status.uploadComplete) return status;
     if (phase === 'checks' && status.checksComplete && !status.processingPending) return status;

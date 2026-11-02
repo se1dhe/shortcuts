@@ -144,6 +144,24 @@ struct SemanticThemeSelectionTests {
         #expect(plan.confirming(hookText: nil, ctaText: nil).chosenHookVariant == nil)
     }
 
+    @Test("Missing opening evidence reports the exact role instead of rejecting the film's themes")
+    func missingOpeningHasActionableFeedback() throws {
+        let (analysis, transcript) = material()
+        let raw = acceptedReply.replacingOccurrences(of: "\"scene\":1,", with: "\"scene\":3,")
+        do {
+            _ = try EssaySemanticSelection.apply(raw, to: analysis, candidates: [analysis.primaryConcept],
+                transcript: transcript, modelID: "test-model")
+            Issue.record("Review without the opening was accepted")
+        } catch let error as EssaySemanticReviewFailure {
+            #expect(error.detail.contains("hook"))
+            #expect(!error.localizedDescription.contains("Ни одна тема"))
+        }
+        let prompt = EssaySemanticSelection.prompt(analysis: analysis, candidates: [analysis.primaryConcept],
+            transcript: transcript, materialChars: 10_000)
+        #expect(prompt.contains("hook з номерів [1]"))
+        #expect(prompt.contains("catharsis з номерів [5, 9, 13]"))
+    }
+
     @Test("Source fingerprint alone cannot restore an old theme and menu of hooks")
     func oldCacheIsInvalid() {
         var (analysis, transcript) = material()

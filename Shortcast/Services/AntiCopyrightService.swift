@@ -3,10 +3,11 @@ import AVFoundation
 import CoreGraphics
 import CoreImage
 import os.log
+import Darwin
 
 // MARK: - Presets Enum
 
-/// User-selectable presets for anti-copyright protection.
+/// Optional image and sound treatments. Archive raw values remain stable.
 public enum AntiCopyrightPreset: String, CaseIterable, Identifiable, Codable, Sendable {
     case off = "off"
     case subtle = "subtle"
@@ -22,8 +23,8 @@ public enum AntiCopyrightPreset: String, CaseIterable, Identifiable, Codable, Se
         switch self {
         case .off: return "Отключено"
         case .subtle: return "Мягкая (Subtle)"
-        case .cinemaShield: return "YouTube Cinema Shield (Рекомендуется для фильмов)"
-        case .tikTokShield: return "TikTok / Reels Shield"
+        case .cinemaShield: return "Кинематографическая обработка"
+        case .tikTokShield: return "Обработка вертикального видео"
         case .moderate: return "Стандартная (Moderate)"
         case .aggressive: return "Максимальная (Aggressive)"
         case .custom: return "Пользовательская (Custom)"
@@ -47,9 +48,8 @@ public enum AntiCopyrightPreset: String, CaseIterable, Identifiable, Codable, Se
 
 /// Configuration options for the Anti-Copyright transformation pipeline.
 ///
-/// Encapsulates parameters for visual and auditory micro-modulations
-/// designed to alter media fingerprints (Content ID, perceptual hashes)
-/// while maintaining high perceptual quality for human viewers.
+/// Encapsulates optional visual and auditory changes. These settings do not
+/// establish permission to use material or predict platform claim decisions.
 public struct AntiCopyrightConfig: Codable, Sendable, Equatable, Hashable {
 
     /// Whether to mirror the video horizontally (flip X axis).
@@ -156,7 +156,7 @@ public struct AntiCopyrightConfig: Codable, Sendable, Equatable, Hashable {
         stripMetadata: true
     )
 
-    /// TikTok / Reels Shield (RECOMMENDED): Hardened specifically against TikTok acoustic constellation and pHash algorithms.
+    /// TikTok / Reels Shield (RECOMMENDED): Alternative audiovisual treatment for vertical video; effectiveness against recognition is unverified.
     public static let tikTokShield = AntiCopyrightConfig(
         enableMirror: true,
         zoomScale: 1.035,
@@ -644,7 +644,8 @@ public struct AntiCopyrightFFmpegBuilder: Sendable {
             if let size = renderSize, size.width > 0, size.height > 0 {
                 let outW = Int(size.width.rounded())
                 let outH = Int(size.height.rounded())
-                filters.append("crop=trunc(iw/\(z)/2)*2:trunc(ih/\(z)/2)*2,scale=\(outW):\(outH)")
+                let drift = config.driftIntensity > 0 ? ":x='(iw-ow)/2*(1+\(fmt(config.driftIntensity))*sin(t*0.2))':y='(ih-oh)/2'" : ""
+                filters.append("crop=trunc(iw/\(z)/2)*2:trunc(ih/\(z)/2)*2" + drift + ",scale=\(outW):\(outH)")
             } else {
                 filters.append("scale=ceil(iw*\(z)/2)*2:ceil(ih*\(z)/2)*2,crop=trunc(iw/\(z)/2)*2:trunc(ih/\(z)/2)*2")
             }
@@ -657,7 +658,7 @@ public struct AntiCopyrightFFmpegBuilder: Sendable {
             filters.append("eq=contrast=\(c):saturation=\(s)")
         }
 
-        // 4. 35mm dynamic cinematic micro-grain (breaks block-level DCT hashes)
+        // 4. Temporal film grain. No recognition-avoidance guarantee is implied.
         if config.filmGrainIntensity > 0.01 {
             let strength = max(1, min(6, Int(round(config.filmGrainIntensity * 10.0))))
             filters.append("noise=c0s=\(strength):c0f=t+u")
@@ -747,6 +748,8 @@ public struct AntiCopyrightService: AntiCopyrightTransforming, Sendable {
     }
 
     public let config: AntiCopyrightConfig
+    private let pictureRegion: CGRect?
+    private let activeDuration: Double?
 
     private let geometryTransformer: AntiCopyrightGeometryTransformer
     private let colorTransformer: AntiCopyrightColorTransformer
@@ -755,8 +758,12 @@ public struct AntiCopyrightService: AntiCopyrightTransforming, Sendable {
 
     // MARK: - Initializers
 
-    public init(config: AntiCopyrightConfig = .tikTokShield) {
-        let clampedConfig = config.clamped()
+    public init(config: AntiCopyrightConfig = .tikTokShield, pictureRegion: CGRect? = nil,
+                activeDuration: Double? = nil, preserveTimeline: Bool = false) {
+        var clampedConfig = config.clamped()
+        if preserveTimeline { clampedConfig.audioSpeedMultiplier = 1 }
+        self.pictureRegion = pictureRegion
+        self.activeDuration = activeDuration
         self.config = clampedConfig
         self.geometryTransformer = AntiCopyrightGeometryTransformer(config: clampedConfig)
         self.colorTransformer = AntiCopyrightColorTransformer(config: clampedConfig)
@@ -971,28 +978,52 @@ public struct AntiCopyrightService: AntiCopyrightTransforming, Sendable {
 
         let destination = outputURL ?? FileManager.default.temporaryDirectory
             .appendingPathComponent("shortcast-anticopyright-\(UUID().uuidString).mp4")
-        try? FileManager.default.removeItem(at: destination)
-
-        // Try FFmpeg first if available (supports combined video filters + rubberband/asetrate in one pass)
-        if let ffmpegBin = BinaryDownloadService.resolveBinary("ffmpeg", workingDirectory: workingDirectory) {
-            do {
-                try await processWithFFmpeg(
-                    videoURL: videoURL,
-                    outputURL: destination,
-                    ffmpegBinary: ffmpegBin
-                )
-                return destination
-            } catch {
-                Self.log("FFmpeg execution failed (\(error.localizedDescription)), falling back to AVFoundation.")
-            }
+        // Always encode beside the destination. Never delete a usable export,
+        // especially when the caller requests in-place processing.
+        let staged = destination.deletingLastPathComponent()
+            .appendingPathComponent(".shield-" + UUID().uuidString + ".mp4")
+        defer { try? FileManager.default.removeItem(at: staged) }
+        guard let ffmpegBin = BinaryDownloadService.resolveBinary("ffmpeg", workingDirectory: workingDirectory) else {
+            throw AntiCopyrightError.processingFailed("FFmpeg недоступен. Shield не применён; исходный файл сохранён.")
         }
-
-        // Native AVFoundation fallback
-        try await processWithAVFoundation(
-            videoURL: videoURL,
-            outputURL: destination
-        )
+        try Task.checkCancellation()
+        try await processWithFFmpeg(videoURL: videoURL, outputURL: staged, ffmpegBinary: ffmpegBin)
+        try await validateProcessedVideo(source: videoURL, output: staged)
+        try Task.checkCancellation()
+        let status = staged.path.withCString { from in
+            destination.path.withCString { to in Darwin.rename(from, to) }
+        }
+        guard status == 0 else {
+            throw AntiCopyrightError.processingFailed("Не удалось атомарно сохранить результат Shield: " + String(cString: strerror(errno)))
+        }
+        Self.log("Shield completed and validated: " + destination.lastPathComponent)
         return destination
+    }
+
+    private func validateProcessedVideo(source: URL, output: URL) async throws {
+        let original = AVURLAsset(url: source), rendered = AVURLAsset(url: output)
+        let expected = try await original.load(.duration).seconds / config.audioSpeedMultiplier
+        let actual = try await rendered.load(.duration).seconds
+        guard expected.isFinite, actual.isFinite, actual > 0, abs(expected - actual) < 0.2,
+              let originalTrack = try await original.loadTracks(withMediaType: .video).first,
+              let outputTrack = try await rendered.loadTracks(withMediaType: .video).first else {
+            throw AntiCopyrightError.processingFailed("Shield: не совпал хронометраж или отсутствует видеодорожка.")
+        }
+        let originalSize = try await originalTrack.load(.naturalSize)
+        let outputSize = try await outputTrack.load(.naturalSize)
+        guard originalSize == outputSize else {
+            throw AntiCopyrightError.processingFailed("Shield изменил разрешение видео.")
+        }
+        let hadAudio = try await !original.loadTracks(withMediaType: .audio).isEmpty
+        let hasAudio = try await !rendered.loadTracks(withMediaType: .audio).isEmpty
+        if hadAudio && !hasAudio {
+            throw AntiCopyrightError.processingFailed("Shield потерял звуковую дорожку.")
+        }
+        let frames = AVAssetImageGenerator(asset: rendered)
+        frames.maximumSize = CGSize(width: 320, height: 320)
+        for seconds in [min(0.5, actual / 2), max(0, actual - 0.5)] {
+            _ = try await frames.image(at: CMTime(seconds: seconds, preferredTimescale: 600))
+        }
     }
 
     // MARK: - Private Processing Helpers
@@ -1016,73 +1047,48 @@ public struct AntiCopyrightService: AntiCopyrightTransforming, Sendable {
             renderSize = nil
         }
 
-        var arguments = [
-            "-y",
-            "-i", videoURL.path
-        ]
-
-        let filterArgs = buildFFmpegArguments(
-            renderSize: renderSize,
-            audioPitchMethod: .rubberband,
-            sampleRate: 44100
-        )
-        arguments.append(contentsOf: filterArgs)
-
-        var outputFlags: [String] = [
-            "-c:v", "h264_videotoolbox",
-            "-b:v", "38M",
-            "-maxrate", "45M",
-            "-bufsize", "50M",
-            "-pix_fmt", "yuv420p",
-            "-color_primaries", "bt709",
-            "-color_trc", "bt709",
-            "-colorspace", "bt709",
-            "-c:a", "aac",
-            "-b:a", "256k",
-            "-ar", "48000",
-            "-profile:a", "aac_low",
-            "-aac_tns", "0"
-        ]
-
-        if config.stripMetadata {
-            outputFlags.append(contentsOf: ["-map_metadata", "-1", "-fflags", "+bitexact"])
-        }
-
-        outputFlags.append(contentsOf: [
-            "-movflags", "+faststart",
-            outputURL.path
-        ])
-
-        arguments.append(contentsOf: outputFlags)
-
-        do {
-            _ = try await ProcessRunner.shared.run(
-                executableURL: ffmpegBinary,
-                arguments: arguments
-            )
-        } catch {
-            Self.log("FFmpeg with rubberband failed (\(error.localizedDescription)), retrying with universal asetrate filter...")
-            var fallbackArgs = [
-                "-y",
-                "-i", videoURL.path
-            ]
-            let fallbackFilterArgs = buildFFmpegArguments(
-                renderSize: renderSize,
-                audioPitchMethod: .asetrate,
-                sampleRate: 44100
-            )
-            fallbackArgs.append(contentsOf: fallbackFilterArgs)
-            fallbackArgs.append(contentsOf: outputFlags)
-
+        var failures: [String] = []
+        // Hardware encoding is preferred, but an unavailable VideoToolbox
+        // session must not degrade the requested filters to a partial native pass.
+        let attempts: [(FFmpegAudioPitchMethod, String)] = [(.rubberband, "h264_videotoolbox"),
+            (.asetrate, "h264_videotoolbox"), (.asetrate, "libx264")]
+        for (pitch, encoder) in attempts {
+            try Task.checkCancellation()
+            var arguments = ["-hide_banner", "-nostdin", "-y", "-i", videoURL.path]
+            if let region = pictureRegion {
+                guard let size = renderSize, region.width > 0, region.height > 0,
+                      region.minX >= 0, region.minY >= 0, region.maxX <= size.width, region.maxY <= size.height else {
+                    throw AntiCopyrightError.processingFailed("Shield: область кадра выходит за границы видео.")
+                }
+                let crop = "crop=\(Int(region.width)):\(Int(region.height)):\(Int(region.minX)):\(Int(region.minY))"
+                let filters = buildFFmpegVideoFilterString(renderSize: region.size)
+                let chain = filters.isEmpty ? crop : crop + "," + filters
+                let enable = activeDuration.map { ":enable='lt(t,\($0))'" } ?? ""
+                arguments += ["-filter_complex", "[0:v]split=2[base][movie];[movie]" + chain
+                    + "[treated];[base][treated]overlay=\(Int(region.minX)):\(Int(region.minY))" + enable + "[v]", "-map", "[v]", "-map", "0:a:0?"]
+                let af = buildFFmpegAudioFilterString(method: pitch, sampleRate: 48000)
+                if !af.isEmpty { arguments += ["-af", af] }
+            } else {
+                arguments += ["-map", "0:v:0", "-map", "0:a:0?"]
+                arguments += buildFFmpegArguments(renderSize: renderSize, audioPitchMethod: pitch, sampleRate: 48000)
+            }
+            arguments += ["-c:v", encoder]
+            if encoder == "libx264" { arguments += ["-preset", "veryfast", "-crf", "18"] }
+            else { arguments += ["-b:v", "14M", "-maxrate", "20M", "-bufsize", "28M"] }
+            arguments += ["-pix_fmt", "yuv420p", "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
+                "-c:a", "aac", "-b:a", "256k", "-ar", "48000", "-profile:a", "aac_low", "-aac_tns", "0"]
+            if config.stripMetadata { arguments += ["-map_metadata", "-1"] }
+            arguments += ["-movflags", "+faststart", outputURL.path]
             do {
-                _ = try await ProcessRunner.shared.run(
-                    executableURL: ffmpegBinary,
-                    arguments: fallbackArgs
-                )
-            } catch let fallbackError {
-                throw AntiCopyrightError.processingFailed(fallbackError.localizedDescription)
+                _ = try await ProcessRunner.shared.run(executableURL: ffmpegBinary, arguments: arguments)
+                return
+            } catch {
+                try Task.checkCancellation()
+                failures.append(encoder + ": " + String(error.localizedDescription.suffix(1800)))
+                Self.log("Shield encoding attempt failed: " + encoder)
             }
         }
+        throw AntiCopyrightError.processingFailed(failures.joined(separator: " | "))
     }
 
     private func processWithAVFoundation(

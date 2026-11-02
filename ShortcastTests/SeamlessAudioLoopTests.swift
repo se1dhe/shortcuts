@@ -1,3 +1,4 @@
+import AVFoundation
 import Testing
 import Foundation
 import AVFoundation
@@ -545,5 +546,195 @@ struct LongformAudioMasteringHardeningTests {
             totalDuration: 30.0
         ))
         #expect(shifted.start.seconds > 8.0)
+    }
+}
+
+@Suite("Music bed automation")
+struct MusicBedAutomationTests {
+    @Test("Overlapping fades on a short clip do not silence the whole bed")
+    func overlappingFades() throws {
+        let settings = LongformAudioSettings(musicVolume: 0.1, duckingEnabled: false)
+        let points = MusicBedMixing.automation(duration: 1, settings: settings, speech: [])
+        #expect(points.first?.gain == 0 && points.last?.gain == 0)
+        let middle = try #require(points.first { abs($0.time - 0.5) < 0.001 })
+        #expect(abs(middle.gain - 0.05) < 0.0001)
+    }
+
+    @Test("Short breath pauses do not pump the background music")
+    func breathPauses() {
+        var settings = LongformAudioSettings(musicVolume: 0.1)
+        settings.musicFadeInSeconds = 0
+        settings.musicFadeOutSeconds = 0
+        settings.musicDuckingDepth = 0.7
+        let speech = [TimeSegment(start: 2, end: 3), .init(start: 3.5, end: 4), .init(start: 7, end: 8)]
+        let merged = MusicBedMixing.speechForDucking(speech, duration: 10)
+        #expect(merged == [.init(start: 2, end: 4), .init(start: 7, end: 8)])
+        let points = MusicBedMixing.automation(duration: 10, settings: settings, speech: speech)
+        #expect(!points.contains { $0.time > 2 && $0.time < 4 && $0.gain > 0.03001 })
+        #expect(abs((points.first { $0.time == 4.3 }?.gain ?? -1) - 0.1) < 0.0001)
+        #expect(MusicBedMixing.speechForDucking([.init(start: -1, end: 2), .init(start: 11, end: 12)], duration: 10) == [.init(start: 0, end: 2)])
+    }
+
+    @Test("Act profile follows edited output timing and preserves legacy manual envelopes")
+    func storyProfile() throws {
+        let concept = ThematicConcept(word: "ВИБІР", tagline: "Ціна", philosophicalPremise: "Ціна вибору", suggestedTitle: "Ціна", source: .llm)
+        let arc = LongformNarrativeArc(movieTitle: "Фільм", concept: concept, acts: [
+            LongformAct(type: .hook, title: "Початок", dramaticBeat: "", segments: [.init(start: 500, end: 510)]),
+            LongformAct(type: .downfall, title: "Випробування", dramaticBeat: "", segments: [.init(start: 700, end: 720)]),
+            LongformAct(type: .catharsis, title: "Розв'язка", dramaticBeat: "", segments: [.init(start: 900, end: 915)])
+        ], summary: "")
+        let timeline = LongformTimeline(arc: arc, coldOpenEnabled: false)
+        let points = MusicBedMixing.storyEnvelope(for: arc, coldOpenEnabled: false)
+        let downfall = try #require(timeline.start(ofAct: 1))
+        let catharsis = try #require(timeline.start(ofAct: 2))
+        #expect(MusicBedMixing.envelopeGain(at: downfall + 2, points: points) == 0.45)
+        #expect(MusicBedMixing.envelopeGain(at: catharsis + 2, points: points) == 1)
+        #expect(points.allSatisfy { $0.time >= 0 && $0.time <= timeline.duration && (0...1).contains($0.gain) })
+        #expect(zip(points, points.dropFirst()).allSatisfy { $0.time < $1.time })
+        let normalized = MusicBedMixing.normalizedEnvelope([.init(time: 3, gain: 0.2), .init(time: 0, gain: 1), .init(time: 3, gain: 0.8)], duration: 10)
+        #expect(normalized.map(\.time) == [0, 3])
+        #expect(normalized.last?.gain == 0.8)
+
+        var linked = LongformAudioSettings(backgroundMusicURL: URL(fileURLWithPath: "/tmp/music.mp3"), musicVolume: 0.027)
+        linked.musicEnvelope = points
+        linked.musicSource = "Источник записи"
+        linked.musicUsageTerms = "Условия"
+        linked.musicOffsetSeconds = 12
+        // Old archives omit this key, and their exact hand-edited points survive.
+        let legacy = try JSONDecoder().decode(LongformAudioSettings.self, from: JSONEncoder().encode(linked))
+        #expect(legacy.musicEnvelopeFollowsActs == nil)
+        var changedArc = arc
+        changedArc.acts[0].segments[0].end += 6
+        #expect(MusicBedMixing.resolvedSettings(legacy, for: changedArc, coldOpenEnabled: false) == legacy)
+
+        linked.musicEnvelopeFollowsActs = true
+        let saved = try JSONDecoder().decode(LongformAudioSettings.self, from: JSONEncoder().encode(linked))
+        let resolved = MusicBedMixing.resolvedSettings(saved, for: changedArc, coldOpenEnabled: false)
+        let changedTimeline = LongformTimeline(arc: changedArc, coldOpenEnabled: false)
+        let shiftedDownfall = try #require(changedTimeline.start(ofAct: 1))
+        #expect(abs(shiftedDownfall - downfall - 6) < 0.0001)
+        #expect(MusicBedMixing.envelopeGain(at: shiftedDownfall + 2, points: resolved.musicEnvelope ?? []) == 0.45)
+        #expect(resolved.backgroundMusicURL == linked.backgroundMusicURL)
+        #expect(resolved.musicVolume == linked.musicVolume && resolved.musicOffsetSeconds == 12)
+        #expect(resolved.musicSource == linked.musicSource && resolved.musicUsageTerms == linked.musicUsageTerms)
+        #expect(resolved.musicEnvelope?.map(\.id) == points.map(\.id))
+        #expect(MusicBedMixing.resolvedSettings(resolved, for: changedArc, coldOpenEnabled: false) == resolved)
+        var custom = resolved
+        custom.musicEnvelopeFollowsActs = false
+        #expect(MusicBedMixing.resolvedSettings(custom, for: arc, coldOpenEnabled: false) == custom)
+    }
+
+    @Test("Fades reach silence and speech ducks only the music")
+    func envelope() {
+        var settings = LongformAudioSettings(musicVolume: 0.1)
+        settings.musicFadeInSeconds = 1
+        settings.musicFadeOutSeconds = 2
+        settings.musicDuckingDepth = 0.7
+        let points = MusicBedMixing.automation(duration: 10, settings: settings, speech: [.init(start: 2, end: 4)])
+        #expect(points.first?.gain == 0)
+        #expect(points.last?.gain == 0)
+        #expect(abs((points.first { $0.time == 2 }?.gain ?? -1) - 0.03) < 0.0001)
+        #expect(abs((points.first { $0.time == 1 }?.gain ?? -1) - 0.1) < 0.0001)
+        #expect(points.allSatisfy { $0.gain >= 0 && $0.gain <= 0.1 })
+        #expect(zip(points, points.dropFirst()).allSatisfy { $0.time < $1.time })
+        settings.duckingEnabled = false
+        let plain = MusicBedMixing.automation(duration: 10, settings: settings, speech: [.init(start: 2, end: 4)])
+        #expect(plain.count == 4)
+        #expect(plain.first?.gain == 0 && plain.last?.gain == 0)
+    }
+
+    @Test("Old audio settings decode and new music automation survives saving")
+    func persistence() throws {
+        var settings = LongformAudioSettings(musicVolume: 0.025)
+        let legacy = try JSONEncoder().encode(settings)
+        #expect(try JSONDecoder().decode(LongformAudioSettings.self, from: legacy) == settings)
+        settings.musicOffsetSeconds = 17.5
+        settings.musicFadeInSeconds = 0.7
+        settings.musicFadeOutSeconds = 3
+        settings.musicDuckingDepth = 0.8
+        settings.musicLoopEnabled = false
+        #expect(try JSONDecoder().decode(LongformAudioSettings.self, from: JSONEncoder().encode(settings)) == settings)
+        var short = EssayShort(id: "music-test", angle: "Тема", hook: "Хук", title: "Назва", why: "Діалог",
+            payoffQuote: "Цитата", question: "Питання", segments: [.init(start: 0, end: 20)])
+        short.musicSettings = settings
+        #expect(try JSONDecoder().decode(EssayShort.self, from: JSONEncoder().encode(short)).musicSettings == settings)
+        short.musicSettings = nil
+        #expect(try JSONDecoder().decode(EssayShort.self, from: JSONEncoder().encode(short)).musicSettings == nil)
+    }
+}
+
+
+extension MusicBedAutomationTests {
+    @Test("Music with an offset, fades and ducking exports a real audio mix")
+    @MainActor func exportMusicMix() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent("tone.caf")
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 96_000))
+        buffer.frameLength = 96_000
+        let channels = try #require(buffer.floatChannelData)
+        for i in 0..<96_000 {
+            let value = Float(sin(Double(i) * 2 * .pi * 440 / 48_000)) * 0.2
+            channels[0][i] = value; channels[1][i] = value
+        }
+        try AVAudioFile(forWriting: source, settings: format.settings).write(from: buffer)
+        let asset = AVURLAsset(url: source)
+        let sourceTrack = try #require(try await asset.loadTracks(withMediaType: .audio).first)
+        let composition = AVMutableComposition()
+        let speech = try #require(composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid))
+        try speech.insertTimeRange(CMTimeRange(start: .zero, duration: CMTime(seconds: 1, preferredTimescale: 600)), of: sourceTrack, at: .zero)
+        var settings = LongformAudioSettings(backgroundMusicURL: source, musicVolume: 0.1)
+        settings.musicOffsetSeconds = 0.25
+        settings.musicFadeInSeconds = 0.1
+        settings.musicFadeOutSeconds = 0.2
+        settings.musicDuckingDepth = 0.8
+        settings.musicLoopEnabled = false
+        let music = try #require(try await MusicBedMixing.add(to: composition, settings: settings, duration: 1,
+            speech: [.init(start: 0.3, end: 0.6)]))
+        #expect(composition.tracks(withMediaType: .audio).count == 2)
+        let original = AVMutableAudioMixInputParameters(track: speech)
+        original.setVolume(1, at: .zero)
+        let mix = AVMutableAudioMix(); mix.inputParameters = [original, music]
+        let output = folder.appendingPathComponent("mixed.m4a")
+        let exporter = try #require(AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetAppleM4A))
+        exporter.audioMix = mix
+        try await exporter.export(to: output, as: .m4a)
+        let rendered = AVURLAsset(url: output)
+        #expect(abs(try await rendered.load(.duration).seconds - 1) < 0.1)
+        #expect(try await rendered.loadTracks(withMediaType: .audio).count == 1)
+        #expect((try FileManager.default.attributesOfItem(atPath: output.path)[.size] as? Int ?? 0) > 1000)
+    }
+}
+
+@MainActor
+@Suite("Music folder library")
+struct MusicFolderLibraryTests {
+    @Test("Folder changes appear automatically and deleted tracks become unavailable")
+    func followsFolderContents() async throws {
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let nested = root.appendingPathComponent("Nested")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        let first = root.appendingPathComponent("First.mp3")
+        let added = nested.appendingPathComponent("Added.WAV")
+        try Data().write(to: first)
+        try Data().write(to: root.appendingPathComponent("notes.txt"))
+        let library = MusicFolderLibrary(directory: root)
+        #expect(library.tracks.map { $0.url.lastPathComponent } == ["First.mp3"])
+        let monitor = Task { await library.monitor() }
+        defer { monitor.cancel() }
+        try Data().write(to: added)
+        try await Task.sleep(for: .milliseconds(1200))
+        #expect(Set(library.tracks.map { $0.url.lastPathComponent }) == Set(["First.mp3", "Added.WAV"]))
+        try FileManager.default.removeItem(at: first)
+        try await Task.sleep(for: .milliseconds(1200))
+        #expect(library.tracks.map { $0.url.lastPathComponent } == ["Added.WAV"])
+        try FileManager.default.removeItem(at: root)
+        library.refresh()
+        #expect(library.tracks.isEmpty)
+        #expect(library.error != nil)
     }
 }

@@ -7,8 +7,11 @@ import SwiftUI
 struct LongformSceneInsertSheet: View {
     let transcriptSegments: [TranscriptSegment]
     let existingRanges: [TimeSegment]
+    var allowOverlap = false
     let sourceURL: URL?
     let sourceDuration: Double
+    let player: AVPlayer?
+    let previewAudio: MontageScenePreviewAudio
     let onInsert: (TimeSegment) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -17,8 +20,9 @@ struct LongformSceneInsertSheet: View {
     @State private var start = 0.0
     @State private var end = 0.0
     @State private var movieDuration = 0.0
-    @State private var player: AVPlayer?
     @State private var previewTask: Task<Void, Never>?
+    @State private var isPreviewBusy = false
+    @State private var previewError: String?
 
     private struct TranscriptRow: Identifiable {
         let id: Int
@@ -52,13 +56,8 @@ struct LongformSceneInsertSheet: View {
         guard start.isFinite, end.isFinite, start >= 0, end <= effectiveDuration else {
             return "Границы выходят за пределы исходного фильма."
         }
-        guard EssayDurationPolicy.sceneLength.contains(end - start) else {
-            return "Длина сцены должна быть от 18 до 40 секунд."
-        }
-        guard let selectedSegment, start <= selectedSegment.start, end >= selectedSegment.end else {
-            return "Выбранная реплика должна целиком попасть в сцену."
-        }
-        guard existingRanges.allSatisfy({ $0.end <= start || end <= $0.start }) else {
+        guard end - start >= 0.1 else { return "Фрагмент должен длиться не менее 0,1 секунды." }
+        if !allowOverlap, !existingRanges.allSatisfy({ $0.end <= start || end <= $0.start }) {
             return "Этот фрагмент пересекается с уже выбранной сценой."
         }
         return nil
@@ -112,7 +111,7 @@ struct LongformSceneInsertSheet: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     if let player {
-                        VideoPlayer(player: player)
+                        StudioPlayerSurface(player: player)
                             .aspectRatio(16 / 9, contentMode: .fit)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                     } else {
@@ -127,11 +126,15 @@ struct LongformSceneInsertSheet: View {
                             .lineLimit(2)
                     }
 
-                    Button("Предпросмотр выбранного фрагмента", systemImage: "play.fill") {
+                    Button(isPreviewBusy ? "Подготавливаю предпросмотр…" : "Предпросмотр выбранного фрагмента",
+                           systemImage: isPreviewBusy ? "waveform" : "play.fill") {
                         playSelection()
                     }
                     .buttonStyle(.bordered)
-                    .disabled(player == nil || selectedSegment == nil)
+                    .disabled(player == nil || selectedSegment == nil || isPreviewBusy)
+                    if let previewError {
+                        Text(previewError).font(.caption).foregroundStyle(.red)
+                    }
 
                     HStack(spacing: 8) {
                         timeControl(title: "IN", value: $start)
@@ -143,9 +146,9 @@ struct LongformSceneInsertSheet: View {
 
                     HStack(spacing: 6) {
                         adjustmentButton("IN −1с") { start = max(0, start - 1) }
-                        adjustmentButton("IN +1с") { start = min(max(0, end - 18), start + 1) }
-                        adjustmentButton("OUT −1с") { end = max(start + 18, end - 1) }
-                        adjustmentButton("OUT +1с") { end = min(min(effectiveDuration, start + 40), end + 1) }
+                        adjustmentButton("IN +1с") { start = min(max(0, end - 0.1), start + 1) }
+                        adjustmentButton("OUT −1с") { end = max(start + 0.1, end - 1) }
+                        adjustmentButton("OUT +1с") { end = min(effectiveDuration, end + 1) }
                     }
                 }
                 .frame(minWidth: 300, maxWidth: .infinity)
@@ -181,7 +184,6 @@ struct LongformSceneInsertSheet: View {
         .preferredColorScheme(.dark)
         .task {
             if let sourceURL {
-                player = AVPlayer(url: sourceURL)
                 let asset = AVURLAsset(url: sourceURL)
                 if let duration = try? await asset.load(.duration), duration.seconds.isFinite, duration.seconds > 0 {
                     movieDuration = duration.seconds
@@ -192,7 +194,7 @@ struct LongformSceneInsertSheet: View {
         .onDisappear {
             previewTask?.cancel()
             player?.pause()
-            player = nil
+            previewAudio.stop()
         }
     }
 
@@ -202,8 +204,6 @@ struct LongformSceneInsertSheet: View {
         let duration = effectiveDuration > 0 ? effectiveDuration : segment.end + 30
         start = max(0, segment.start - 6)
         end = min(duration, max(start + 24, segment.end + 3))
-        if end - start > 40 { end = start + 40 }
-        if end - start < 18 { start = max(0, end - 18) }
     }
 
     private func timeControl(title: String, value: Binding<Double>) -> some View {
@@ -222,17 +222,35 @@ struct LongformSceneInsertSheet: View {
     }
 
     private func playSelection() {
-        guard let player else { return }
+        guard !isPreviewBusy, let player, let sourceURL, selectedSegment != nil else { return }
         previewTask?.cancel()
-        player.seek(to: CMTime(seconds: max(0, start), preferredTimescale: 600),
-                    toleranceBefore: .zero, toleranceAfter: .zero) { finished in
-            guard finished else { return }
-            Task { @MainActor in player.play() }
-        }
+        isPreviewBusy = true
+        previewError = nil
+        let previewStart = start
+        let previewEnd = end
         previewTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: UInt64(max(0.2, end - start) * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            player.pause()
+            defer { isPreviewBusy = false }
+            do {
+                let audio = try await previewAudio.prepare(url: sourceURL, start: previewStart, end: previewEnd)
+                guard !Task.isCancelled else { return }
+                let finished = await player.seek(
+                    to: CMTime(seconds: max(0, previewStart), preferredTimescale: 600),
+                    toleranceBefore: CMTime(seconds: 0.12, preferredTimescale: 600),
+                    toleranceAfter: CMTime(seconds: 0.12, preferredTimescale: 600)
+                )
+                guard finished, !Task.isCancelled else { return }
+                try previewAudio.play(audio)
+                player.play()
+                try? await Task.sleep(nanoseconds: UInt64(max(0.2, previewEnd - previewStart) * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                player.pause()
+                previewAudio.stop()
+            } catch {
+                guard !Task.isCancelled else { return }
+                player.pause()
+                previewAudio.stop()
+                previewError = error.localizedDescription
+            }
         }
     }
 

@@ -23,6 +23,12 @@ struct EssayThemeRejected: LocalizedError {
     var errorDescription: String? { "Тема не прошла смысловую проверку: " + reason }
 }
 
+/// A malformed review does not invalidate the already checked scene plan.
+struct EssaySemanticReviewFailure: LocalizedError {
+    let detail: String
+    var errorDescription: String? { "Не завершена смысловая проверка выбранного плана: " + detail }
+}
+
 enum EssaySemanticSelection {
     static let maxTokens = 2_048
     static let instructions = """
@@ -89,7 +95,19 @@ enum EssaySemanticSelection {
             let excerpt = chosen.sorted().map { lines[$0].text }.joined(separator: "\n")
             return "SCENE \(index + 1) role=\(scene.actRole?.promptKey ?? "unknown")\nВСЕРЕДИНІ:\n\(excerpt)"
         }
-        return header + "\n" + blocks.joined(separator: "\n\n")
+        let roles = analysis.selectedMoments.map(\.actRole)
+        func numbers(_ role: LongformActType) -> String {
+            roles.indices.filter { roles[$0] == role }.map { String($0 + 1) }.joined(separator: ", ")
+        }
+        let requirements = """
+
+        ОБОВ'ЯЗКОВІ ПОСИЛАННЯ evidence:
+        - одна сцена hook з номерів [\(numbers(.hook))];
+        - одна сцена catharsis з номерів [\(numbers(.catharsis))];
+        - ще одна сцена іншої ролі. Усього 3–4 різні номери.
+        Номери — саме SCENE нижче, не ID каталогу і не таймкоди.
+        """
+        return header + requirements + "\n" + blocks.joined(separator: "\n\n")
     }
 
     static func apply(_ raw: String, to analysis: ThematicAnalysisResult, candidates: [ThematicConcept],
@@ -134,7 +152,12 @@ enum EssaySemanticSelection {
             hook: decision.hook.trimmed, hookReason: decision.hookReason.trimmed,
             evidence: evidence, modelID: modelID)
         guard evidenceIsValid(proof, analysis: analysis, transcript: transcript) else {
-            throw ThematicDiscoveryError.noGroundedTheme("смысловая проверка не подтверждена цитатами начала, развития и финала")
+            let selectedRoles = Set(evidence.compactMap { analysis.selectedMoments[$0.scene - 1].actRole })
+            let missing = [LongformActType.hook, .catharsis].filter { !selectedRoles.contains($0) }
+            let detail = missing.isEmpty
+                ? "Нужны 3–4 разные сцены из минимум трёх актов с исходными репликами."
+                : "В evidence отсутствуют сцены ролей: " + missing.map(\.promptKey).joined(separator: ", ") + ". Выбери их номера из обязательных ссылок в запросе."
+            throw EssaySemanticReviewFailure(detail: detail)
         }
         var result = analysis
         result.primaryConcept.suggestedTitle = decision.title.trimmed

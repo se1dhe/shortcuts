@@ -38,8 +38,12 @@ final class PipelineProgressTracker {
     private(set) var currentStage: PipelineStage = .detectingMovie
     private(set) var stageProgress: Double = 0.0
     private(set) var overallProgress: Double = 0.0
-    private(set) var statusMessage: String = "Инициализация..."
-    private(set) var detailedMetrics: String = ""
+    private(set) var statusMessage: String = "Инициализация..." {
+        didSet { if statusMessage != oldValue { OperationJournal.shared.append(statusMessage) } }
+    }
+    private(set) var detailedMetrics: String = "" {
+        didSet { if detailedMetrics != oldValue { OperationJournal.shared.append(detailedMetrics) } }
+    }
     private(set) var estimatedSecondsRemaining: Double?
     private(set) var formattedETA: String = "Вычисление..."
     private(set) var processingSpeedLabel: String?

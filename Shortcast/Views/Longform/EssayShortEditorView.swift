@@ -12,9 +12,17 @@ struct EssayShortEditorView: View {
     let sourceURL: URL
     let onSave: (EssayShort) async throws -> Void
     @Environment(\.dismiss) private var dismiss
+    @Environment(WorkspaceModel.self) private var workspace
+    @State private var renderStarted = Date()
     @State private var draft: EssayShort
+    @State private var musicSettings: LongformAudioSettings
+    @State private var showMusicEditor = false
+    @State private var showLayoutPreview = false
     @State private var scenes: [EditableSceneSegment]
-    @State private var player: AVPlayer?
+    @State private var timelinePlayback = MontageTimelinePlayback()
+    private var player: AVPlayer? { timelinePlayback.player }
+    private var previewAudio: MontageScenePreviewAudio { timelinePlayback.audio }
+    private var isPreviewBusy: Bool { timelinePlayback.isPreparing }
     @State private var sourceDuration: Double = 0
     @State private var busy = false
     @State private var error: String?
@@ -24,6 +32,7 @@ struct EssayShortEditorView: View {
     init(short: EssayShort, result: LongformBuildResult, transcript: Transcript,
          sourceURL: URL, onSave: @escaping (EssayShort) async throws -> Void) {
         _draft = State(initialValue: short)
+        _musicSettings = State(initialValue: short.musicSettings ?? LongformAudioSettings(backgroundMusicURL: nil))
         _scenes = State(initialValue: short.segments.enumerated().map { item in
             let isManual = short.manuallyAddedSegments?.contains { range in
                 abs(range.start - item.element.start) < 0.01 && abs(range.end - item.element.end) < 0.01
@@ -37,6 +46,7 @@ struct EssayShortEditorView: View {
 
     private var editedShort: EssayShort {
         var result = draft
+        result.musicSettings = musicSettings
         result.segments = scenes.map { TimeSegment(start: $0.start, end: $0.end) }
         let manual = scenes.filter(\.isAdded).map { TimeSegment(start: $0.start, end: $0.end) }
         result.manuallyAddedSegments = manual.isEmpty ? nil : manual
@@ -46,11 +56,33 @@ struct EssayShortEditorView: View {
         return result
     }
 
+    private var timelineClips: [EditorTimelineClip] {
+        scenes.enumerated().map { index, scene in
+            EditorTimelineClip(id: scene.id, start: scene.start, end: scene.end, isAdded: scene.isAdded,
+                sceneNumber: index + 1,
+                quote: transcript.segments.first(where: { $0.start >= scene.start && $0.end <= scene.end })?.text)
+        }
+    }
+
     private var captions: [TranscriptSegment] {
         LongformEditorialSupport.captions(transcript.segments, edits: result.arc.captionEdits)
     }
     private var selectedCaptions: [TranscriptSegment] {
         captions.filter { line in scenes.contains { line.start >= $0.start && line.end <= $0.end } }
+    }
+    private var musicSpeechIntervals: [TimeSegment] {
+        var cursor = 0.0
+        var intervals: [TimeSegment] = []
+        for scene in scenes {
+            for line in transcript.segments {
+                let start = max(line.start, scene.start), end = min(line.end, scene.end)
+                if end > start {
+                    intervals.append(.init(start: cursor + start - scene.start, end: cursor + end - scene.start))
+                }
+            }
+            cursor += scene.duration
+        }
+        return intervals
     }
     private var validationError: String? {
         do { try EssayShortEditing.validate(editedShort, arc: result.arc, sourceDuration: sourceDuration); return nil }
@@ -73,10 +105,16 @@ struct EssayShortEditorView: View {
             Divider()
             HStack(alignment: .top, spacing: 18) {
                 VStack(alignment: .leading, spacing: 12) {
-                    VideoPlayer(player: player)
-                        .frame(width: 470, height: 264)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(StudioTheme.line, lineWidth: 1))
+                    Group {
+                        if let player {
+                            StudioPlayerSurface(player: player)
+                        } else {
+                            Color.black
+                        }
+                    }
+                    .frame(width: 470, height: 264)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(StudioTheme.line, lineWidth: 1))
                     HStack {
                         Label("Предпросмотр исходника", systemImage: "play.rectangle")
                         Spacer()
@@ -98,11 +136,26 @@ struct EssayShortEditorView: View {
                         GroupBox("Содержание") {
                             VStack(spacing: 9) {
                                 TextField("Название", text: $draft.title)
-                                TextField("Хук в видео", text: $draft.hook, axis: .vertical)
+                                TextField("Хук публикации", text: $draft.hook, axis: .vertical)
+                                Button("Предпросмотр оформления", systemImage: "rectangle.portrait") { showLayoutPreview = true }
+                                    .sheet(isPresented: $showLayoutPreview) { ShortLayoutPreview(sourceURL: sourceURL, short: editedShort, result: result) }
+                                Toggle("Субтитры в видео", isOn: Binding(get: { draft.showsSubtitles }, set: { draft.subtitlesEnabled = $0 }))
+                                Text("Первые 2 секунды — карточка фильма. Далее — видео и небольшой логотип.").font(.caption).foregroundStyle(.secondary)
                                 TextField("Основная мысль", text: $draft.angle, axis: .vertical)
                                 TextField("Вопрос зрителю", text: $draft.question, axis: .vertical)
                                 TextField("Ключевая реплика", text: $draft.payoffQuote, axis: .vertical)
                             }.textFieldStyle(.roundedBorder).padding(5)
+                        }
+                        GroupBox("Музыка и сведение") {
+                            HStack {
+                                Label(musicSettings.backgroundMusicURL?.deletingPathExtension().lastPathComponent ?? "Без музыки", systemImage: "music.note")
+                                    .font(.callout).lineLimit(2)
+                                Spacer()
+                                Button("Настроить", systemImage: "waveform") {
+                                    timelinePlayback.pause()
+                                    showMusicEditor = true
+                                }
+                            }.padding(8)
                         }
                         GroupBox("Сцены и точная подрезка") {
                             VStack(spacing: 10) {
@@ -120,7 +173,7 @@ struct EssayShortEditorView: View {
                                             .frame(width: 64, alignment: .leading)
                                         Button { preview(TimeSegment(start: segment.start, end: segment.end)) } label: {
                                             Image(systemName: "play.fill")
-                                        }.buttonStyle(.borderless)
+                                        }.buttonStyle(.borderless).disabled(isPreviewBusy)
                                         TextField("Субтитр", text: captionBinding(segment), axis: .vertical)
                                             .textFieldStyle(.roundedBorder)
                                     }
@@ -135,11 +188,7 @@ struct EssayShortEditorView: View {
             .frame(maxHeight: .infinity)
 
             EditorTimelineView(
-                clips: scenes.enumerated().map { index, scene in
-                    EditorTimelineClip(id: scene.id, start: scene.start, end: scene.end, isAdded: scene.isAdded,
-                                       sceneNumber: index + 1,
-                                       quote: transcript.segments.first(where: { $0.start >= scene.start && $0.end <= scene.end })?.text)
-                },
+                clips: timelineClips,
                 selectedID: selectedSceneID,
                 onSelect: { id in
                     selectedSceneID = id
@@ -157,22 +206,26 @@ struct EssayShortEditorView: View {
                 },
                 onTrimStart: { id, value in
                     guard let index = scenes.firstIndex(where: { $0.id == id }) else { return }
-                    scenes[index].start = min(max(0, value), scenes[index].end - EssayDurationPolicy.sceneLength.lowerBound)
+                    scenes[index].start = min(max(0, value), scenes[index].end - EssayShortEditing.minimumSceneDuration)
                     selectedSceneID = id
                 },
                 onTrimEnd: { id, value in
                     guard let index = scenes.firstIndex(where: { $0.id == id }) else { return }
-                    scenes[index].end = max(scenes[index].start + EssayDurationPolicy.sceneLength.lowerBound,
+                    scenes[index].end = max(scenes[index].start + EssayShortEditing.minimumSceneDuration,
                                             min(sourceDuration, value))
                     selectedSceneID = id
-                }
+                },
+                playhead: timelinePlayback.currentTime,
+                isPlaying: timelinePlayback.isPlaying,
+                onTogglePlayback: { timelinePlayback.toggle() },
+                onSeek: { timelinePlayback.scrub(to: $0, editing: $1) }
             )
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
 
             if busy || error != nil || validationError != nil {
                 HStack {
-                    if busy { ProgressView("Сохраняю сцены, субтитры и собираю видео…") }
+
                     if let message = error ?? validationError {
                         Label(message, systemImage: "exclamationmark.triangle")
                             .font(.callout).foregroundStyle(.red)
@@ -182,7 +235,21 @@ struct EssayShortEditorView: View {
                 .padding(.horizontal, 20).padding(.bottom, 12)
             }
         }
+        .overlay {
+            if busy {
+                ZStack {
+                    StudioTheme.background.opacity(0.97)
+                    StudioOperationProgress(title: "Собираем ваш шортс", detail: workspace.shortRenderDetail,
+                        stages: ["Исходник", "Кадрирование", "Оформление", "Экспорт", "Shield", "Звук и проверка", "Обложка"],
+                        current: workspace.shortRenderStage, started: renderStarted)
+                        .frame(width: 760).padding(40)
+                }
+            }
+        }
         .disabled(busy)
+        .safeAreaInset(edge: .bottom) {
+            if busy || error != nil { OperationLogPanel(isActive: busy) }
+        }
         .frame(width: 1280, height: 860)
         .background(StudioTheme.background)
         .tint(StudioTheme.accent)
@@ -193,6 +260,8 @@ struct EssayShortEditorView: View {
                 existingRanges: scenes.map { TimeSegment(start: $0.start, end: $0.end) },
                 sourceURL: sourceURL,
                 sourceDuration: sourceDuration,
+                player: player,
+                previewAudio: previewAudio,
                 onInsert: { range in
                     let scene = EditableSceneSegment(sceneIndex: target.index, start: range.start, end: range.end,
                                                      isAdded: true, manualSourceRange: range)
@@ -203,11 +272,19 @@ struct EssayShortEditorView: View {
             .frame(minWidth: 760, minHeight: 600)
         }
         .task {
-            player = AVPlayer(url: sourceURL)
+            timelinePlayback.open(url: sourceURL, clips: timelineClips)
             do { sourceDuration = try await AVURLAsset(url: sourceURL).load(.duration).seconds }
-            catch { self.error = error.localizedDescription }
+            catch { self.error = error.localizedDescription; OperationJournal.shared.append(error.localizedDescription, level: .error) }
         }
-        .onDisappear { player?.pause(); player = nil }
+        .sheet(isPresented: $showMusicEditor) {
+            MusicBedEditor(settings: $musicSettings, duration: editedShort.duration, speechIntervals: musicSpeechIntervals)
+        }
+        .onChange(of: scenes) { _, _ in timelinePlayback.setClips(timelineClips) }
+        .onChange(of: timelinePlayback.activeClipID) { _, id in selectedSceneID = id }
+        .onChange(of: timelinePlayback.error) { _, message in
+            if let message { error = "Предпросмотр: " + message }
+        }
+        .onDisappear { timelinePlayback.close() }
     }
 
     private func sceneRow(_ scene: Binding<EditableSceneSegment>) -> some View {
@@ -231,6 +308,7 @@ struct EssayShortEditorView: View {
                     Image(systemName: "play.fill")
                 }
                 .buttonStyle(.bordered).controlSize(.small).help("Просмотреть сцену")
+                .disabled(isPreviewBusy)
                 Menu {
                     Button("Переместить раньше", systemImage: "arrow.up") {
                         moveScene(id, delta: -1)
@@ -302,7 +380,7 @@ struct EssayShortEditorView: View {
 
     private func adjustShortBoundary(_ id: UUID, isStart: Bool, delta: Double) {
         guard let index = scenes.firstIndex(where: { $0.id == id }) else { return }
-        let minimum = EssayDurationPolicy.sceneLength.lowerBound
+        let minimum = EssayShortEditing.minimumSceneDuration
         if isStart {
             scenes[index].start = min(scenes[index].end - minimum,
                                       max(0, scenes[index].start + delta))
@@ -314,19 +392,17 @@ struct EssayShortEditorView: View {
     }
 
     private func preview(_ range: TimeSegment) {
-        guard range.start.isFinite, range.end.isFinite, range.start >= 0, range.end > range.start else { return }
-        player?.pause()
-        player?.currentItem?.forwardPlaybackEndTime = CMTime(seconds: range.end, preferredTimescale: 600)
-        player?.seek(to: CMTime(seconds: range.start, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
-        player?.play()
+        timelinePlayback.audition(start: range.start, end: range.end, preferredID: selectedSceneID)
     }
 
     private func save() {
-        busy = true; error = nil; player?.pause()
+        renderStarted = Date(); workspace.shortRenderStage = 0; workspace.shortRenderDetail = "Подготовка исходника"
+        OperationJournal.shared.begin("Пересборка шортса")
+        busy = true; error = nil; timelinePlayback.pause()
         Task { @MainActor in
             defer { busy = false }
             do { try await onSave(editedShort); dismiss() }
-            catch { self.error = error.localizedDescription }
+            catch { self.error = error.localizedDescription; OperationJournal.shared.append(error.localizedDescription, level: .error) }
         }
     }
 

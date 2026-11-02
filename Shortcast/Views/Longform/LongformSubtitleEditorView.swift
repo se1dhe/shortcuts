@@ -31,6 +31,29 @@ struct EditableSubtitlePhrase: Identifiable, Sendable, Equatable {
         return String(format: "%02d:%02d.%d — %02d:%02d.%d", sMin, sSec, sMs, eMin, eSec, eMs)
     }
 
+    static func correctionInputs(from phrases: [EditableSubtitlePhrase], arc: LongformNarrativeArc) -> [LongformSubtitleCorrectionInput] {
+        func sameScene(_ left: EditableSubtitlePhrase, _ right: EditableSubtitlePhrase) -> Bool {
+            guard left.actIndex == right.actIndex, arc.acts.indices.contains(left.actIndex) else { return false }
+            let ranges = arc.acts[left.actIndex].segments
+            return ranges.contains { range in
+                left.start < range.end && left.end > range.start
+                    && right.start < range.end && right.end > range.start
+            }
+        }
+        return phrases.enumerated().map { index, phrase in
+            let previous = index > 0 ? phrases[index - 1] : nil
+            let next = index + 1 < phrases.count ? phrases[index + 1] : nil
+            let before = previous.flatMap {
+                sameScene($0, phrase) && phrase.start - $0.end <= 8 ? String($0.text.suffix(200)) : nil
+            } ?? ""
+            let after = next.flatMap {
+                sameScene(phrase, $0) && $0.start - phrase.end <= 8 ? String($0.text.prefix(200)) : nil
+            } ?? ""
+            return LongformSubtitleCorrectionInput(id: phrase.originalSegmentIndex, act: phrase.actTitle,
+                timecode: phrase.timecodeDisplay, before: before, text: phrase.text, after: after)
+        }
+    }
+
     var screenLines: [String] {
         LongformSubtitleRenderer.formatScreenLines(text: text)
     }
@@ -59,6 +82,10 @@ struct LongformSubtitleEditorView: View {
     @State private var selectedActFilter: Int? = nil // nil = Все акты
     @State private var searchText: String = ""
     @State private var sourcePlayer: AVPlayer?
+    @State private var previewAudio = MontageScenePreviewAudio()
+    @State private var reviewingSuggestions = true
+    @State private var selectedSuggestionID: Int?
+    @State private var showModelEvents = false
     @State private var stopPlayback: Task<Void, Never>?
     @State private var sourceStill: CGImage?
     @State private var correctionMemory = SubtitleCorrectionMemory()
@@ -66,6 +93,8 @@ struct LongformSubtitleEditorView: View {
     @State private var memoryWarning: String?
     @State private var pendingWithoutMemory: [TranscriptSegment]?
     @State private var isModelCorrecting = false
+    @State private var correctionTask: Task<Void, Never>?
+    @State private var correctingPhraseID: UUID?
     @State private var modelCorrectionProgress = ""
     @State private var modelCorrectionEvents: [String] = []
     @State private var modelCorrectionSuggestions: [LongformSubtitleCorrectionSuggestion] = []
@@ -149,13 +178,17 @@ struct LongformSubtitleEditorView: View {
             Divider()
 
             // Двухоконная область: список фраз слева и монитор предпросмотра справа
-            HSplitView {
-                phraseListPanel
-                    .frame(minWidth: 460, idealWidth: 540)
-
-                ScrollView { cinemaMonitorPanel }
-                    .frame(minWidth: 380, idealWidth: 460)
+            if reviewingSuggestions && !modelCorrectionSuggestions.isEmpty {
+                suggestionReviewWorkspace
+            } else {
+                HSplitView {
+                    phraseListPanel.frame(minWidth: 460, idealWidth: 540)
+                    ScrollView { cinemaMonitorPanel }.frame(minWidth: 380, idealWidth: 460)
+                }
             }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if isModelCorrecting || !modelCorrectionEvents.isEmpty { OperationLogPanel(isActive: isModelCorrecting) }
         }
         .frame(minWidth: 960, minHeight: 640)
         .background(StudioTheme.background)
@@ -163,9 +196,9 @@ struct LongformSubtitleEditorView: View {
         .tint(StudioTheme.accent)
         .onAppear {
             initializePhrases()
-            if let sourceURL { sourcePlayer = AVPlayer(url: sourceURL) }
+            if let sourceURL { sourcePlayer = MontageVideoPreviewPlayer.makeVideoOnlyPlayer(url: sourceURL) }
         }
-        .onDisappear { stopPlayback?.cancel(); sourcePlayer?.pause() }
+        .onDisappear { correctionTask?.cancel(); stopPlayback?.cancel(); previewAudio.stop(); sourcePlayer?.pause() }
         .alert("Не удалось сохранить память правок", isPresented: Binding(
             get: { pendingWithoutMemory != nil }, set: { if !$0 { pendingWithoutMemory = nil } })) {
                 Button("Продолжить без памяти") {
@@ -329,95 +362,187 @@ struct LongformSubtitleEditorView: View {
         .background(StudioTheme.panel)
     }
 
+    private var activeSuggestion: LongformSubtitleCorrectionSuggestion? {
+        modelCorrectionSuggestions.first(where: { $0.id == selectedSuggestionID }) ?? modelCorrectionSuggestions.first
+    }
+
     private var modelCorrectionPanel: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 8) {
-                Image(systemName: isModelCorrecting ? "sparkles" : "checkmark.seal.fill")
-                    .foregroundStyle(StudioTheme.accent)
-                Text(isModelCorrecting ? "МОДЕЛЬНАЯ ПРОВЕРКА СУБТИТРОВ" : "ПРЕДЛОЖЕНИЯ МОДЕЛИ")
-                    .font(.system(size: 9, weight: .black)).tracking(0.8)
-                    .foregroundStyle(StudioTheme.accent)
-                Spacer()
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                if isModelCorrecting { ProgressView().controlSize(.small) }
+                else { Image(systemName: modelCorrectionStatusIsError ? "exclamationmark.circle" : "sparkles").foregroundStyle(StudioTheme.accent) }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(isModelCorrecting ? "Проверка субтитров" : "Редакторская проверка")
+                        .font(.system(size: 12, weight: .bold))
+                    Text(isModelCorrecting ? modelCorrectionProgress : (modelCorrectionStatus ?? "Выберите предложение для сравнения с исходной репликой."))
+                        .font(.caption).foregroundStyle(modelCorrectionStatusIsError ? StudioTheme.warning : StudioTheme.muted)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 12)
+                if isModelCorrecting {
+                    Button("Остановить", systemImage: "stop.fill") { correctionTask?.cancel() }
+                        .buttonStyle(.bordered).fixedSize()
+                }
                 if !modelCorrectionSuggestions.isEmpty {
-                    Text("Найдено: \(modelCorrectionSuggestions.count)")
-                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Button(reviewingSuggestions ? "К субтитрам" : "Проверить предложения (\(modelCorrectionSuggestions.count))") {
+                        reviewingSuggestions.toggle()
+                    }.buttonStyle(.bordered).fixedSize()
+                }
+                if !modelCorrectionEvents.isEmpty {
+                    Button { showModelEvents.toggle() } label: {
+                        Image(systemName: "list.bullet.rectangle").frame(width: 24, height: 24)
+                    }.buttonStyle(.plain).help("Журнал проверки")
                 }
             }
-
-            if isModelCorrecting {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text(modelCorrectionProgress.isEmpty ? "Подготавливаю контекст реплик…" : modelCorrectionProgress)
-                        .font(.caption.weight(.medium))
-                }
-            }
-
-            ForEach(Array(modelCorrectionEvents.suffix(4).enumerated()), id: \.offset) { _, event in
-                Label(event, systemImage: "arrow.turn.down.right")
-                    .font(.caption2).foregroundStyle(.secondary)
-            }
-
-            if let modelCorrectionStatus, !isModelCorrecting {
-                Text(modelCorrectionStatus)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(modelCorrectionStatusIsError ? StudioTheme.warning
-                        : (modelCorrectionSuggestions.isEmpty ? StudioTheme.muted : StudioTheme.success))
-            }
-
-            ForEach(modelCorrectionSuggestions) { suggestion in
-                if let phrase = phrases.first(where: { $0.originalSegmentIndex == suggestion.id }) {
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("\(phrase.actTitle) · \(phrase.timecodeDisplay)")
-                                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                .foregroundStyle(StudioTheme.muted)
-                            Text(suggestion.original)
-                                .font(.caption).foregroundStyle(.secondary)
-                                .strikethrough(color: StudioTheme.warning)
-                            Text(suggestion.replacement)
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(.primary)
-                            Text(suggestion.reason)
-                                .font(.caption2).foregroundStyle(StudioTheme.muted)
+            if showModelEvents {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(modelCorrectionEvents.enumerated()), id: \.offset) { _, event in
+                            Text(event).font(.caption.monospaced()).foregroundStyle(StudioTheme.muted)
                         }
-                        Spacer(minLength: 8)
-                        Button(phrase.text == suggestion.original ? "Применить" : "Текст изменён") {
-                            applyModelSuggestion(suggestion)
-                        }
-                            .buttonStyle(.borderedProminent).tint(StudioTheme.accent)
-                        .disabled(phrase.text != suggestion.original)
-                        Button {
-                            modelCorrectionSuggestions.removeAll { $0.id == suggestion.id }
-                        } label: {
-                            Image(systemName: "xmark")
-                        }
-                        .buttonStyle(.bordered)
-                        .help("Отклонить предложение")
-                    }
-                    .padding(10)
-                    .background(StudioTheme.raised.opacity(0.7), in: RoundedRectangle(cornerRadius: 9))
-                }
-            }
-
-            if !modelCorrectionSuggestions.isEmpty {
-                HStack {
-                    Button("Применить все предложения", systemImage: "checkmark") {
-                        applyAllModelSuggestions()
-                    }
-                    .buttonStyle(.borderedProminent).tint(StudioTheme.accent)
-                    Button("Отклонить все") {
-                        modelCorrectionSuggestions = []
-                        modelCorrectionStatus = "Предложения отклонены; субтитры оставлены без изменений."
-                        modelCorrectionStatusIsError = false
-                    }
-                    .buttonStyle(.bordered)
-                }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.frame(height: 90)
             }
         }
-        .padding(12)
-        .background(StudioTheme.raised.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
-        .padding(.horizontal, 18)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 20).padding(.vertical, 12)
+        .background(StudioTheme.panel)
+    }
+
+    private var suggestionReviewWorkspace: some View {
+        VStack(spacing: 0) {
+            HSplitView {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack {
+                        Text("ПРЕДЛОЖЕНИЯ").font(.system(size: 10, weight: .bold)).tracking(1.4)
+                        Spacer()
+                        Text("\(modelCorrectionSuggestions.count)").font(.caption.monospaced()).foregroundStyle(StudioTheme.accent)
+                    }.padding(16)
+                    Divider()
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(spacing: 6) {
+                                ForEach(modelCorrectionSuggestions) { suggestion in
+                                    if let phrase = phrases.first(where: { $0.originalSegmentIndex == suggestion.id }) {
+                                        Button {
+                                            selectedSuggestionID = suggestion.id
+                                            selectedPhraseId = phrase.id
+                                        } label: {
+                                            VStack(alignment: .leading, spacing: 7) {
+                                                HStack {
+                                                    Text("АКТ \(Self.romanNumeral(phrase.actIndex + 1))").font(.system(size: 9, weight: .bold)).tracking(1)
+                                                    Spacer()
+                                                    Text(phrase.timecodeDisplay).font(.system(size: 10, design: .monospaced))
+                                                }.foregroundStyle(StudioTheme.muted)
+                                                Text(suggestion.original).font(.system(size: 12, weight: .medium)).lineLimit(2)
+                                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                            }
+                                            .padding(12).background(activeSuggestion?.id == suggestion.id ? StudioTheme.accent.opacity(0.13) : StudioTheme.panel,
+                                                                      in: RoundedRectangle(cornerRadius: 9))
+                                            .overlay(RoundedRectangle(cornerRadius: 9).stroke(activeSuggestion?.id == suggestion.id ? StudioTheme.accent.opacity(0.7) : StudioTheme.line))
+                                            .contentShape(Rectangle())
+                                        }.buttonStyle(.plain).id(suggestion.id)
+                                    }
+                                }
+                            }.padding(10)
+                        }
+                        .onChange(of: activeSuggestion?.id) { _, id in
+                            if let id { withAnimation { proxy.scrollTo(id, anchor: .center) } }
+                        }
+                    }
+                }.frame(minWidth: 280, idealWidth: 330, maxWidth: 400)
+                if let suggestion = activeSuggestion,
+                   let index = phrases.firstIndex(where: { $0.originalSegmentIndex == suggestion.id }) {
+                    suggestionInspector(suggestion, phraseIndex: index)
+                        .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            Divider()
+            HStack(spacing: 12) {
+                Label("Правки применяются к тексту. Видео обновится после пересборки.", systemImage: "info.circle")
+                    .font(.caption).foregroundStyle(StudioTheme.muted)
+                Spacer(minLength: 10)
+                Button("Отклонить оставшиеся") {
+                    modelCorrectionSuggestions = []
+                    modelCorrectionStatus = "Оставшиеся предложения отклонены."
+                }.buttonStyle(.bordered).fixedSize()
+                Button("Применить оставшиеся (\(modelCorrectionSuggestions.count))") { applyAllModelSuggestions() }
+                    .buttonStyle(.bordered).fixedSize()
+            }.padding(14).background(StudioTheme.panel)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func suggestionInspector(_ suggestion: LongformSubtitleCorrectionSuggestion, phraseIndex index: Int) -> some View {
+        let phrase = phrases[index]
+        return VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("АКТ \(Self.romanNumeral(phrase.actIndex + 1)) · \(phrase.actType.displayName)")
+                        .font(.system(size: 10, weight: .bold)).tracking(0.8).foregroundStyle(StudioTheme.accent)
+                    Text(phrase.timecodeDisplay).font(.system(size: 14, weight: .semibold, design: .monospaced))
+                }
+                Spacer()
+                Text("\((modelCorrectionSuggestions.firstIndex(where: { $0.id == suggestion.id }) ?? 0) + 1) / \(modelCorrectionSuggestions.count)")
+                    .font(.caption.monospaced()).foregroundStyle(StudioTheme.muted)
+            }.padding(22)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Сравните реплики перед применением")
+                        .font(.system(size: 21, weight: .semibold))
+                    comparisonText("СЕЙЧАС В СУБТИТРАХ", text: phrase.text, proposed: false)
+                    comparisonText("ПРЕДЛОЖЕНИЕ МОДЕЛИ", text: suggestion.replacement, proposed: true)
+                    Label(suggestion.reason, systemImage: "sparkles")
+                        .font(.callout).foregroundStyle(StudioTheme.muted).fixedSize(horizontal: false, vertical: true)
+                    Divider()
+                    Text("КОНТЕКСТ ИЗ ТРАНСКРИПЦИИ").font(.system(size: 10, weight: .bold)).tracking(1.2).foregroundStyle(StudioTheme.muted)
+                    if index > 0 { contextPhrase("До", phrase: phrases[index - 1]) }
+                    contextPhrase("Реплика", phrase: phrase)
+                    if index + 1 < phrases.count { contextPhrase("После", phrase: phrases[index + 1]) }
+                    Button("Прослушать исходную реплику", systemImage: "speaker.wave.2") {
+                        selectedPhraseId = phrase.id
+                        playSourcePhrase(phrase)
+                    }.buttonStyle(.bordered).disabled(sourceURL == nil)
+                    if phrase.text != suggestion.original {
+                        Label("Текст уже изменён вручную. Это предложение устарело.", systemImage: "exclamationmark.triangle")
+                            .font(.caption).foregroundStyle(StudioTheme.warning)
+                    }
+                }.padding(22).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Divider()
+            HStack(spacing: 12) {
+                Button("Показать в редакторе", systemImage: "text.cursor") {
+                    selectedPhraseId = phrase.id
+                    selectedActFilter = phrase.actIndex
+                    searchText = ""
+                    reviewingSuggestions = false
+                }.buttonStyle(.bordered)
+                Spacer()
+                Button("Отклонить") { dismissModelSuggestion(suggestion.id) }
+                    .buttonStyle(.bordered)
+                Button("Применить и далее", systemImage: "checkmark") { applyModelSuggestion(suggestion) }
+                    .buttonStyle(.borderedProminent).tint(StudioTheme.accent)
+                    .disabled(phrase.text != suggestion.original)
+            }.fixedSize(horizontal: false, vertical: true).padding(18).background(StudioTheme.panel)
+        }
+    }
+
+    private func comparisonText(_ title: String, text: String, proposed: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.system(size: 9, weight: .bold)).tracking(1.1).foregroundStyle(proposed ? StudioTheme.accent : StudioTheme.muted)
+            Text(text).font(.system(size: 16, weight: proposed ? .semibold : .regular))
+                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }.padding(16)
+            .background(proposed ? StudioTheme.accent.opacity(0.07) : StudioTheme.panel, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(proposed ? StudioTheme.accent.opacity(0.3) : StudioTheme.line))
+    }
+
+    private func contextPhrase(_ label: String, phrase: EditableSubtitlePhrase) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Text(label).font(.caption.weight(.medium)).foregroundStyle(StudioTheme.muted).frame(width: 52, alignment: .leading)
+            Text(phrase.text).font(.callout).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func actFilterButton(title: String, actIndex: Int?) -> some View {
@@ -463,6 +588,12 @@ struct LongformSubtitleEditorView: View {
                     }
                     .padding(14)
                 }
+                .onAppear {
+                    if let selectedPhraseId { proxy.scrollTo(selectedPhraseId, anchor: .center) }
+                }
+                .onChange(of: selectedPhraseId) { _, id in
+                    if let id { withAnimation { proxy.scrollTo(id, anchor: .center) } }
+                }
             }
         }
     }
@@ -503,6 +634,20 @@ struct LongformSubtitleEditorView: View {
                     .buttonStyle(.plain)
                     .help("Вернуть исходный текст Whisper")
                 }
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    selectedPhraseId = phrase.id
+                    runModelSubtitleCorrection(phraseID: phrase.id)
+                } label: {
+                    Label(correctingPhraseID == phrase.id ? "Проверяю эту фразу…" : "Исправить моделью",
+                          systemImage: correctingPhraseID == phrase.id ? "hourglass" : "sparkles")
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+                .disabled(isModelCorrecting)
+                .help("Проверить только эту реплику с контекстом соседних. Предложение появится для подтверждения.")
+                Spacer()
             }
 
             // Поле редактирования
@@ -594,7 +739,9 @@ struct LongformSubtitleEditorView: View {
                     }.padding(12).background(StudioTheme.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
                 }
                 if let sourcePlayer {
-                    VideoPlayer(player: sourcePlayer).frame(height: 150)
+                    StudioPlayerSurface(player: sourcePlayer)
+                        .frame(height: 150)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
                     Button("Прослушать выбранную реплику", systemImage: "speaker.wave.2") {
                         playSourcePhrase(current)
                     }
@@ -678,31 +825,29 @@ struct LongformSubtitleEditorView: View {
 
     // MARK: - Actions
 
-    private func runModelSubtitleCorrection() {
+    private func runModelSubtitleCorrection(phraseID: UUID? = nil) {
         guard !isModelCorrecting, !phrases.isEmpty else { return }
+        let target = phraseID.flatMap { id in phrases.first(where: { $0.id == id }) }
         isModelCorrecting = true
+        correctingPhraseID = target?.id
+        reviewingSuggestions = target == nil
+        selectedSuggestionID = target?.originalSegmentIndex
+        OperationJournal.shared.begin("Вычитка субтитров")
         modelCorrectionProgress = "Готовлю фразы и соседний контекст…"
         modelCorrectionEvents = []
-        modelCorrectionSuggestions = []
+        if target == nil { modelCorrectionSuggestions = [] }
         modelCorrectionStatus = nil
         modelCorrectionStatusIsError = false
 
-        let input = phrases.enumerated().map { index, phrase in
-            LongformSubtitleCorrectionInput(
-                id: phrase.originalSegmentIndex,
-                act: phrase.actTitle,
-                timecode: phrase.timecodeDisplay,
-                before: index > 0 ? phrases[index - 1].text : "",
-                text: phrase.text,
-                after: index + 1 < phrases.count ? phrases[index + 1].text : ""
-            )
-        }
+        let contextualInput = EditableSubtitlePhrase.correctionInputs(from: phrases, arc: arc)
 
-        Task { @MainActor in
-            defer { isModelCorrecting = false }
+        let input = target.map { target in contextualInput.filter { $0.id == target.originalSegmentIndex } } ?? contextualInput
+        correctionTask = Task { @MainActor in
+            defer { isModelCorrecting = false; correctingPhraseID = nil; correctionTask = nil }
             do {
                 let outcome = try await onAutoCorrect(input) { message in
                     Task { @MainActor in
+                        OperationJournal.shared.append(message)
                         modelCorrectionProgress = message
                         if modelCorrectionEvents.last != message {
                             modelCorrectionEvents.append(message)
@@ -710,14 +855,42 @@ struct LongformSubtitleEditorView: View {
                         }
                     }
                 }
-                modelCorrectionSuggestions = outcome.suggestions
-                modelCorrectionStatus = outcome.suggestions.isEmpty
-                    ? "Проверено реплик: \(outcome.checkedCount). Уверенных исправлений не найдено."
-                    : "Модель проверила \(outcome.checkedCount) реплик. Сверьте предложения и примените подходящие."
+                if let target {
+                    modelCorrectionSuggestions.removeAll { $0.id == target.originalSegmentIndex }
+                    modelCorrectionSuggestions.append(contentsOf: outcome.suggestions)
+                    if outcome.suggestions.contains(where: { $0.id == target.originalSegmentIndex }) {
+                        selectedSuggestionID = target.originalSegmentIndex
+                        reviewingSuggestions = true
+                    }
+                } else {
+                    modelCorrectionSuggestions = outcome.suggestions
+                }
+                let discardedNote = outcome.discardedSuggestionCount > 0
+                    ? " Отброшено некорректных ответов модели: \(outcome.discardedSuggestionCount)."
+                    : ""
+                let failedNote = outcome.failedPhraseCount > 0
+                    ? " Не удалось проверить фраз: \(outcome.failedPhraseCount)." : ""
+                let status = outcome.wasCancelled ? "Остановлено." : "Проверка завершена."
+                modelCorrectionStatus = "\(status) Проверено фраз: \(outcome.checkedCount). Предложений: \(outcome.suggestions.count).\(failedNote)\(discardedNote)"
+                modelCorrectionStatusIsError = outcome.failedPhraseCount > 0
+            } catch is CancellationError {
+                modelCorrectionStatus = "Проверка остановлена."
             } catch {
+                OperationJournal.shared.append(error.localizedDescription, level: .error)
                 modelCorrectionStatus = "Проверка не завершена: \(error.localizedDescription)"
                 modelCorrectionStatusIsError = true
             }
+        }
+    }
+
+    private func dismissModelSuggestion(_ id: Int) {
+        guard let index = modelCorrectionSuggestions.firstIndex(where: { $0.id == id }) else { return }
+        modelCorrectionSuggestions.remove(at: index)
+        let next = modelCorrectionSuggestions.indices.contains(index)
+            ? modelCorrectionSuggestions[index] : modelCorrectionSuggestions.last
+        selectedSuggestionID = next?.id
+        if let next, let phrase = phrases.first(where: { $0.originalSegmentIndex == next.id }) {
+            selectedPhraseId = phrase.id
         }
     }
 
@@ -730,7 +903,7 @@ struct LongformSubtitleEditorView: View {
             return
         }
         phrases[index].text = suggestion.replacement
-        modelCorrectionSuggestions.removeAll { $0.id == suggestion.id }
+        dismissModelSuggestion(suggestion.id)
         modelCorrectionStatusIsError = false
         modelCorrectionStatus = modelCorrectionSuggestions.isEmpty
             ? "Предложение применено. Проверьте текст и нажмите «\(confirmButtonTitle)» для пересборки."
@@ -861,18 +1034,28 @@ struct LongformSubtitleEditorView: View {
     }
 
     private func playSourcePhrase(_ phrase: EditableSubtitlePhrase) {
-        guard let sourcePlayer else { return }
+        guard let sourcePlayer, let sourceURL else { return }
         stopPlayback?.cancel()
         sourcePlayer.pause()
+        previewAudio.stop()
         stopPlayback = Task { @MainActor in
-            let start = max(0, phrase.start - 0.3)
-            await sourcePlayer.seek(to: CMTime(seconds: start, preferredTimescale: 600),
-                                    toleranceBefore: .zero, toleranceAfter: .zero)
-            guard !Task.isCancelled else { return }
-            sourcePlayer.play()
-            try? await Task.sleep(for: .seconds(phrase.end - start + 0.5))
-            guard !Task.isCancelled else { return }
-            sourcePlayer.pause()
+            do {
+                let start = max(0, phrase.start - 0.3)
+                let end = phrase.end + 0.5
+                let chunks = try await previewAudio.prepare(url: sourceURL, start: start, end: end)
+                guard !Task.isCancelled else { return }
+                await sourcePlayer.seek(to: CMTime(seconds: start, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+                guard !Task.isCancelled else { return }
+                try previewAudio.play(chunks)
+                sourcePlayer.play()
+                try await Task.sleep(for: .seconds(end - start))
+                sourcePlayer.pause()
+                previewAudio.stop()
+            } catch {
+                guard !Task.isCancelled else { return }
+                modelCorrectionStatus = error.localizedDescription
+                modelCorrectionStatusIsError = true
+            }
         }
     }
 

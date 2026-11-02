@@ -85,6 +85,9 @@ struct LongformActEditorView: View {
     let transcriptSegments: [TranscriptSegment]
     let sourceURL: URL?
     let coldOpenEnabled: Bool
+    let initialMusicSettings: LongformAudioSettings
+    @State private var musicSettings: LongformAudioSettings
+    @State private var showMusicEditor = false
     let onReview: (LongformNarrativeArc, @Sendable (String) -> Void) async throws -> LongformEditorialReview.Outcome
     let onApply: (LongformNarrativeArc) -> Void
     let onCancel: () -> Void
@@ -93,9 +96,14 @@ struct LongformActEditorView: View {
     @State private var selectedActIndex: Int = 0
     @State private var selectedSceneID: UUID?
     @State private var sourceDuration: Double = .infinity
-    @State private var previewPlayer: AVPlayer?
-    @State private var previewStopTask: Task<Void, Never>?
+    @State private var timelinePlayback = MontageTimelinePlayback()
+    private var previewPlayer: AVPlayer? { timelinePlayback.player }
+    private var previewAudio: MontageScenePreviewAudio { timelinePlayback.audio }
+    private var isPreviewBusy: Bool { timelinePlayback.isPreparing }
+    @State private var previewError: String?
     @State private var publicationTitle = ""
+    @State private var coverText = ""
+    @State private var viewerPromise = ""
     @State private var hookText = ""
     @State private var conclusionText = ""
     @State private var ctaText = ""
@@ -107,8 +115,10 @@ struct LongformActEditorView: View {
     @State private var reviewAttempts: [LongformEditorialReview.Attempt] = []
     @State private var reviewEvents: [String] = []
     @State private var reviewChanges: [LongformEditorialReview.SceneChange] = []
+    @State private var inTrimStepInput = "0,3"
+    @State private var outTrimStepInput = "0,3"
 
-    private let minSceneDuration = EssayDurationPolicy.sceneLength.lowerBound
+    private let minimumRenderableClipDuration = 0.1
 
     init(
         arc: LongformNarrativeArc,
@@ -117,6 +127,7 @@ struct LongformActEditorView: View {
         transcriptSegments: [TranscriptSegment],
         sourceURL: URL? = nil,
         coldOpenEnabled: Bool = true,
+        audioSettings: LongformAudioSettings = LongformAudioSettings(),
         onReview: @escaping (LongformNarrativeArc, @Sendable (String) -> Void) async throws -> LongformEditorialReview.Outcome = { arc, _ in
             LongformEditorialReview.Outcome(arc: arc, attempts: [], changes: [])
         },
@@ -129,12 +140,14 @@ struct LongformActEditorView: View {
         self.transcriptSegments = transcriptSegments
         self.sourceURL = sourceURL
         self.coldOpenEnabled = coldOpenEnabled
+        self.initialMusicSettings = arc.musicSettings ?? audioSettings
+        _musicSettings = State(initialValue: arc.musicSettings ?? audioSettings)
         self.onReview = onReview
         self.onApply = onApply
         self.onCancel = onCancel
     }
 
-    private var totalDuration: Double {
+    private var musicTimelineArc: LongformNarrativeArc {
         var candidate = arc
         candidate.acts = editedActs.map { act in
             LongformAct(type: act.type, title: act.title, dramaticBeat: act.dramaticBeat,
@@ -142,7 +155,24 @@ struct LongformActEditorView: View {
         }
         candidate.conclusionText = conclusionText
         candidate.ctaText = ctaText
-        return LongformTimeline(arc: candidate, coldOpenEnabled: coldOpenEnabled).duration
+        return candidate
+    }
+
+    private var totalDuration: Double {
+        LongformTimeline(arc: musicTimelineArc, coldOpenEnabled: coldOpenEnabled).duration
+    }
+
+    private var musicSpeechIntervals: [TimeSegment] {
+        let timeline = LongformTimeline(arc: musicTimelineArc, coldOpenEnabled: coldOpenEnabled)
+        return timeline.placements.flatMap { placement in
+            transcriptSegments.compactMap { line -> TimeSegment? in
+                let start = max(line.start, placement.source.start)
+                let end = min(line.end, placement.source.end)
+                guard end > start else { return nil }
+                return TimeSegment(start: placement.start + start - placement.source.start,
+                                   end: placement.start + end - placement.source.start)
+            }
+        }
     }
 
     private var originalTotalDuration: Double {
@@ -190,6 +220,13 @@ struct LongformActEditorView: View {
         VStack(spacing: 0) {
             headerBar
             actTabsBar
+            HStack {
+                Label(musicSettings.backgroundMusicURL?.deletingPathExtension().lastPathComponent ?? "Без музыкальной подложки", systemImage: "music.note")
+                    .font(.caption).foregroundStyle(StudioTheme.muted)
+                Spacer()
+                Button("Музыка и сведение", systemImage: "waveform") { stopPreview(); showMusicEditor = true }
+                    .buttonStyle(.bordered)
+            }.padding(.horizontal, 22).padding(.vertical, 8)
             if !editedActs.isEmpty && selectedActIndex < editedActs.count {
                 VStack(spacing: 14) {
                     HStack(alignment: .top, spacing: 16) {
@@ -209,7 +246,11 @@ struct LongformActEditorView: View {
                         onMoveLater: { moveSceneAcrossSequence($0, delta: 1) },
                         onRemove: removeScene,
                         onTrimStart: trimSceneStart,
-                        onTrimEnd: trimSceneEnd
+                        onTrimEnd: trimSceneEnd,
+                        playhead: timelinePlayback.currentTime,
+                        isPlaying: timelinePlayback.isPlaying,
+                        onTogglePlayback: { timelinePlayback.toggle() },
+                        onSeek: { timelinePlayback.scrub(to: $0, editing: $1) }
                     )
                     .frame(height: 196)
                 }
@@ -217,6 +258,9 @@ struct LongformActEditorView: View {
             } else {
                 ContentUnavailableView("Нет актов для редактирования", systemImage: "film.stack")
             }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if isReviewing || !reviewEvents.isEmpty { OperationLogPanel(isActive: isReviewing) }
         }
         .frame(minWidth: 1320, minHeight: 900)
         .background(StudioTheme.background)
@@ -226,20 +270,40 @@ struct LongformActEditorView: View {
             loadInitialActs()
             preparePreviewPlayer()
         }
+        .sheet(isPresented: $showMusicEditor) {
+            MusicBedEditor(settings: $musicSettings, duration: totalDuration,
+                suggestedEnvelope: MusicBedMixing.storyEnvelope(for: musicTimelineArc, coldOpenEnabled: coldOpenEnabled),
+                speechIntervals: musicSpeechIntervals)
+        }
         .sheet(item: $insertionTarget) { target in
             LongformSceneInsertSheet(
                 transcriptSegments: transcriptSegments,
                 existingRanges: editedActs.flatMap { $0.scenes.map { TimeSegment(start: $0.start, end: $0.end) } },
+                allowOverlap: true,
                 sourceURL: sourceURL,
                 sourceDuration: sourceDuration,
+                player: previewPlayer,
+                previewAudio: previewAudio,
                 onInsert: { range in insertScene(range, at: target) }
             )
             .frame(minWidth: 680, minHeight: 600)
         }
-        .onDisappear {
-            previewStopTask?.cancel()
-            previewPlayer?.pause()
-            previewPlayer = nil
+        .onChange(of: editedActs) { _, _ in timelinePlayback.setClips(sequenceClips) }
+        .onChange(of: timelinePlayback.activeClipID) { _, id in
+            guard let id, let location = sequenceLocation(for: id) else { return }
+            selectedSceneID = id; selectedActIndex = location.actIndex
+        }
+        .onChange(of: timelinePlayback.error) { _, message in
+            if let message { previewError = message }
+        }
+        .onDisappear { timelinePlayback.close() }
+        .alert("Предпросмотр не запустился", isPresented: Binding(
+            get: { previewError != nil },
+            set: { if !$0 { previewError = nil } }
+        )) {
+            Button("Понятно", role: .cancel) { previewError = nil }
+        } message: {
+            Text(previewError ?? "Не удалось воспроизвести выбранный фрагмент.")
         }
     }
 
@@ -432,7 +496,7 @@ struct LongformActEditorView: View {
 
             Group {
                 if let previewPlayer {
-                    VideoPlayer(player: previewPlayer)
+                    StudioPlayerSurface(player: previewPlayer)
                         .aspectRatio(16 / 9, contentMode: .fit)
                         .frame(maxWidth: .infinity)
                         .clipShape(RoundedRectangle(cornerRadius: 11))
@@ -449,24 +513,30 @@ struct LongformActEditorView: View {
                 Button {
                     if let scene = selectedLocation?.scene { playRange(start: scene.start, end: scene.end) }
                 } label: {
-                    Label("Сцена", systemImage: "play.fill")
+                    Label(isPreviewBusy ? "Идёт предпросмотр" : "Сцена",
+                          systemImage: isPreviewBusy ? "waveform" : "play.fill")
                 }
                 .buttonStyle(.borderedProminent).tint(StudioTheme.accent)
-                .disabled(selectedLocation == nil || previewPlayer == nil)
+                .disabled(selectedLocation == nil || previewPlayer == nil || isPreviewBusy)
+
+                if isPreviewBusy {
+                    Button("Стоп", systemImage: "stop.fill", action: stopPreview)
+                        .buttonStyle(.bordered)
+                }
 
                 Button {
                     if let scene = selectedLocation?.scene {
                         playRange(start: scene.start, end: min(scene.start + 4, scene.end))
                     }
                 } label: { Label("Вход", systemImage: "arrow.right.to.line") }
-                    .buttonStyle(.bordered).disabled(selectedLocation == nil || previewPlayer == nil)
+                    .buttonStyle(.bordered).disabled(selectedLocation == nil || previewPlayer == nil || isPreviewBusy)
 
                 Button {
                     if let scene = selectedLocation?.scene {
                         playRange(start: max(scene.start, scene.end - 4), end: scene.end)
                     }
                 } label: { Label("Выход", systemImage: "arrow.left.to.line") }
-                    .buttonStyle(.bordered).disabled(selectedLocation == nil || previewPlayer == nil)
+                    .buttonStyle(.bordered).disabled(selectedLocation == nil || previewPlayer == nil || isPreviewBusy)
 
                 Spacer()
                 Text(selectedLocation.map { formatDurationWithTenths($0.scene.duration) } ?? "—")
@@ -508,12 +578,14 @@ struct LongformActEditorView: View {
 
                     boundaryRow(title: "IN · НАЧАЛО", value: scene.start, icon: "arrow.right.to.line",
                         play: { playRange(start: scene.start, end: min(scene.start + 4, scene.end)) },
-                        decrement: { adjustStart(actIndex: selection.actIndex, sceneIndex: selection.sceneIndex, delta: -0.2) },
-                        increment: { adjustStart(actIndex: selection.actIndex, sceneIndex: selection.sceneIndex, delta: 0.2) })
+                        decrement: { adjustStart(actIndex: selection.actIndex, sceneIndex: selection.sceneIndex, delta: -trimStep(from: inTrimStepInput)) },
+                        increment: { adjustStart(actIndex: selection.actIndex, sceneIndex: selection.sceneIndex, delta: trimStep(from: inTrimStepInput)) },
+                        stepInput: $inTrimStepInput, trimsScene: false)
                     boundaryRow(title: "OUT · КОНЕЦ", value: scene.end, icon: "arrow.left.to.line",
                         play: { playRange(start: max(scene.start, scene.end - 4), end: scene.end) },
-                        decrement: { adjustEnd(actIndex: selection.actIndex, sceneIndex: selection.sceneIndex, delta: -0.2) },
-                        increment: { adjustEnd(actIndex: selection.actIndex, sceneIndex: selection.sceneIndex, delta: 0.2) })
+                        decrement: { adjustEnd(actIndex: selection.actIndex, sceneIndex: selection.sceneIndex, delta: -trimStep(from: outTrimStepInput)) },
+                        increment: { adjustEnd(actIndex: selection.actIndex, sceneIndex: selection.sceneIndex, delta: trimStep(from: outTrimStepInput)) },
+                        stepInput: $outTrimStepInput, trimsScene: true)
 
                     if let first = phrasesFor(start: scene.start, end: scene.end).first {
                         dialogueExcerpt(title: "ПЕРВАЯ РЕПЛИКА", phrase: first)
@@ -571,7 +643,8 @@ struct LongformActEditorView: View {
 
     private func boundaryRow(title: String, value: Double, icon: String,
                              play: @escaping () -> Void, decrement: @escaping () -> Void,
-                             increment: @escaping () -> Void) -> some View {
+                             increment: @escaping () -> Void, stepInput: Binding<String>,
+                             trimsScene: Bool) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack {
                 Label(title, systemImage: icon)
@@ -581,16 +654,39 @@ struct LongformActEditorView: View {
                     .font(.system(size: 13, weight: .bold, design: .monospaced))
                     .foregroundStyle(.primary)
             }
-            HStack(spacing: 6) {
+            Text("Сдвиг в секундах · \(trimsScene ? "− короче · + длиннее" : "− длиннее · + короче")")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(StudioTheme.muted)
+            HStack(spacing: 8) {
                 Button(action: play) { Image(systemName: "play.fill") }
                     .buttonStyle(.bordered).controlSize(.mini)
+                    .disabled(isPreviewBusy)
                 Spacer()
-                Button("−0.2") { decrement() }.buttonStyle(.bordered).controlSize(.mini)
-                Button("+0.2") { increment() }.buttonStyle(.bordered).controlSize(.mini).tint(StudioTheme.accent)
+                TextField("0,3", text: stepInput)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .multilineTextAlignment(.center)
+                    .frame(width: 56)
+                    .help("Величина сдвига в секундах")
+                Text("с").font(.caption2).foregroundStyle(StudioTheme.muted)
+                Button("Применить −") { decrement() }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .help("Сдвинуть эту границу назад по времени фильма")
+                Button("Применить +") { increment() }
+                    .buttonStyle(.borderedProminent).controlSize(.small).tint(StudioTheme.accent)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .help("Сдвинуть эту границу вперёд по времени фильма")
             }
         }
         .padding(11)
         .background(StudioTheme.raised.opacity(0.75), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func trimStep(from input: String) -> Double {
+        let normalized = input.replacingOccurrences(of: ",", with: ".")
+        guard let value = Double(normalized), value.isFinite, value > 0 else { return 0.2 }
+        return min(value, 5)
     }
 
     private func dialogueExcerpt(title: String, phrase: TranscriptSegment) -> some View {
@@ -652,8 +748,8 @@ struct LongformActEditorView: View {
                     }
                     ForEach(reviewAttempts) { attempt in
                         HStack(alignment: .top, spacing: 6) {
-                            Image(systemName: attempt.accepted ? "checkmark.circle.fill" : "arrow.clockwise.circle")
-                                .font(.system(size: 10)).foregroundStyle(attempt.accepted ? StudioTheme.success : StudioTheme.warning)
+                            Image(systemName: attempt.resolved ? "checkmark.circle.fill" : "exclamationmark.triangle")
+                                .font(.system(size: 10)).foregroundStyle(attempt.resolved ? StudioTheme.success : StudioTheme.warning)
                             Text("Попытка \(attempt.id): \(attempt.message)")
                                 .font(.system(size: 9, weight: .medium)).foregroundStyle(.primary.opacity(0.82))
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -661,7 +757,7 @@ struct LongformActEditorView: View {
                     }
                     if let reviewMessage, !isReviewing {
                         Text(reviewMessage).font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle((reviewedArc?.editorialNotes?.isEmpty ?? false)
+                            .foregroundStyle(((reviewedArc?.editorialNotes?.isEmpty ?? false) && reviewAttempts.contains(where: \.accepted))
                                 ? StudioTheme.success : StudioTheme.warning)
                     }
                     ForEach(reviewChanges) { change in
@@ -684,6 +780,8 @@ struct LongformActEditorView: View {
         DisclosureGroup("Текст выпуска и публикации") {
             VStack(alignment: .leading, spacing: 8) {
                 TextField("Название YouTube", text: $publicationTitle)
+                TextField("Короткий текст обложки", text: $coverText)
+                TextField("Что зритель поймёт после просмотра?", text: $viewerPromise)
                 TextField("Вступительный вопрос", text: $hookText)
                 TextField("Вывод эссе", text: $conclusionText)
                 TextField("Призыв к обсуждению", text: $ctaText)
@@ -711,6 +809,8 @@ struct LongformActEditorView: View {
                 DisclosureGroup("Хук, вывод и текст публикации") {
                     VStack(alignment: .leading, spacing: 8) {
                         TextField("Название YouTube", text: $publicationTitle)
+                TextField("Короткий текст обложки", text: $coverText)
+                TextField("Что зритель поймёт после просмотра?", text: $viewerPromise)
                         let suspicious = UkrainianTextReview.suspiciousWords(in: publicationTitle)
                         if !suspicious.isEmpty {
                             Text("Проверьте написание: " + suspicious.joined(separator: ", "))
@@ -765,9 +865,9 @@ struct LongformActEditorView: View {
                                 }
                                 ForEach(reviewAttempts) { attempt in
                                     Label("Попытка \(attempt.id): \(attempt.message)",
-                                          systemImage: attempt.accepted ? "checkmark.circle" : "arrow.clockwise")
+                                          systemImage: attempt.resolved ? "checkmark.circle" : "exclamationmark.triangle")
                                         .font(.caption)
-                                        .foregroundStyle(attempt.accepted ? .green : .secondary)
+                                        .foregroundStyle(attempt.resolved ? .green : .yellow)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                                 if !reviewChanges.isEmpty {
@@ -863,7 +963,13 @@ struct LongformActEditorView: View {
                         onInsertAt: { insertionTarget = SceneInsertionTarget(actIndex: actIndex, index: $0) },
                         onMoveEarlier: { moveScene($0, in: actIndex, delta: -1) },
                         onMoveLater: { moveScene($0, in: actIndex, delta: 1) },
-                        onRemove: nil
+                        onRemove: nil,
+                        playhead: max(0, timelinePlayback.currentTime - editedActs.prefix(actIndex).reduce(0) { $0 + $1.duration }),
+                        isPlaying: timelinePlayback.isPlaying,
+                        onTogglePlayback: { timelinePlayback.toggle() },
+                        onSeek: { time, editing in
+                            timelinePlayback.scrub(to: editedActs.prefix(actIndex).reduce(0) { $0 + $1.duration } + time, editing: editing)
+                        }
                     )
 
                     Text("Выберите блок для точной подрезки. «+» между блоками открывает поиск сцены по транскрипту.")
@@ -1156,15 +1262,14 @@ struct LongformActEditorView: View {
                     .font(.subheadline.weight(.bold))
                 Spacer()
                 Button("Стоп") {
-                    previewStopTask?.cancel()
-                    previewPlayer?.pause()
+                    stopPreview()
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             }
 
             if let previewPlayer {
-                VideoPlayer(player: previewPlayer)
+                StudioPlayerSurface(player: previewPlayer)
                     .aspectRatio(16/9, contentMode: .fit)
                     .frame(maxHeight: 280)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -1176,11 +1281,12 @@ struct LongformActEditorView: View {
 
     private func sceneRangeSliders(actIndex: Int, sceneIndex: Int) -> some View {
         let scene = editedActs[actIndex].scenes[sceneIndex]
-        let anchor = sceneAnchor(actIndex: actIndex, sceneIndex: sceneIndex)
-        let startLower = max(0, anchor.start - 8, scene.end - 40)
-        let startUpper = max(startLower + 0.01, min(anchor.start + 8, scene.end - minSceneDuration))
-        let endLower = max(anchor.end - 8, scene.start + minSceneDuration)
-        let maxBound = max(endLower + 0.01, min(anchor.end + 8, scene.start + 40, sourceDuration))
+        let startLower = 0.0
+        let startUpper = max(startLower + minimumRenderableClipDuration,
+                             min(scene.end - minimumRenderableClipDuration,
+                                 sourceDuration.isFinite ? sourceDuration : scene.end))
+        let endLower = scene.start + minimumRenderableClipDuration
+        let maxBound = sourceDuration.isFinite ? sourceDuration : max(scene.end, endLower + 0.01)
 
         return VStack(spacing: 8) {
             HStack {
@@ -1214,15 +1320,11 @@ struct LongformActEditorView: View {
 
     private func preparePreviewPlayer() {
         guard let sourceURL else { return }
-        previewPlayer = AVPlayer(url: sourceURL)
+        timelinePlayback.open(url: sourceURL, clips: sequenceClips)
         Task {
             let asset = AVURLAsset(url: sourceURL)
             if let duration = try? await asset.load(.duration), duration.seconds.isFinite, duration.seconds > 0 {
                 sourceDuration = duration.seconds
-                if let scene = selectedLocation?.scene {
-                    await previewPlayer?.seek(to: CMTime(seconds: scene.start, preferredTimescale: 600),
-                                              toleranceBefore: .zero, toleranceAfter: .zero)
-                }
             }
         }
     }
@@ -1234,16 +1336,9 @@ struct LongformActEditorView: View {
     }
 
     private func selectScene(_ id: UUID) {
-        for (actIndex, act) in editedActs.enumerated() {
-            guard let scene = act.scenes.first(where: { $0.id == id }) else { continue }
-            selectedActIndex = actIndex
-            selectedSceneID = id
-            previewStopTask?.cancel()
-            previewPlayer?.pause()
-            previewPlayer?.seek(to: CMTime(seconds: scene.start, preferredTimescale: 600),
-                                toleranceBefore: .zero, toleranceAfter: .zero)
-            return
-        }
+        guard let location = sequenceLocation(for: id) else { return }
+        selectedActIndex = location.actIndex; selectedSceneID = id
+        timelinePlayback.select(id)
     }
 
     private func insertAtSequencePosition(_ index: Int) {
@@ -1300,40 +1395,23 @@ struct LongformActEditorView: View {
     }
 
     private func playRange(start: Double, end: Double) {
-        guard let previewPlayer else { return }
-        previewStopTask?.cancel()
-        let startCM = CMTime(seconds: max(0.0, start), preferredTimescale: 600)
-        previewPlayer.seek(to: startCM, toleranceBefore: .zero, toleranceAfter: .zero) { finished in
-            guard finished else { return }
-            Task { @MainActor in
-                previewPlayer.play()
-            }
-        }
-        let hold = max(0.2, end - start)
-        previewStopTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: UInt64(hold * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            previewPlayer.pause()
-        }
+        timelinePlayback.audition(start: start, end: end, preferredID: selectedSceneID)
     }
+
+    private func stopPreview() { timelinePlayback.pause() }
 
     private func setStart(actIndex: Int, sceneIndex: Int, value: Double) {
         var current = editedActs[actIndex].scenes[sceneIndex]
-        let anchor = sceneAnchor(actIndex: actIndex, sceneIndex: sceneIndex)
-        let lower = max(0, anchor.start - 8, current.end - 40)
-        let upper = min(anchor.start + 8, current.end - minSceneDuration)
-        guard upper >= lower else { return }
-        current.start = min(max(lower, value), upper)
+        guard value.isFinite else { return }
+        current.start = min(max(0, value), current.end - minimumRenderableClipDuration)
         editedActs[actIndex].scenes[sceneIndex] = current
     }
 
     private func setEnd(actIndex: Int, sceneIndex: Int, value: Double) {
         var current = editedActs[actIndex].scenes[sceneIndex]
-        let anchor = sceneAnchor(actIndex: actIndex, sceneIndex: sceneIndex)
-        let lower = max(anchor.end - 8, current.start + minSceneDuration)
-        let upper = min(anchor.end + 8, current.start + 40, sourceDuration)
-        guard upper >= lower else { return }
-        current.end = min(max(lower, value), upper)
+        guard value.isFinite else { return }
+        let upper = sourceDuration.isFinite ? sourceDuration : value
+        current.end = min(max(current.start + minimumRenderableClipDuration, value), upper)
         editedActs[actIndex].scenes[sceneIndex] = current
     }
 
@@ -1370,6 +1448,8 @@ struct LongformActEditorView: View {
 
     private func loadInitialActs() {
         publicationTitle = arc.publicationTitle ?? arc.concept.suggestedTitle
+        coverText = arc.coverText ?? arc.concept.coverText ?? arc.concept.word
+        viewerPromise = arc.viewerPromise ?? arc.thesis ?? arc.concept.philosophicalPremise
         hookText = arc.hookText ?? ""
         conclusionText = arc.conclusionText ?? ""
         ctaText = arc.ctaText ?? ""
@@ -1400,6 +1480,8 @@ struct LongformActEditorView: View {
     }
 
     private func applyChangesAndProceed() {
+        stopPreview()
+        previewAudio.shutdown()
         onApply(draftArc())
     }
 
@@ -1430,10 +1512,9 @@ struct LongformActEditorView: View {
 
     private func insertScene(_ range: TimeSegment, at target: SceneInsertionTarget) {
         guard editedActs.indices.contains(target.actIndex),
-              EssayDurationPolicy.sceneLength.contains(range.duration),
+              range.start.isFinite, range.end.isFinite, range.start >= 0,
+              range.duration >= minimumRenderableClipDuration,
               sourceDuration.isFinite ? range.end <= sourceDuration : true else { return }
-        let allRanges = editedActs.flatMap { $0.scenes.map { TimeSegment(start: $0.start, end: $0.end) } }
-        guard allRanges.allSatisfy({ $0.end <= range.start || range.end <= $0.start }) else { return }
         let scene = EditableSceneSegment(sceneIndex: -1, start: range.start, end: range.end,
                                          isAdded: true, manualSourceRange: range)
         let position = min(max(target.index, 0), editedActs[target.actIndex].scenes.count)
@@ -1491,14 +1572,21 @@ struct LongformActEditorView: View {
         }
         updatedArc.sceneEdits = sceneEdits.isEmpty ? nil : sceneEdits
         updatedArc.publicationTitle = publicationTitle.trimmed
+        updatedArc.coverText = ThematicConcept.cleanTitle(coverText.trimmed)
+        updatedArc.viewerPromise = viewerPromise.trimmed
         updatedArc.hookText = hookText.trimmed
         updatedArc.conclusionText = conclusionText.trimmed
         updatedArc.ctaText = ctaText.trimmed
+        if musicSettings != initialMusicSettings || arc.musicSettings != nil {
+            updatedArc.musicSettings = MusicBedMixing.resolvedSettings(musicSettings,
+                for: updatedArc, coldOpenEnabled: coldOpenEnabled)
+        }
         return updatedArc
     }
 
     private func runEditorialReview() {
         guard !isReviewing else { return }
+        OperationJournal.shared.begin("Редакторская проверка монтажа")
         isReviewing = true
         reviewMessage = nil
         reviewProgress = "Запускаю редакторскую проверку…"
@@ -1511,6 +1599,7 @@ struct LongformActEditorView: View {
             do {
                 let outcome = try await onReview(draft) { message in
                     Task { @MainActor in
+                        OperationJournal.shared.append(message)
                         reviewProgress = message
                         if reviewEvents.last != message { reviewEvents.append(message) }
                     }
@@ -1530,13 +1619,9 @@ struct LongformActEditorView: View {
                     }
                 }
                 reviewedArc = result
-                let unresolved = result.editorialNotes?.count ?? 0
-                reviewMessage = unresolved == 0
-                    ? "Проверка завершена, замечаний не осталось."
-                    : (!outcome.changes.isEmpty
-                       ? "Применены проверенные изменения; осталось замечаний: \(unresolved). Попытки и причины показаны выше."
-                       : "Модель проверила допустимые варианты, но границы сцен не изменила. Осталось замечаний: \(unresolved); подробности и попытки показаны выше.")
+                reviewMessage = outcome.summary
             } catch {
+                OperationJournal.shared.append(error.localizedDescription, level: .error)
                 reviewMessage = "Не удалось запустить проверку: \(error.localizedDescription)"
             }
         }
@@ -1550,19 +1635,15 @@ struct LongformActEditorView: View {
         }
         candidate.conclusionText = conclusionText
         candidate.ctaText = ctaText
-        if !EssayDurationPolicy.rendered.contains(LongformTimeline(arc: candidate, coldOpenEnabled: coldOpenEnabled).duration) {
-            return "После правок эссе должно оставаться в пределах 4:00–8:00."
-        }
-        let scenes = candidate.segments.sorted { $0.start < $1.start }
-        if zip(scenes, scenes.dropFirst()).contains(where: { $0.end > $1.start }) {
-            return "Сцены пересекаются: один фрагмент фильма попадёт в ролик дважды."
-        }
-        for (ai, act) in candidate.acts.enumerated() {
-            for (si, range) in act.segments.enumerated() {
-                if !LongformEditorialSupport.allowed(range, around: sceneAnchor(actIndex: ai, sceneIndex: si)) {
-                    return "Сцена должна длиться 18–40 с; локальная правка границ — не более 8 с."
-                }
+        for range in candidate.segments {
+            if !range.start.isFinite || !range.end.isFinite || range.start < 0
+                || range.duration < minimumRenderableClipDuration
+                || (sourceDuration.isFinite && range.end > sourceDuration) {
+                return "Проверьте границы: фрагмент должен находиться внутри исходного фильма и длиться не менее 0,1 секунды."
             }
+        }
+        if coverText.trimmed.isEmpty || coverText.count > 42 || coverText.split(whereSeparator: \.isWhitespace).count > 5 {
+            return "Текст обложки: от одного до пяти слов, не больше 42 символов."
         }
         if publicationTitle.count > 120 || hookText.count > 180 || conclusionText.count > 140 || ctaText.count > 200 {
             return "Сократите текст: название до 120, хук до 180, вывод до 140, CTA до 200 символов."

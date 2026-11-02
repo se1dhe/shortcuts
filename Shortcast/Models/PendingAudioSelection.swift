@@ -8,4 +8,5 @@ struct PendingAudioSelection: Identifiable, Sendable {
     let sourceMetadata: VideoSourceMetadata?
     let tracks: [AudioTrackInfo]
     var selectedTrackId: Int
+    var originalURL: URL? = nil
 }

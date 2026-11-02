@@ -1,4 +1,6 @@
 import XCTest
+import Foundation
+import Testing
 @testable import Shortcast
 
 final class AudioTrackSelectionTests: XCTestCase {
@@ -147,4 +149,87 @@ final class AudioTrackSelectionTests: XCTestCase {
         XCTAssertFalse(AudioTrackInfo(id: 0, audioIndex: 0, title: nil, language: "ru", codec: "ac3", channels: 2, isDefault: false, isForced: false).isUkrainianVoiceover)
     }
 
+}
+
+private enum CleanupSaveFailure: Error { case refused }
+
+@Suite("MKV source cleanup")
+struct MKVSourceCleanupTests {
+    @Test("Only a verified MP4 with a persisted project allows removal of both MKV copies")
+    func verifiesCommitsThenDeletes() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("working.mkv")
+        let original = root.appendingPathComponent("original.mkv")
+        let ffmpeg = URL(fileURLWithPath: "/opt/homebrew/bin/ffmpeg")
+        let generated = try await ProcessRunner.shared.run(executableURL: ffmpeg, arguments: [
+            "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+            "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000",
+            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-t", "12",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18", "-c:a", "aac", source.path])
+        #expect(generated.isSuccess)
+        try FileManager.default.copyItem(at: source, to: original)
+        let output = try await MediaExtractor.normalizeInputIfNeeded(from: source, workingDirectory: root, selectedAudioStreamIndex: 2)
+        #expect(output.pathExtension == "mp4")
+        var project = FilmProject(sourceMovieURL: source, movieFileName: "working", movieTitle: "Фільм",
+            durationSeconds: 12, selectedAudioTrackId: 2)
+        project.transcript = Transcript(segments: [.init(start: 1, end: 2, text: "Збережена репліка")], language: "uk")
+        let service = FilmProjectService(storageDirectory: root.appendingPathComponent("projects"))
+        try await service.saveProject(project)
+
+        // A usable but truncated MP4 must never authorize source deletion.
+        let partial = root.appendingPathComponent("partial.mp4")
+        let shortened = try await ProcessRunner.shared.run(executableURL: ffmpeg,
+            arguments: ["-v", "error", "-i", output.path, "-t", "3", "-c", "copy", partial.path])
+        #expect(shortened.isSuccess)
+        await #expect(throws: (any Error).self) {
+            try await MediaExtractor.finishMKVImport(project: project, sourceURL: source, originalURL: original,
+                outputURL: partial, workingDirectory: root, selectedAudioStreamIndex: 2,
+                save: { _ in Issue.record("A truncated MP4 must not reach project saving") })
+        }
+        #expect(FileManager.default.fileExists(atPath: source.path))
+        #expect(FileManager.default.fileExists(atPath: original.path))
+
+        // A silent replacement is also insufficient even when its duration is correct.
+        let silent = root.appendingPathComponent("silent.mp4")
+        let muted = try await ProcessRunner.shared.run(executableURL: ffmpeg,
+            arguments: ["-v", "error", "-i", output.path, "-an", "-c:v", "copy", silent.path])
+        #expect(muted.isSuccess)
+        await #expect(throws: (any Error).self) {
+            try await MediaExtractor.finishMKVImport(project: project, sourceURL: source, originalURL: original,
+                outputURL: silent, workingDirectory: root, selectedAudioStreamIndex: 2,
+                save: { _ in Issue.record("A silent MP4 must not reach project saving") })
+        }
+        #expect(FileManager.default.fileExists(atPath: source.path))
+        #expect(FileManager.default.fileExists(atPath: original.path))
+
+        // Saving fails (e.g. disk full): keep every MKV and the old project binding.
+        await #expect(throws: CleanupSaveFailure.self) {
+            try await MediaExtractor.finishMKVImport(project: project, sourceURL: source, originalURL: original,
+                outputURL: output, workingDirectory: root, selectedAudioStreamIndex: 2,
+                save: { _ in throw CleanupSaveFailure.refused })
+        }
+        #expect(FileManager.default.fileExists(atPath: source.path))
+        #expect(FileManager.default.fileExists(atPath: original.path))
+        #expect(try await service.loadProject(for: source)?.sourceMovieURL == source)
+
+        let adopted = try await MediaExtractor.finishMKVImport(project: project, sourceURL: source, originalURL: original,
+            outputURL: output, workingDirectory: root, selectedAudioStreamIndex: 2,
+            save: { updated in
+                #expect(FileManager.default.fileExists(atPath: source.path))
+                #expect(FileManager.default.fileExists(atPath: original.path))
+                try await service.saveProject(updated)
+            })
+        #expect(!FileManager.default.fileExists(atPath: source.path))
+        #expect(!FileManager.default.fileExists(atPath: original.path))
+        #expect(FileManager.default.fileExists(atPath: output.path))
+        #expect(adopted.id == project.id)
+        #expect(adopted.selectedAudioTrackId == 1)
+        let reopened = try #require(try await service.loadProject(for: output))
+        #expect(reopened.id == project.id)
+        #expect(reopened.sourceMovieURL == output)
+        #expect(reopened.transcript?.segments.first?.text == "Збережена репліка")
+    }
 }

@@ -60,7 +60,7 @@ struct PhoneVideoPlayer: NSViewRepresentable {
         func rebuildLooper(url: URL, trimStart: Double, trimEnd: Double) {
             guard let player else { return }
             looper?.disableLooping()
-            let item = AVPlayerItem(url: url)
+            let item = MontageVideoPreviewPlayer.makeVideoOnlyItem(url: url)
             // Only loop a sub-range when both a start and a real end are set.
             if trimEnd > trimStart + 0.1 {
                 let start = CMTime(seconds: max(0, trimStart), preferredTimescale: 600)

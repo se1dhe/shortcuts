@@ -298,6 +298,38 @@ final class TranscriptionService {
         "openai_whisper-small",
     ]
 
+    /// Resolve the on-disk Hub layout before asking Hub for a remote listing.
+    /// Empty/incomplete model packages must not suppress the download fallback.
+    nonisolated static func localModelFolder(variant: String, cacheRoots: [URL]) -> URL? {
+        let fm = FileManager.default
+        for root in cacheRoots {
+            let candidates = [root, root.appendingPathComponent(variant),
+                root.appendingPathComponent("models/argmaxinc/whisperkit-coreml/" + variant)]
+            for candidate in candidates {
+                guard ["AudioEncoder.mlmodelc", "MelSpectrogram.mlmodelc", "TextDecoder.mlmodelc"].allSatisfy({ name in
+                    let path = candidate.appendingPathComponent(name).path
+                    var directory: ObjCBool = false
+                    return fm.fileExists(atPath: path, isDirectory: &directory) && directory.boolValue && fm.isReadableFile(atPath: path)
+                }), fm.isReadableFile(atPath: candidate.appendingPathComponent("config.json").path) else { continue }
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    nonisolated static func localTokenizerFolder(variant: String, cacheRoots: [URL]) -> URL? {
+        // Quantized CoreML variants share the original HuggingFace tokenizer.
+        let model = variant.replacingOccurrences(of: "openai_", with: "").components(separatedBy: "_").first ?? variant
+        for root in cacheRoots {
+            for candidate in [root, root.appendingPathComponent("models/openai/" + model)] {
+                if ["tokenizer.json", "tokenizer_config.json", "config.json"].allSatisfy({
+                    FileManager.default.isReadableFile(atPath: candidate.appendingPathComponent($0).path)
+                }) { return candidate }
+            }
+        }
+        return nil
+    }
+
     // MARK: - Public
 
     /// Returns a transcript for `videoURL`. A sidecar `.srt`/`.vtt` is reused ONLY
@@ -308,7 +340,7 @@ final class TranscriptionService {
     /// `modelCacheDir` — if set, WhisperKit downloads its model to this directory
     /// instead of the default `~/Documents/huggingface/`.
     func transcript(for videoURL: URL, languageHint: String = "", modelCacheDir: URL? = nil, progress: (@Sendable (Double) -> Void)? = nil) async throws -> Transcript {
-        switch Self.sidecarDecision(for: videoURL) {
+        switch Self.sidecarDecision(for: videoURL, requestedLanguage: Self.languageCode(from: languageHint)) {
         case .noSidecar:
             break
         case .verified(let sidecar, let provenance):
@@ -370,9 +402,8 @@ final class TranscriptionService {
             return .foreign(url: sidecar, reason: .markerClaimsForeignProvenance)
         }
         // Language gate: if a specific language was requested, the sidecar must match.
-        if let requested = requestedLanguage?.lowercased().trimmed, !requested.isEmpty,
-           let sidecarLang = marker.language?.lowercased().trimmed, !sidecarLang.isEmpty,
-           requested != sidecarLang {
+        if let requested = requestedLanguage.flatMap({ languageCode(from: $0) }),
+           marker.language.flatMap({ languageCode(from: $0) }) != requested {
             return .foreign(url: sidecar, reason: .languageMismatch)
         }
         guard let size = reader.size(of: sidecar) else {
@@ -414,6 +445,9 @@ final class TranscriptionService {
         }
         guard parsed.segments.count == marker.segmentCount else {
             return .foreign(url: sidecar, reason: .segmentCountMismatch)
+        }
+        if (try? validateRequestedLanguage(segments: parsed.segments, requestedLanguage: requestedLanguage)) == nil {
+            return .foreign(url: sidecar, reason: .languageMismatch)
         }
         return .verified(url: sidecar, provenance: .cache)
     }
@@ -505,21 +539,24 @@ final class TranscriptionService {
         if whisper == nil {
             phase = .downloadingModel(fraction: 0)
 
-            // Point HuggingFace cache to our working directory so the model
-            // lands in an accessible location instead of ~/Documents/huggingface/.
-            if let cacheDir = modelCacheDir {
-                setenv("HUGGINGFACE_HUB_CACHE", cacheDir.path, 1)
-            }
-
             let support = WhisperKit.recommendedModels()
             let variant = Self.preferredVariants.first { support.supported.contains($0) }
                 ?? support.default
             activeModelVariant = variant
             Self.log("whisper variant: \(variant) (supported: \(support.supported.joined(separator: ", ")))")
-            let folder = try await WhisperKit.download(variant: variant) { @Sendable [weak self] progress in
-                let fraction = progress.fractionCompleted
-                Task { @MainActor in
-                    self?.phase = fraction < 1.0 ? .downloadingModel(fraction: fraction) : .preparingModel
+            let defaultCache = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+                .appendingPathComponent("huggingface")
+            let cacheRoots = [modelCacheDir, defaultCache].compactMap { $0 }
+            let folder: URL
+            if let local = Self.localModelFolder(variant: variant, cacheRoots: cacheRoots) {
+                folder = local
+                Self.log("using local Whisper model: \(local.path)")
+            } else {
+                folder = try await WhisperKit.download(variant: variant, downloadBase: modelCacheDir) { @Sendable [weak self] progress in
+                    let fraction = progress.fractionCompleted
+                    Task { @MainActor in
+                        self?.phase = fraction < 1.0 ? .downloadingModel(fraction: fraction) : .preparingModel
+                    }
                 }
             }
             // Loading specialises the CoreML model for the chosen compute units.
@@ -534,7 +571,9 @@ final class TranscriptionService {
                 audioEncoderCompute: .cpuAndGPU,
                 textDecoderCompute: .cpuAndGPU)
             whisper = try await WhisperKit(WhisperKitConfig(
-                modelFolder: folder.path, computeOptions: compute, load: true))
+                downloadBase: modelCacheDir, modelFolder: folder.path,
+                tokenizerFolder: Self.localTokenizerFolder(variant: variant, cacheRoots: cacheRoots),
+                computeOptions: compute, load: true, download: false))
             Self.log("model loaded")
         }
 
@@ -562,7 +601,7 @@ final class TranscriptionService {
         // Промежуточная типизация: Swift 6 не может вывести тип элемента
         // в compactMap после цепочки flatMap — фиксируем тип массива явно.
         let allWhisperSegments: [TranscriptionSegment] = results.flatMap { $0.segments }
-        let segments: [TranscriptSegment] = allWhisperSegments.compactMap { (seg: TranscriptionSegment) -> TranscriptSegment? in
+        var segments: [TranscriptSegment] = allWhisperSegments.compactMap { (seg: TranscriptionSegment) -> TranscriptSegment? in
             let text = seg.text.cleanedTranscriptText
             guard !text.isEmpty else { return nil }
             let wordTimings = (seg.words ?? []).map {
@@ -580,10 +619,38 @@ final class TranscriptionService {
             )
         }
         guard !segments.isEmpty else { throw TranscriptionError.empty }
+        if Self.languageCode(from: languageHint) == "uk" {
+            let drift = Self.ukrainianLanguageDrift(in: segments)
+            // Retry only suspect audio windows once, never translate the text
+            // or accept an LLM's reconstruction of words it did not hear.
+            guard drift.count <= 3, drift.reduce(0, { $0 + $1.duration }) <= 90,
+                  drift.allSatisfy({ $0.duration <= 45 }) else { throw TranscriptionError.languageDrift(drift) }
+            for range in drift {
+                try Task.checkCancellation()
+                Self.log("Ukrainian ASR drift at \(Int(range.start))–\(Int(range.end))s; retrying source audio once with uk/transcribe")
+                var retryOptions = options
+                retryOptions.language = "uk"; retryOptions.detectLanguage = false; retryOptions.task = .transcribe
+                retryOptions.clipTimestamps = [Float(range.start), Float(range.end)]
+                let retried = try await whisper.transcribe(audioPath: audioURL.path, decodeOptions: retryOptions)
+                let repaired = retried.flatMap(\.segments).compactMap { seg -> TranscriptSegment? in
+                    let text = seg.text.cleanedTranscriptText
+                    guard !text.isEmpty else { return nil }
+                    return TranscriptSegment(start: Double(seg.start), end: Double(seg.end), text: text,
+                        words: (seg.words ?? []).map { WordTimestamp(word: $0.word, start: Double($0.start), end: Double($0.end)) },
+                        avgLogprob: Double(seg.avgLogprob), noSpeechProb: Double(seg.noSpeechProb))
+                }
+                guard !repaired.isEmpty else { throw TranscriptionError.languageDrift([range]) }
+                try Self.validateRequestedLanguage(segments: repaired, requestedLanguage: "uk")
+                segments.removeAll { $0.start < range.end && $0.end > range.start }
+                segments += repaired
+                segments.sort { $0.start < $1.start }
+            }
+            try Self.validateRequestedLanguage(segments: segments, requestedLanguage: "uk")
+        }
         Self.log("transcribed \(segments.count) segments, language=\(results.first?.language ?? "?")")
         // This is the ONLY place a transcript becomes authoritative: text we ran
         // through Whisper on this device, right now.
-        let transcript = Transcript(segments: segments, language: results.first?.language, provenance: .whisper)
+        let transcript = Transcript(segments: segments, language: Self.languageCode(from: languageHint) ?? results.first?.language, provenance: .whisper)
         Self.saveSidecar(transcript: transcript, for: videoURL, model: activeModelVariant)
         phase = .ready
         return transcript
@@ -642,6 +709,52 @@ final class TranscriptionService {
 
     nonisolated static func log(_ message: String) {
         FileHandle.standardError.write(Data("[shortcast/transcribe] \(message)\n".utf8))
+    }
+
+    /// Local language drift is checked independently of the global ASR label.
+    /// Short neutral/shared phrases and isolated foreign names are inconclusive.
+    nonisolated static func ukrainianLanguageDrift(in segments: [TranscriptSegment]) -> [TimeSegment] {
+        let lines = segments.filter { $0.start.isFinite && $0.end.isFinite && $0.end > $0.start }
+            .sorted { $0.start < $1.start }
+        var suspicious: [TimeSegment] = []
+        for index in lines.indices {
+            var group: [TranscriptSegment] = []
+            for next in index..<min(index + 4, lines.count) {
+                if let previous = group.last, lines[next].start - previous.end > 6 { break }
+                guard lines[next].end - lines[index].start <= 30 else { break }
+                group.append(lines[next])
+            }
+            let text = group.map(\.text).joined(separator: " ").lowercased()
+            guard text.count >= 35, text.split(whereSeparator: \.isWhitespace).count >= 6 else { continue }
+            let russianLetters = text.filter { "ыэъё".contains($0) }.count
+            let ukrainianLetters = text.filter { "іїєґ".contains($0) }.count
+            let unmistakable = ["хорошо", "понимаю", "родился", "видел", "тебя", "потому что", "который", "что ты", "не могу", "это было"]
+                .filter { text.contains($0) }.count
+            let recognizer = NLLanguageRecognizer(); recognizer.processString(text)
+            let russian = recognizer.languageHypotheses(withMaximum: 3)[.russian] ?? 0
+            guard ukrainianLetters == 0, russian >= 0.75,
+                  russianLetters >= 2 || unmistakable >= 2 else { continue }
+            let range = TimeSegment(start: group.first!.start, end: group.last!.end)
+            if let last = suspicious.last, range.start <= last.end {
+                suspicious[suspicious.count - 1] = .init(start: last.start, end: max(last.end, range.end))
+            } else { suspicious.append(range) }
+        }
+        return suspicious
+    }
+
+    nonisolated static func validateRequestedLanguage(segments: [TranscriptSegment], requestedLanguage: String?) throws {
+        guard requestedLanguage.flatMap({ languageCode(from: $0) }) == "uk" else { return }
+        let drift = ukrainianLanguageDrift(in: segments)
+        if !drift.isEmpty { throw TranscriptionError.languageDrift(drift) }
+    }
+
+    /// For rendering, check only the selected caption intervals AFTER manual
+    /// corrections. A bad unused scene must not block a corrected montage.
+    nonisolated static func validateRenderedCaptions(_ segments: [TranscriptSegment], ranges: [TimeSegment], requestedLanguage: String?) throws {
+        for range in ranges {
+            let selected = segments.filter { $0.start < range.end && $0.end > range.start }
+            try validateRequestedLanguage(segments: selected, requestedLanguage: requestedLanguage)
+        }
     }
 
     /// Maps a user language hint to a Whisper 2-letter code, or nil to auto-detect.
@@ -771,12 +884,16 @@ enum TranscriptionError: LocalizedError {
     case noAudio
     case modelUnavailable
     case empty
+    case languageDrift([TimeSegment])
 
     var errorDescription: String? {
         switch self {
         case .noAudio:          return "That video has no audio to transcribe."
         case .modelUnavailable: return "The transcription model couldn't be loaded."
         case .empty:            return "No speech was found in that video."
+        case .languageDrift(let ranges):
+            let positions = ranges.prefix(5).map { "\(Int($0.start))–\(Int($0.end)) с" }.joined(separator: ", ")
+            return "В украинской расшифровке обнаружены фразы на русском: \(positions). Проверьте звук выбранной дорожки. Повторите распознавание с языком uk или исправьте эти субтитры по звуку; перевод вместо распознавания не применяется."
         }
     }
 }

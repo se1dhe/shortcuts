@@ -218,7 +218,7 @@ enum DirectorArtifactGate {
         guard !result.selectedMoments.isEmpty else {
             return .rejected(reason: "модель не выбрала ни одной сцены", code: .empty)
         }
-        guard EssayDurationPolicy.pool.contains(result.selectedMoments.count) else {
+        guard result.primaryConcept.format.sceneCount.contains(result.selectedMoments.count) else {
             return .rejected(
                 reason: "модель выбрала \(result.selectedMoments.count) сцен; требуется "
                     + "\(EssayDurationPolicy.pool.lowerBound)–\(EssayDurationPolicy.pool.upperBound)"
@@ -233,9 +233,9 @@ enum DirectorArtifactGate {
         guard roleCounts[.hook, default: 0] == 1 else {
             return .rejected(reason: "роль hook должна быть назначена ровно одной сцене", code: .poolOutOfRange)
         }
-        let missingRoles = LongformActType.canonicalAnalyticOrder.compactMap { role -> String? in
+        let missingRoles = result.primaryConcept.format.roles.compactMap { role -> String? in
             let count = roleCounts[role, default: 0]
-            let minimum = role == .hook ? 1 : 3
+            let minimum = result.primaryConcept.format.minimumScenes(role)
             return count < minimum ? "\(role.promptKey): \(count)/\(minimum)" : nil
         }
         guard missingRoles.isEmpty else {

@@ -184,14 +184,19 @@ struct LongformNarrativeArc: Codable, Identifiable, Equatable, Sendable {
 
     /// Пользовательские правки показа не переписывают исходную расшифровку.
     var captionEdits: [LongformCaptionEdit]? = nil
+    var musicSettings: LongformAudioSettings? = nil
     /// Ограниченные изменения границ с указанием исходной сцены и причины.
     var sceneEdits: [LongformSceneEdit]? = nil
     var editorialNotes: [String]? = nil
     var publicationTitle: String? = nil
+    var coverText: String? = nil
+    var viewerPromise: String? = nil
+    var sourceAttributions: [String]? = nil
     var conclusionText: String? = nil
     var captionSuggestions: [LongformCaptionSuggestion]? = nil
     var editorialReviewModelID: String? = nil
     var discussionURL: String? = nil
+    var support: EssaySupport? = nil
     
     /// Причина деградации на эвристику. nil — арка собрана штатно через LLM.
     /// UI показывает баннер если поле не nil.

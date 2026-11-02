@@ -2,7 +2,7 @@ import Foundation
 
 /// Упаковка конкретного эссе: тексты модели, название фильма и фактический таймлайн.
 enum LongformMetadataGenerator {
-    static let currentVersion = 2
+    static let currentVersion = 3
 
     /// Publication destinations come from current channel settings. Updating
     /// this footer must not rebuild the essay or change its approved arc.
@@ -25,29 +25,51 @@ enum LongformMetadataGenerator {
     static func generate(movieTitle: String, concept: ThematicConcept, arc: LongformNarrativeArc,
                          timeline: LongformTimeline? = nil) -> LongformYouTubeMetadata {
         let film = canonicalMovieTitle(movieTitle, arc: arc)
-        let essayTitle = clean(arc.publicationTitle ?? concept.suggestedTitle)
+        let essayTitle = clean(ThematicConcept.cleanTitle(arc.publicationTitle ?? concept.suggestedTitle))
         let title = publicationTitle(essay: essayTitle, film: film)
         let thesis = clean(arc.thesis ?? concept.philosophicalPremise)
         let hook = clean(arc.hookText ?? "")
-        let conclusion = clean(arc.conclusionText ?? "")
-        let keywords = unique([film.lowercased(), concept.word.lowercased(), "кіноесе", "розбір фільму", "Кадр і Сенс"])
+        let topicTags = relevantTopicTags(for: [essayTitle, concept.word, thesis, hook].joined(separator: " "))
+        let keywords = unique([
+            film, "\(film) українською", "кіноесе українською", "кінорозбір",
+            "аналіз фільму", concept.word, "Кадр і Сенс"
+        ] + topicTags)
         let hashtags = unique([film, concept.word, "Кіноесе", "КадрІСенс"].compactMap(hashtag))
-        var paragraphs = ["«\(film)» — \(essayTitle.isEmpty ? concept.word : essayTitle)."]
-        paragraphs += unique([hook, thesis, conclusion].filter { !$0.isEmpty })
+        let openingTitle = essayTitle.isEmpty ? concept.word : essayTitle
+        let titleEnding = openingTitle.last.map { "?!…".contains($0) ? "" : "." } ?? "."
+        var paragraphs = ["«\(film)» — \(openingTitle)\(titleEnding)"]
+        // Keep the viewer question and the essay's core idea. The conclusion
+        // usually paraphrases the thesis, so repeating all three made the
+        // description feel padded and duplicated.
+        paragraphs += unique([hook, thesis].filter { !$0.isEmpty })
         if thesis.isEmpty && !concept.tagline.trimmed.isEmpty { paragraphs.append(clean(concept.tagline)) }
         let chapters = buildChapters(acts: arc.acts, concept: concept, timeline: timeline ?? LongformTimeline(arc: arc))
         var footer = "Таймкоди:\n" + chapters
+        if let sources = arc.sourceAttributions, !sources.isEmpty {
+            footer += "\n\nДжерела тематичної добірки: " + Array(NSOrderedSet(array: sources)).compactMap { $0 as? String }.joined(separator: "; ")
+        }
+        if let music = arc.musicSettings, let source = music.musicSource, !source.trimmed.isEmpty {
+            footer += "\n\nМузика: " + String(source.trimmed.prefix(500))
+            if let terms = music.musicUsageTerms, !terms.trimmed.isEmpty { footer += "\n" + String(terms.trimmed.prefix(500)) }
+        }
         if let url = LongformEditorialSupport.telegramURL(channelID: arc.discussionURL ?? "") {
             footer += "\n\nTelegram: " + url
+        }
+        if let url = EssaySupport.normalizedURL(arc.support?.donatelloURL ?? EssaySupport.defaultURL) {
+            footer += "\n\nПідтримати створення українських кіноесе — Donatello: " + url
         }
         footer += "\n\n" + LongformYouTubeMetadata.standardFairUseDisclaimer
         footer += "\n\n" + hashtags.joined(separator: " ")
         let body = paragraphs.joined(separator: "\n\n")
         let description = utf8Prefix(body, limit: max(0, 5_000 - footer.utf8.count - 2)) + "\n\n" + footer
         let cta = clean(LongformEditorialSupport.actionableCTA(arc.ctaText, destination: arc.discussionURL) ?? "")
-        var comment = "«\(film)» — \(essayTitle.isEmpty ? concept.word : essayTitle)."
+        var comment: String
+        if !hook.isEmpty {
+            comment = normalized(hook).contains(normalized(film)) ? hook : "«\(film)» — " + hook
+        } else {
+            comment = "«\(film)» — \(essayTitle.isEmpty ? concept.word : essayTitle)."
+        }
         if !cta.isEmpty { comment += "\n\n" + cta }
-        else if !hook.isEmpty { comment += "\n\n" + hook }
         var metadata = LongformYouTubeMetadata(title: title, description: description,
                                                tags: keywords, pinnedComment: comment)
         metadata.hashtagTokens = hashtags
@@ -82,6 +104,24 @@ enum LongformMetadataGenerator {
         let body = String(String.UnicodeScalarView(allowed))
         guard body.unicodeScalars.contains(where: CharacterSet.letters.contains) else { return nil }
         return "#" + String(body.prefix(64))
+    }
+
+    private static func relevantTopicTags(for text: String) -> [String] {
+        let value = text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "uk_UA"))
+        var tags: [String] = []
+        if ["правд", "істин", "ілюзі", "обман"].contains(where: value.contains) {
+            tags += ["пошук правди", "ілюзія і реальність"]
+        }
+        if ["свобод", "вибір", "обрат", "воля"].contains(where: value.contains) {
+            tags.append("свобода вибору")
+        }
+        if ["контрол", "маніпуляц", "сценар"].contains(where: value.contains) {
+            tags.append("контроль і маніпуляція")
+        }
+        if ["себе", "особист", "ідентич", "бути собою"].contains(where: value.contains) {
+            tags.append("пошук себе")
+        }
+        return tags
     }
 
     static func buildChapters(acts: [LongformAct], concept: ThematicConcept, timeline: LongformTimeline) -> String {

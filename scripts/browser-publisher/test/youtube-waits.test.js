@@ -71,8 +71,8 @@ test('content checks and active HD processing are both awaited', async () => {
 
 test('copyright or upload errors stop the publication gate', async () => {
   for (const snapshot of [
-    { progressText: 'Upload complete', checksText: 'Copyright-protected content found' },
-    { progressText: 'Загрузка завершена', checksText: 'Найдены материалы, защищенные авторским правом' },
+    { progressText: 'Upload complete', checksText: 'Checks complete. Copyright-protected content found' },
+    { progressText: 'Загрузка завершена', checksText: 'Проверка завершена. Найдены материалы, защищенные авторским правом' },
     { checksText: 'Проверка завершена. На контент заявлены права.' },
     { checksText: 'В этом видео есть контент, на который заявлены права. Видео заблокировано.' },
     { errorText: 'Upload failed. Network error' },
@@ -181,4 +181,47 @@ test('a failed upload browser remains open until the user closes it', async () =
   context.emit('close');
   await waiting;
   assert.equal(completed, true);
+});
+
+
+test('explicit monetization-only claims are permitted but never override blocks or strikes', () => {
+  for (const checksText of [
+    'Checks complete. Copyright claim: This claim only affects monetization.',
+    'Проверка завершена. На контент заявлены права. Заявка влияет только на монетизацию.',
+    'Перевірки завершено. Виявлено авторські права. Заявка впливає лише на монетизацію.',
+  ]) {
+    const status = classifyYouTubeStatus({ checksText });
+    assert.equal(status.harmlessClaim, true);
+    assert.equal(status.contentIssue, false);
+    assert.equal(classifyYouTubeStatus({ checksText: checksText + ' Video is blocked worldwide.' }).contentIssue, true);
+    assert.equal(classifyYouTubeStatus({ checksText: checksText + ' Active copyright strike.' }).contentIssue, true);
+  }
+});
+
+
+test('a provisional claim is evaluated after checks finish rather than aborting upload', async () => {
+  const statuses = [
+    { progressText: 'Uploading 98%', checksText: 'Checking. Copyright claim:' },
+    { progressText: 'Upload complete', checksText: 'Checking. Copyright claim:' },
+  ];
+  let calls = 0;
+  const uploaded = await waitForYouTubePhase({}, 'upload', { ...clock(), read: async () => statuses[Math.min(calls++, 1)] });
+  assert.equal(uploaded.uploadComplete, true);
+  calls = 0;
+  const checked = await waitForYouTubePhase({}, 'checks', { ...clock(), read: async () => ++calls === 1
+    ? { checksText: 'Checking. Copyright claim:' }
+    : { checksText: 'Checks complete. Copyright claim: This claim only affects monetization.' } });
+  assert.equal(checked.harmlessClaim, true);
+});
+
+
+test('Studio final progress footer confirms checks with the actual Russian no-impact claim panel', () => {
+  const status = classifyYouTubeStatus({
+    progressText: 'Проверка завершена. На контент заявлены права.',
+    checksText: 'Авторские права В этом видео есть контент, на который заявлены права. Пока это не влияет на видео, но если вы начнете зарабатывать на YouTube, это может отразиться на вашем доходе. Правила сообщества Нарушений не найдено',
+  });
+  assert.equal(status.checksComplete, true);
+  assert.equal(status.harmlessClaim, true);
+  assert.equal(status.contentIssue, false);
+  assert.equal(classifyYouTubeStatus({ progressText: 'Проверка завершена.', checksText: 'Checking' }).checksComplete, false);
 });

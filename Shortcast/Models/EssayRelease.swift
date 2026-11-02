@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-/// One essay, two complementary shorts and their publication receipts.
+/// One essay, two independent film moments and their publication receipts.
 /// Kept in the project; restarting the app must not enqueue duplicate uploads.
 struct EssayRelease: Codable, Sendable, Equatable {
     var essayKey: String
@@ -20,6 +20,16 @@ struct EssayRelease: Codable, Sendable, Equatable {
         }
     }
 
+    var hasCurrentShortStyle: Bool { shorts.count == 2 && shorts.allSatisfy { $0.renderStyleVersion == EssayShort.currentRenderStyle } }
+
+    var usesWholeFilmSelection: Bool {
+        shorts.count == 2 && shorts.allSatisfy { $0.selectionVersion == EssayShortDirector.selectionVersion }
+    }
+
+    var hasProtectedDeliveries: Bool {
+        receipts.contains { $0.key != "essay.youtube" && $0.value.state != .failed }
+    }
+
     /// Optional discussion posts are excluded; the main release and its comments must be confirmed.
     var isPublished: Bool {
         guard shorts.count == 2 else { return false }
@@ -29,6 +39,12 @@ struct EssayRelease: Codable, Sendable, Equatable {
                     + (wantsTikTok ? [short.id + ".tiktok"] : [])
             }
         return keys.allSatisfy { receipts[$0]?.state == .published }
+    }
+
+    mutating func resetPublicationState() {
+        receipts = [:]
+        essayYouTubeURL = nil
+        relatedVideoConfirmed = []
     }
 
     struct Receipt: Codable, Sendable, Equatable {
@@ -83,6 +99,26 @@ struct EssayRelease: Codable, Sendable, Equatable {
     }
 }
 
+/// Three real source frames inform selection; this is not a full video or audio review.
+struct EssayShortVisualEvidence: Codable, Sendable, Equatable {
+    let modelID: String
+    let sampledTimes: [Double]
+    let score: Int
+    let confidence: Double
+    let observation: String
+
+    /// Historical probes remain immutable when a user changes the montage.
+    /// This count describes where those probes land in the current cut only;
+    /// even a fully retained set does not validate newly added footage.
+    func retainedSampleCount(in ranges: [TimeSegment]) -> Int {
+        sampledTimes.filter { time in
+            time.isFinite && ranges.contains { range in
+                range.start.isFinite && range.end.isFinite && range.start <= time && time < range.end
+            }
+        }.count
+    }
+}
+
 struct EssayShort: Codable, Sendable, Equatable, Identifiable {
     var id: String
     var angle: String
@@ -96,10 +132,20 @@ struct EssayShort: Codable, Sendable, Equatable, Identifiable {
     var coverURL: URL?
     var candidateID: String? = nil
     var selectionModelID: String? = nil
+    var visualEvidence: EssayShortVisualEvidence? = nil
+    /// Nil identifies legacy plans restricted to essay scenes.
+    var selectionVersion: Int? = nil
+    /// Original film bounds verified during selection; edits may trim within them.
+    var selectedSourceSegments: [TimeSegment]? = nil
     var captionEdits: [LongformCaptionEdit]? = nil
+    var musicSettings: LongformAudioSettings? = nil
     /// Source ranges deliberately added from the film transcript rather than copied from the essay.
     var manuallyAddedSegments: [TimeSegment]? = nil
-    var duration: Double { segments.reduce(0) { $0 + $1.duration } + 3 }
+    static let currentRenderStyle = 2
+    var renderStyleVersion: Int? = nil
+    var subtitlesEnabled: Bool? = nil
+    var showsSubtitles: Bool { subtitlesEnabled ?? false }
+    var duration: Double { segments.reduce(0) { $0 + $1.duration } }
 
     func post(platform: SocialPlatform, movieTitle: String, release: EssayRelease, telegramURL: String?) -> PostVariant {
         let film = String(movieTitle.prefix(70))

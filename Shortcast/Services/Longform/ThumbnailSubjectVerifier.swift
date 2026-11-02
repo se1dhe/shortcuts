@@ -78,12 +78,17 @@ struct ThumbnailSubjectVerifier: Sendable {
             let sheetURL = folder.appendingPathComponent("sheet-\(start).jpg")
             _ = try LongformThumbnailExporter().export(image: sheet, to: sheetURL)
             let prompt = """
-            These are numbered portrait crops from the real film «\(movieTitle)».
-            Choose ONLY clearly recognizable leading cast members from this list:
+            These are numbered full movie frames from «\(movieTitle)».
+            Choose ONLY frames that clearly show a recognizable leading cast member from this list:
             \(cast)
             Do not choose an extra or a supporting actor just because their face is large.
             Do not infer identity from the film title or clothing alone. If uncertain, omit it.
-            Frame numbers are printed above each portrait; leadIndex is the number in the cast list.
+            The actor must be physically present in the scene, not shown inside a TV, monitor,
+            photograph, poster, mirror, or other image within the frame.
+            Prefer a medium shot with the character slightly below the image center, clear headroom,
+            and uncluttered darker negative space in the upper-left for a readable slogan.
+            Avoid extreme close-ups that leave no room for text. Rank the best-composed frames first.
+            Frame numbers are printed above each image; leadIndex is the number in the cast list.
             Return ONLY JSON: {"choices":[{"frame":1,"leadIndex":1,"confidence":0.95}]}.
             Use real frame numbers 1 through \(batch.count). Empty choices is valid.
             """
@@ -125,20 +130,13 @@ struct ThumbnailSubjectVerifier: Sendable {
         defer { NSGraphicsContext.current = previous }
         for (index, candidate) in candidates.enumerated() {
             let cell = CGRect(x: (index % 3) * 512, y: (1 - index / 3) * 384, width: 512, height: 384)
-            let face = candidate.faceBox ?? CGRect(x: 0, y: 0, width: 1, height: 1)
             let imageSize = CGSize(width: candidate.image.width, height: candidate.image.height)
-            let expanded = face.insetBy(dx: -face.width * 0.65, dy: -face.height * 0.65)
-                .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-            // CGImage cropping uses top-left image coordinates, Vision uses bottom-left.
-            let crop = CGRect(x: expanded.minX * imageSize.width, y: (1 - expanded.maxY) * imageSize.height,
-                              width: expanded.width * imageSize.width, height: expanded.height * imageSize.height)
-            let portrait = candidate.image.cropping(to: crop) ?? candidate.image
             let target = cell.insetBy(dx: 12, dy: 12)
             let pictureArea = CGRect(x: target.minX, y: target.minY, width: target.width, height: target.height - 40)
-            let scale = min(pictureArea.width / CGFloat(portrait.width), pictureArea.height / CGFloat(portrait.height))
-            let size = CGSize(width: CGFloat(portrait.width) * scale, height: CGFloat(portrait.height) * scale)
-            context.draw(portrait, in: CGRect(x: pictureArea.midX - size.width / 2, y: pictureArea.midY - size.height / 2,
-                                             width: size.width, height: size.height))
+            let scale = min(pictureArea.width / imageSize.width, pictureArea.height / imageSize.height)
+            let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+            context.draw(candidate.image, in: CGRect(x: pictureArea.midX - size.width / 2,
+                y: pictureArea.midY - size.height / 2, width: size.width, height: size.height))
             ("FRAME \(index + 1)" as NSString).draw(at: CGPoint(x: target.minX, y: cell.maxY - 38),
                 withAttributes: [.font: NSFont.boldSystemFont(ofSize: 26), .foregroundColor: NSColor.white])
         }

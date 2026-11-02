@@ -1,5 +1,7 @@
 import Testing
 import Foundation
+import SwiftUI
+import AppKit
 @testable import Shortcast
 
 @Suite("DirectorRunLog Tests")
@@ -57,5 +59,78 @@ struct DirectorRunLogTests {
         let names = Set(files.map(\.lastPathComponent))
         #expect(names.contains { $0.contains("-stage1-") })
         #expect(names.contains { $0.contains("-stage2-") })
+    }
+}
+
+@Suite("Operation journal")
+struct OperationJournalTests {
+    @Test func retainsFullHistoryAndStartsANewOperation() {
+        let journal = OperationJournal()
+        journal.begin("Начало монтажа")
+        for index in 0..<250 { journal.append("Сцена \(index)") }
+        journal.append("Повторная попытка: модель вернула неверный ответ", level: .warning)
+        journal.append("Экспорт остановлен: нет места на диске", level: .error)
+        let entries = journal.snapshot()
+        #expect(entries.count == 253)
+        #expect(entries.first?.message == "Начало монтажа")
+        #expect(entries[251].level == .warning)
+        #expect(entries[252].level == .error)
+        journal.begin("Следующая операция")
+        #expect(journal.snapshot().map(\.message) == ["Следующая операция"])
+        #expect(OperationJournal.inferredLevel("stage=essay attempt 1: selection rejected") == .warning)
+        #expect(OperationJournal.inferredLevel("Мастеринг звука") == .info)
+    }
+
+    @Test func concurrentWritersKeepEveryDistinctEvent() async {
+        let journal = OperationJournal()
+        await withTaskGroup(of: Void.self) { group in
+            for index in 0..<200 {
+                group.addTask { journal.append("event \(index)") }
+            }
+        }
+        #expect(journal.snapshot().count == 200)
+        #expect(Set(journal.snapshot().map(\.message)).count == 200)
+    }
+
+    @MainActor
+    @Test func logPanelRendersAllThreeSeverities() throws {
+        let journal = OperationJournal()
+        journal.begin("Сборка кино-эссе · Интерстеллар")
+        journal.append("Названия актов готовы. Собираем видеокомпозицию 1920×1080…")
+        journal.append("Фоновая музыка не найдена. Продолжаем с оригинальным звуком.", level: .warning)
+        journal.append("Экспорт остановлен: недостаточно места на диске.", level: .error)
+        let view = OperationLogPanel(journal: journal)
+            .frame(width: 1120, height: 280).background(StudioTheme.background).preferredColorScheme(.dark)
+        let host = NSHostingView(rootView: view)
+        let window = NSWindow(contentRect: NSRect(x: -5000, y: -5000, width: 1120, height: 280),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        host.frame = NSRect(x: 0, y: 0, width: 1120, height: 280)
+        host.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let png = try #require(bitmap.representation(using: .png, properties: [:]))
+        try png.write(to: URL(fileURLWithPath: "/private/tmp/shortcast-operation-log-preview.png"))
+    }
+}
+
+@MainActor
+@Suite("Live operation journal")
+struct LiveOperationJournalTests {
+    @Test func initiallyEmptyJournalStartsFollowingEvents() async throws {
+        let journal = OperationJournal()
+        let host = NSHostingView(rootView: OperationLogPanel(journal: journal))
+        let window = NSWindow(contentRect: NSRect(x: -5000, y: -5000, width: 1120, height: 280),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        window.orderBack(nil)
+        defer { window.orderOut(nil) }
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        journal.append("Первое действие после открытия экрана")
+        try await Task.sleep(for: .milliseconds(600))
+        host.layoutSubtreeIfNeeded()
+        #expect(host.fittingSize.height > 100)
     }
 }

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import QuartzCore
 
 /// Folders, Director model and publication accounts for essay releases.
 struct SettingsView: View {
@@ -11,6 +12,7 @@ struct SettingsView: View {
 
 
     private let cleanupService: any ProjectCleanupServiceProtocol = ProjectCleanupService.shared
+    @State private var showSupportEditor = false
     @State private var removableSizeBytes: Int64?
     @State private var isCalculatingSize = false
     @State private var isCleaning = false
@@ -100,6 +102,13 @@ struct SettingsView: View {
                     Link("Создать бота (@BotFather) ↗", destination: URL(string: "https://t.me/BotFather")!)
                         .foregroundStyle(StudioTheme.accent)
                 }
+            }
+
+            Section("Поддержка канала") {
+                TextField("Ссылка Donatello", text: $settings.donatelloURL)
+                Button("Благодарности донатерам…", systemImage: "heart.text.square") { showSupportEditor = true }
+                Text("Настройки используются в новых эссе. Финал готового эссе меняется в его оформлении публикации.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             Section("TMDB") {
@@ -249,6 +258,14 @@ struct SettingsView: View {
         .background(StudioTheme.background)
         }
         .frame(width: 580, height: 740)
+        .sheet(isPresented: $showSupportEditor) {
+            EssaySupportEditor(support: settings.essaySupport,
+                ctaText: "Обговорімо тему цього есе в Telegram.", theme: "КАДР & СЕНС", defaultsOnly: true) { support in
+                settings.donatelloURL = support.donatelloURL
+                settings.donorCreditsEnabled = support.creditsEnabled
+                settings.donorNicknamesText = support.nicknames.joined(separator: "\n")
+            }
+        }
         .background(StudioTheme.background)
         .preferredColorScheme(.dark)
         .tint(StudioTheme.accent)
@@ -393,4 +410,154 @@ struct SettingsView: View {
         }
     }
 
+}
+
+/// Shared editor for channel defaults and the current essay's saved finale.
+struct EssaySupportEditor: View {
+    struct NicknameRow: Identifiable { let id = UUID(); var text: String }
+    let original: EssaySupport
+    let ctaText: String
+    let theme: String
+    var defaultsOnly = false
+    let onSave: (EssaySupport) async throws -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var enabled: Bool
+    @State private var rows: [NicknameRow]
+    @State private var url: String
+    @State private var showList = false
+    @State private var listText = ""
+    @State private var saving = false
+    @State private var error: String?
+    @FocusState private var focusedNickname: UUID?
+
+    init(support: EssaySupport, ctaText: String, theme: String, defaultsOnly: Bool = false,
+         onSave: @escaping (EssaySupport) async throws -> Void) {
+        original = support; self.ctaText = ctaText; self.theme = theme
+        self.defaultsOnly = defaultsOnly; self.onSave = onSave
+        _enabled = State(initialValue: support.creditsEnabled)
+        _rows = State(initialValue: support.nicknames.map { NicknameRow(text: $0) })
+        _url = State(initialValue: support.donatelloURL)
+    }
+    private var support: EssaySupport {
+        EssaySupport(donatelloURL: url.trimmingCharacters(in: .whitespacesAndNewlines),
+            creditsEnabled: enabled, nicknames: EssaySupport.names(from: rows.map(\.text).joined(separator: "\n")))
+    }
+    private var changesVideo: Bool {
+        !defaultsOnly && (original.showsCredits != support.showsCredits
+            || (support.showsCredits && original.nicknames != support.nicknames))
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Поддержка и благодарности").font(.title2.bold())
+                    Text(defaultsOnly ? "Настройки для новых эссе" : "Финальный экран этого эссе")
+                        .font(.caption).foregroundStyle(StudioTheme.muted)
+                }
+                Spacer()
+                Button("Закрыть") { dismiss() }.disabled(saving)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+            TextField("Ссылка Donatello", text: $url).textFieldStyle(.roundedBorder)
+            Text("Ссылка добавляется в описание YouTube. Ники появляются в видео только при включённых благодарностях.")
+                .font(.caption).foregroundStyle(StudioTheme.muted)
+            Toggle("Благодарить донатеров в конце эссе", isOn: $enabled).toggleStyle(.switch)
+                .onChange(of: enabled) { _, value in if value && rows.isEmpty { addNickname() } }
+            if enabled {
+                HStack {
+                    Text("Ники · \(support.nicknames.count) / 24").font(.headline)
+                    Spacer()
+                    Button("Ввести списком", systemImage: "list.bullet") { showList = true }
+                    Button("Добавить ник", systemImage: "plus") { addNickname() }.disabled(rows.count >= 24)
+                }
+                ScrollView {
+                    VStack(spacing: 8) {
+                        ForEach($rows) { $row in
+                            HStack {
+                                TextField("Ник донатера", text: $row.text)
+                                    .textFieldStyle(.roundedBorder).focused($focusedNickname, equals: row.id)
+                                Button { rows.removeAll { $0.id == row.id } } label: {
+                                    Image(systemName: "minus.circle")
+                                }.buttonStyle(.plain).help("Убрать ник")
+                            }
+                        }
+                    }.padding(2)
+                }.frame(maxHeight: 150)
+                Text("Без сумм и личных данных: только введённые ники. Повторы и пустые строки пропускаются.")
+                    .font(.caption).foregroundStyle(StudioTheme.muted)
+            }
+            if let issue = support.validationIssue {
+                Label(issue, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.yellow)
+            }
+            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+            if support.validationIssue == nil {
+                DonorCreditsPreview(support: support, ctaText: ctaText, theme: theme)
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                Text("Предпросмотр финала · \(support.finaleDuration(text: ctaText), specifier: "%.1f") с. Благодарности идут одновременно с призывом к обсуждению.")
+                    .font(.caption).foregroundStyle(StudioTheme.muted)
+            }
+                }
+            }
+            HStack {
+                Text(defaultsOnly ? "Настройки будут использованы в новых эссе." : changesVideo ? "Сохранение пересоберёт видео с новым финалом." : "Ссылка обновится без пересборки видео.")
+                    .font(.caption).foregroundStyle(StudioTheme.muted)
+                Spacer()
+                Button(saving ? "Сохраняю…" : changesVideo ? "Сохранить и пересобрать" : "Сохранить") {
+                    saving = true; error = nil
+                    Task { @MainActor in
+                        defer { saving = false }
+                        do { try await onSave(support); dismiss() }
+                        catch { self.error = error.localizedDescription }
+                    }
+                }.buttonStyle(StudioPrimaryButtonStyle()).disabled(saving || support.validationIssue != nil)
+            }
+        }.padding(24).frame(width: 800, height: enabled ? 850 : 730).studioSurface()
+            .interactiveDismissDisabled(saving)
+            .sheet(isPresented: $showList) {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Добавить ники списком").font(.title2.bold())
+                    Text("Разделяйте ники запятой или переносом строки.").foregroundStyle(StudioTheme.muted)
+                    TextEditor(text: $listText).font(.system(.body, design: .monospaced))
+                        .frame(height: 180).scrollContentBackground(.hidden).studioPanel(padding: 10)
+                    HStack {
+                        Button("Отмена") { showList = false }
+                        Spacer()
+                        Button("Добавить в список") {
+                            let names = EssaySupport.names(from: (rows.map(\.text) + [listText.replacingOccurrences(of: ",", with: "\n")]).joined(separator: "\n"))
+                            rows = names.map { NicknameRow(text: $0) }
+                            listText = ""; showList = false
+                        }.buttonStyle(StudioPrimaryButtonStyle()).disabled(listText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }.padding(24).frame(width: 600).studioSurface()
+            }
+    }
+    private func addNickname() {
+        let row = NicknameRow(text: "")
+        rows.append(row); focusedNickname = row.id
+    }
+}
+
+private struct DonorCreditsPreview: NSViewRepresentable {
+    let support: EssaySupport
+    let ctaText: String
+    let theme: String
+    func makeNSView(context: Context) -> DonorCreditsPreviewHost { DonorCreditsPreviewHost() }
+    func updateNSView(_ view: DonorCreditsPreviewHost, context: Context) {
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.black.cgColor
+        let card = DonorCreditsRenderer.makeLayer(support: support, ctaText: ctaText, theme: theme,
+            start: 0, duration: support.finaleDuration(text: ctaText), loops: true)
+        card.beginTime = CACurrentMediaTime()
+        view.layer?.sublayers = [card]
+        view.needsLayout = true
+    }
+}
+
+private final class DonorCreditsPreviewHost: NSView {
+    override func layout() {
+        super.layout()
+        layer?.sublayerTransform = CATransform3DMakeScale(bounds.width / 1920, bounds.height / 1080, 1)
+    }
 }

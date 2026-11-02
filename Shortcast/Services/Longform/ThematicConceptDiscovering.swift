@@ -56,11 +56,24 @@ protocol ThematicConceptDiscovering: Sendable {
         movieTitle: String,
         movieOverview: String?,
         modelManager: ModelManager,
-        directorProfile: ChatModelProfile
+        directorProfile: ChatModelProfile,
+        format: EssayFormat
     ) async throws -> ThematicAnalysisResult
 }
 
 extension ThematicConceptDiscovering {
+    func discoverThematicAnalysis(
+        from transcript: Transcript,
+        movieTitle: String,
+        movieOverview: String?,
+        modelManager: ModelManager,
+        directorProfile: ChatModelProfile
+    ) async throws -> ThematicAnalysisResult {
+        try await discoverThematicAnalysis(from: transcript, movieTitle: movieTitle,
+            movieOverview: movieOverview, modelManager: modelManager,
+            directorProfile: directorProfile, format: .analytical)
+    }
+
     func planThematicAnalysis(
         for concept: ThematicConcept,
         candidates: [ThematicConcept],

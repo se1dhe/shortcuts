@@ -74,3 +74,9 @@ dist/
 node_modules/
 vid/
 Exports/
+
+# Local preview renders and abandoned visual experiments
+tmp/
+
+# User-managed soundtrack library
+Music/

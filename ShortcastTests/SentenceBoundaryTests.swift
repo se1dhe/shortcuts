@@ -5,6 +5,22 @@ import AVFoundation
 
 @Suite("SentenceBoundary & Narrative Continuity Tests")
 struct SentenceBoundaryTests {
+    // The four-act scoring/budget tests below exercise the retained internal
+    // heuristic helper in isolation. They are NOT the production LLM selection
+    // path, whose refusal to invent a missing plan is tested separately.
+
+
+    @Test("Production Director refuses to replace a missing model plan with heuristic selection")
+    func missingModelPlanDoesNotFallBack() async throws {
+        let transcript = syntheticFilm(runStarts: [600, 1800, 4200, 6800], lines: 5)
+        do {
+            _ = try await LongformNarrativeDirector().buildArc(from: transcript,
+                concept: syntheticConcept(), selectedMoments: [], movieTitle: "Герметична перевірка", targetDuration: 360)
+            Issue.record("Production Director silently selected heuristic scenes without a model plan")
+        } catch let error as EssaySceneEvidence.InvalidSelection {
+            #expect(error.issues.contains { $0.contains("не получен план") })
+        }
+    }
 
     @Test("SentenceBoundaryDetector does not cut off speech mid-sentence")
     func testBoundaryRefinement() {
@@ -37,8 +53,9 @@ struct SentenceBoundaryTests {
             maxAllowedDuration: 30.0
         )
 
-        // Must expand to at least 18.0 + 0.45 = 18.45s so segment 2 finishes on punctuation "."
-        #expect(refined.upperBound >= 18.4)
+        // Complete segment 2, then use only the pause before speech resumes at 18.2.
+        #expect(refined.upperBound >= 18.0)
+        #expect(refined.upperBound < 18.2)
         // Must maintain leading safety margin before 10.0s (max 0, 10.0 - 0.20 = 9.8)
         #expect(refined.lowerBound <= 9.85)
     }
@@ -93,10 +110,9 @@ struct SentenceBoundaryTests {
         )
 
         let director = LongformNarrativeDirector()
-        let arc = try await director.buildArc(
+        let arc = try await director.buildArcHeuristic(
             from: transcript,
             concept: concept,
-            selectedMoments: [],
             movieTitle: "Револьвер",
             targetDuration: 360.0
         )
@@ -180,10 +196,9 @@ struct SentenceBoundaryTests {
         )
 
         let director = LongformNarrativeDirector()
-        let arc = try await director.buildArc(
+        let arc = try await director.buildArcHeuristic(
             from: transcript,
             concept: concept,
-            selectedMoments: [],
             movieTitle: "Револьвер",
             targetDuration: 360.0
         )
@@ -242,10 +257,9 @@ struct SentenceBoundaryTests {
         )
 
         let director = LongformNarrativeDirector()
-        let arc = try await director.buildArc(
+        let arc = try await director.buildArcHeuristic(
             from: transcript,
             concept: concept,
-            selectedMoments: [],
             movieTitle: "Револьвер",
             targetDuration: 360.0
         )
@@ -316,10 +330,9 @@ struct SentenceBoundaryTests {
             lines: 5
         )
         let director = LongformNarrativeDirector()
-        let arc = try await director.buildArc(
+        let arc = try await director.buildArcHeuristic(
             from: transcript,
             concept: syntheticConcept(),
-            selectedMoments: [],
             movieTitle: "Синтетический полный метр",
             targetDuration: 520.0
         )
@@ -348,10 +361,9 @@ struct SentenceBoundaryTests {
         let transcript = syntheticFilm(runStarts: [600, 2200, 4400, 6500, 7500], lines: 3)
         let filmDuration = try #require(transcript.segments.last?.end)
         let director = LongformNarrativeDirector()
-        let arc = try await director.buildArc(
+        let arc = try await director.buildArcHeuristic(
             from: transcript,
             concept: syntheticConcept(),
-            selectedMoments: [],
             movieTitle: "Синтетический полный метр",
             targetDuration: 520.0
         )
@@ -371,10 +383,9 @@ struct SentenceBoundaryTests {
         // Катарсис-запуск до отсечки титров (0.95 * ~6550 = 6222s), хвост — в титрах
         let transcript = syntheticFilm(runStarts: [600, 2200, 4400, 5200, 6500], lines: 3)
         let director = LongformNarrativeDirector()
-        let arc = try await director.buildArc(
+        let arc = try await director.buildArcHeuristic(
             from: transcript,
             concept: syntheticConcept(),
-            selectedMoments: [],
             movieTitle: "Синтетический полный метр",
             targetDuration: 520.0
         )
@@ -412,11 +423,10 @@ struct SentenceBoundaryTests {
                 ],
                 language: "ru"
             )
-            let arc = try await director.buildArc(
+            let arc = try await director.buildArcHeuristic(
             from: transcript,
                 concept: syntheticConcept(),
-                selectedMoments: [],
-                movieTitle: "Синтетический полный метр",
+                    movieTitle: "Синтетический полный метр",
                 targetDuration: 520.0
             )
             let report = try #require(arc.durationReport)
@@ -437,17 +447,18 @@ struct SentenceBoundaryTests {
             ],
             language: "ru"
         )
-        let arc = try await LongformNarrativeDirector().buildArc(
+        let arc = try await LongformNarrativeDirector().buildArcHeuristic(
             from: transcript,
             concept: syntheticConcept(),
-            selectedMoments: [],
             movieTitle: "Синтетический полный метр",
             targetDuration: 660.0
         )
         let report = try #require(arc.durationReport)
         #expect(report.ask == 660.0, "старый проект просил 11 минут — отчёт обязан это показать")
         #expect(abs(report.effectiveTarget - 470.3) < 0.001)
-        #expect(arc.legacyAskSeconds == 660)
+        // The isolated helper records the raw request in its report. The
+        // production entry point sets archive provenance only after a valid plan.
+        #expect(report.ask > EssayDurationPolicy.rendered.upperBound)
     }
 
     @Test("Incomplete but admissible catharsis run is taken only when no complete run exists")
@@ -472,10 +483,9 @@ struct SentenceBoundaryTests {
         let tail = [TranscriptSegment(start: 3100.0, end: 3200.0, text: "Кінець фільму. Титри.", words: [])]
 
         // A: есть завершенная мысль — она и берётся, оборванную не вытягивает
-        let arcWithClosed = try await director.buildArc(
+        let arcWithClosed = try await director.buildArcHeuristic(
             from: Transcript(segments: earlier + openEnded + closed + tail, language: "ru"),
             concept: syntheticConcept(word: "Иллюзия"),
-            selectedMoments: [],
             movieTitle: "Синтетический полный метр",
             targetDuration: 520.0
         )
@@ -485,10 +495,9 @@ struct SentenceBoundaryTests {
 
         // B: завершенной мысли нет вовсе — допустимый оборванный крой всё равно берётся,
         // а не вытесняется молчаливой заглушкой поверх речи
-        let arcOpenOnly = try await director.buildArc(
+        let arcOpenOnly = try await director.buildArcHeuristic(
             from: Transcript(segments: earlier + openEnded + tail, language: "ru"),
             concept: syntheticConcept(word: "Иллюзия"),
-            selectedMoments: [],
             movieTitle: "Синтетический полный метр",
             targetDuration: 520.0
         )
@@ -530,10 +539,9 @@ struct SentenceBoundaryTests {
             + onTheme
             + tail
 
-        let arc = try await director.buildArc(
+        let arc = try await director.buildArcHeuristic(
             from: Transcript(segments: segments, language: "ru"),
             concept: concept,
-            selectedMoments: [],
             movieTitle: "Синтетический полный метр",
             targetDuration: 520.0
         )
@@ -834,5 +842,39 @@ struct SentenceBoundaryTests {
 
         #expect(FileManager.default.fileExists(atPath: result.outputURL.path))
         #expect(result.duration > 10)
+    }
+}
+
+
+@Suite("Dialogue padding regressions")
+struct DialoguePaddingRegressionTests {
+    @Test("Truman short pauses cannot leak the start of the next utterance")
+    func trumanTailHandles() {
+        for (end, nextStart, expected) in [(993.52, 993.84, 993.68), (2910.32, 2910.58, 2910.45)] {
+            let lines = [TranscriptSegment(start: end - 3, end: end, text: "Завершена репліка.", words: []),
+                         TranscriptSegment(start: nextStart, end: nextStart + 2, text: "Наступна репліка.", words: [])]
+            let safe = SentenceBoundaryDetector.safeTailEnd(after: end, desiredEnd: end + 0.4,
+                speech: lines.map { TimeSegment(start: $0.start, end: $0.end) })
+            #expect(abs(safe - expected) < 0.0001)
+            #expect(safe >= end && safe < nextStart)
+            let snapped = SentenceBoundaryDetector().snapToSentenceEnd(timestamp: end,
+                maxAllowedDuration: 40, in: lines)
+            #expect(abs(snapped - expected) < 0.0001)
+            let options = LongformEditorialReview.options(for: .init(start: end - 28, end: end),
+                transcript: Transcript(segments: lines, language: "uk"))
+            #expect(!options.contains { $0.id == "aftermath" })
+            #expect(options.first { $0.id == "completeLine" }?.range.end == nextStart + 2)
+        }
+    }
+
+    @Test("Long pauses retain room tone and overlapping speech gets no blind padding")
+    func longAndOverlappingSpeech() {
+        let completed = TimeSegment(start: 10, end: 20)
+        #expect(SentenceBoundaryDetector.safeTailEnd(after: 20, desiredEnd: 21.6,
+            speech: [completed, .init(start: 25, end: 28)]) == 21.6)
+        #expect(SentenceBoundaryDetector.safeTailEnd(after: 20, desiredEnd: 21.6,
+            speech: [completed, .init(start: 19.98, end: 23)]) == 20)
+        #expect(SentenceBoundaryDetector.safeTailEnd(after: 20, desiredEnd: 21.6,
+            speech: [completed, .init(start: 20, end: 23)]) == 20)
     }
 }

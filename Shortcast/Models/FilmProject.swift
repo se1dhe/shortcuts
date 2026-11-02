@@ -8,7 +8,7 @@ typealias DetectedScene = SceneDetectionService.Scene
 struct FilmProject: Identifiable, Codable, Sendable {
 
     let id: UUID
-    let sourceMovieURL: URL
+    var sourceMovieURL: URL
     var movieFileName: String
     var movieTitle: String
     var movieYear: String?
@@ -38,7 +38,11 @@ struct FilmProject: Identifiable, Codable, Sendable {
 
     /// Результат сборки 16:9 эссе (файл, таймлайн, метаданные YouTube)
     var longformResult: LongformBuildResult?
+    /// Montage edits waiting for a successful render. Keeping this separate
+    /// from `longformResult` preserves the last playable export on failure.
+    var pendingLongformArc: LongformNarrativeArc? = nil
     var essayRelease: EssayRelease? = nil
+    var packagingExperiments: [PackagingExperiment]? = nil
 
     var createdAt: Date
     var updatedAt: Date
@@ -89,7 +93,7 @@ struct FilmProject: Identifiable, Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id, sourceMovieURL, movieFileName, movieTitle, movieYear, durationSeconds, fileSizeBytes, selectedAudioTrackId
         case tmdbMetadata, transcript, scenes, discoveredConcepts, thematicAnalysis, selectedConcept
-        case longformResult, essayRelease, createdAt, updatedAt
+        case longformResult, pendingLongformArc, essayRelease, packagingExperiments, createdAt, updatedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -112,7 +116,9 @@ struct FilmProject: Identifiable, Codable, Sendable {
         thematicAnalysis = try container.decodeIfPresent(ThematicAnalysisResult.self, forKey: .thematicAnalysis)
         selectedConcept = try container.decodeIfPresent(ThematicConcept.self, forKey: .selectedConcept)
         longformResult = Self.read(LongformBuildResult.self, forKey: .longformResult, in: container, damage: &damage)
+        pendingLongformArc = Self.read(LongformNarrativeArc.self, forKey: .pendingLongformArc, in: container, damage: &damage)
         essayRelease = Self.read(EssayRelease.self, forKey: .essayRelease, in: container, damage: &damage)
+        packagingExperiments = Self.read([PackagingExperiment].self, forKey: .packagingExperiments, in: container, damage: &damage)
         essayRelease?.recoverInterruptedPublishing()
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
@@ -159,7 +165,9 @@ struct FilmProject: Identifiable, Codable, Sendable {
         try container.encodeIfPresent(thematicAnalysis, forKey: .thematicAnalysis)
         try container.encodeIfPresent(selectedConcept, forKey: .selectedConcept)
         try container.encodeIfPresent(longformResult, forKey: .longformResult)
+        try container.encodeIfPresent(pendingLongformArc, forKey: .pendingLongformArc)
         try container.encodeIfPresent(essayRelease, forKey: .essayRelease)
+        try container.encodeIfPresent(packagingExperiments, forKey: .packagingExperiments)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
     }

@@ -10,7 +10,7 @@ struct LiveEssayReleaseTests {
     @Test func buildsTwoTrailersWithoutChangingTheEssay() async throws {
         let env = ProcessInfo.processInfo.environment
         let project = try #require(try await FilmProjectService.shared.listRecentProjects().first {
-            $0.sourceMovieURL.lastPathComponent.contains("Fight.Club") && $0.longformResult != nil
+            $0.sourceMovieURL.lastPathComponent.contains(env["SHORTCAST_RELEASE_FILM"] ?? "Fight.Club") && $0.longformResult != nil
         })
         let essay = try #require(project.longformResult), transcript = try #require(project.transcript)
         let path = try #require(env["SHORTCAST_RELEASE_SOURCE"])
@@ -42,6 +42,19 @@ struct LiveEssayReleaseTests {
             shorts = try await EssayShortDirector(model: gateway).plan(arc: essay.arc, transcript: transcript)
         }
         print("RELEASE_PROBE plans=\(shorts.map(\.title).joined(separator: " | "))")
+        if env["SHORTCAST_RELEASE_SELECTION_ONLY"] == "1" {
+            let selection = EssayRelease(essayKey: EssayRelease.key(for: essay.arc), shorts: shorts)
+            #expect(selection.usesWholeFilmSelection)
+            #expect(shorts.count == 2)
+            for short in shorts {
+                try EssayShortEditing.validate(short, arc: essay.arc, sourceDuration: transcript.segments.map(\.end).max() ?? 0)
+                print("FILM_SHORT_CHOICE \(short.title) source=\(short.segments) why=\(short.why) quote=\(short.payoffQuote)")
+            }
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(selection).write(to: URL(fileURLWithPath: "/private/tmp/shortcast-full-film-selected.json"), options: .atomic)
+            #expect(try Data(contentsOf: archive) == before)
+            return
+        }
         var release = project.essayRelease ?? EssayRelease(essayKey: EssayRelease.key(for: essay.arc))
         release.shorts = shorts
         let film = essay.outputURL.deletingLastPathComponent()

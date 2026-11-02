@@ -1,5 +1,9 @@
 import Foundation
 
+enum EssayShortPreparationPhase: Equatable {
+    case idle, loadingModel, planning, rendering(Int), ready
+}
+
 extension WorkspaceModel {
     var currentEssayRelease: EssayRelease? {
         guard let result = longformResult, let release = currentProject?.essayRelease,
@@ -10,8 +14,13 @@ extension WorkspaceModel {
     /// The review-to-release handoff is idempotent. Reopening a prepared release
     /// must not ask the model for another pair or replace approved exports.
     func prepareEssayRelease(modelManager: ModelManager, settings: AppSettings,
-                             progress: (String) -> Void) async throws {
-        if currentEssayRelease?.hasReadyShorts == true {
+                             progress: @escaping @MainActor (String) -> Void) async throws {
+        if let release = currentEssayRelease, release.hasReadyShorts,
+           (release.usesWholeFilmSelection && release.hasCurrentShortStyle) || release.hasProtectedDeliveries || job == nil {
+            if !release.hasCurrentShortStyle && job == nil {
+                OperationJournal.shared.append("Доступна сохранённая версия шортсов. Для нового оформления укажите исходный фильм.", level: .warning)
+            }
+            essayShortPreparationPhase = .ready
             progress("Выпуск готов: эссе, два шортса, обложки и тексты")
             return
         }
@@ -26,6 +35,20 @@ extension WorkspaceModel {
         project.essayRelease = release
         try await filmProjectService.saveProject(project)
         currentProject = project
+    }
+
+    func resetEssayPublicationState() async throws {
+        guard !isWorkingOnEssayRelease, var release = currentEssayRelease,
+              let project = currentProject, let result = longformResult else {
+            throw EssayReleaseError.invalid("Дождитесь окончания текущей операции.")
+        }
+        let directory = result.outputURL.deletingLastPathComponent().appendingPathComponent("publication-history", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let backup = directory.appendingPathComponent("release-" + UUID().uuidString + ".json")
+        try encoder.encode(release).write(to: backup, options: .atomic)
+        release.resetPublicationState()
+        try await saveEssayRelease(release, projectID: project.id)
     }
 
     func rebuildEssayShort(_ edited: EssayShort, settings: AppSettings) async throws {
@@ -45,7 +68,9 @@ extension WorkspaceModel {
         let directory = try ExportLayout.shortsDirectory(in: result.outputURL.deletingLastPathComponent())
         let rendered = try await EssayShortRenderer().render(edited, sourceURL: job.url, result: result,
             transcript: transcript, telegramURL: LongformEditorialSupport.telegramURL(channelID: settings.telegramChannelId),
-            directory: directory)
+            directory: directory, report: { stage, detail in
+                self.shortRenderStage = stage; self.shortRenderDetail = detail
+            })
         release.shorts[index] = rendered
         do {
             try await saveEssayRelease(release, projectID: project.id)
@@ -78,7 +103,7 @@ extension WorkspaceModel {
     }
 
     func generateEssayRelease(modelManager: ModelManager, settings: AppSettings, reuseExistingPlans: Bool = false,
-                              progress: (String) -> Void) async throws {
+                              progress: @escaping @MainActor (String) -> Void) async throws {
         guard !isWorkingOnEssayRelease, let result = longformResult, let project = currentProject,
               let transcript = storedTranscript ?? project.transcript, let source = job?.url else {
             throw EssayReleaseError.invalid("Откройте готовое эссе и его исходный фильм.")
@@ -87,13 +112,17 @@ extension WorkspaceModel {
             throw EssayReleaseError.invalid("Выпуск уже отправлялся на площадки. Его нельзя молча заменить новыми шортсами.")
         }
         isWorkingOnEssayRelease = true; defer { isWorkingOnEssayRelease = false }
+        essayShortPreparationStartedAt = Date()
         let language = transcript.contentLanguage ?? transcript.language ?? ""
         guard language.lowercased().hasPrefix("uk") else {
             throw EssayReleaseError.invalid("Для этого выпуска нужна транскрипция украинской озвучки. Проверьте выбранную аудиодорожку.")
         }
         var release = currentEssayRelease ?? EssayRelease(essayKey: EssayRelease.key(for: result.arc))
-        if release.shorts.count != 2 || (!reuseExistingPlans && release.shorts.allSatisfy({ $0.outputURL != nil })) {
-            progress("Модель выбирает два самостоятельных сюжета по теме эссе…")
+        if !release.usesWholeFilmSelection || (!reuseExistingPlans && (
+            release.shorts.allSatisfy({ $0.outputURL != nil }) || release.shorts.contains(where: { $0.visualEvidence == nil })
+        )) {
+            essayShortPreparationPhase = .loadingModel
+            progress("Загружаем модель для поиска сильных сцен фильма…")
             try await modelManager.requireDirector(profile: settings.copywriterModel.directorProfile)
             let finder = modelManager.momentFinder
             let profile = settings.copywriterModel.directorProfile
@@ -101,9 +130,33 @@ extension WorkspaceModel {
                 completion: { instructions, prompt, tokens in
                     await finder.completeForActTitles(instructions: instructions, prompt: prompt, maxTokens: tokens)
                 })
-            let planned = try await EssayShortDirector(model: gateway).plan(arc: result.arc, transcript: transcript)
-        // Keep completed renders if generation is interrupted, rather than lose
-        // all progress after the second export fails.
+            essayShortPreparationPhase = .planning
+            progress("Модель ищет самые сильные и узнаваемые моменты всего фильма…")
+            let visionModel = ModelManager.model
+            let review: @Sendable ([EssayShortDirector.Window]) async throws -> [EssayShortDirector.Window] = { windows in
+                await modelManager.freeDirectorIfMemoryTight()
+                let session = CoverVisionSession(model: visionModel)
+                let vision = ThumbnailVisionGateway(modelID: visionModel.rawValue) { image, prompt in
+                    try await session.complete(image: image, prompt: prompt)
+                }
+                do {
+                    let reviewed = try await EssayShortVisualReviewer(model: vision).review(windows,
+                        sourceURL: source, movie: result.arc.movieTitle, progress: progress)
+                    await session.unload()
+                    // On smaller Macs the text Director was released for vision.
+                    try await modelManager.requireDirector(profile: profile)
+                    return reviewed
+                } catch {
+                    await session.unload()
+                    DirectorRunLog.write("short visual review failed: " + error.localizedDescription)
+                    throw error
+                }
+            }
+            let selected = try await EssayShortDirector(model: gateway, visualReview: review)
+                .plan(arc: result.arc, transcript: transcript, progress: progress)
+            let planned = try await EssayShortCopyEditor(model: gateway).edit(selected,
+                movie: result.arc.movieTitle, transcript: transcript, progress: progress)
+            // Checkpoint plans before rendering so an interrupted export can resume.
             release.shorts = planned
             try await saveEssayRelease(release, projectID: project.id)
             modelManager.freeDirectorIfMemoryTight()
@@ -112,12 +165,15 @@ extension WorkspaceModel {
         let directory = try ExportLayout.shortsDirectory(in: film)
         let telegram = LongformEditorialSupport.telegramURL(channelID: settings.telegramChannelId)
         for index in release.shorts.indices {
-            if let output = release.shorts[index].outputURL, FileManager.default.fileExists(atPath: output.path) { continue }
+            if let output = release.shorts[index].outputURL, FileManager.default.fileExists(atPath: output.path),
+               release.shorts[index].renderStyleVersion == EssayShort.currentRenderStyle || !EssayShortEditing.canEdit(release.shorts[index], in: release) { continue }
+            essayShortPreparationPhase = .rendering(index + 1)
             progress("Монтаж вертикального шортса \(index + 1) из 2…")
             release.shorts[index] = try await EssayShortRenderer().render(release.shorts[index], sourceURL: source,
                 result: result, transcript: transcript, telegramURL: telegram, directory: directory)
             try await saveEssayRelease(release, projectID: project.id)
         }
+        essayShortPreparationPhase = .ready
         progress("Два шортса и тексты выпуска готовы")
     }
 }
@@ -158,7 +214,8 @@ struct EssayReleasePublisher {
         if release.essayYouTubeURL == nil {
             let metadata = LongformMetadataGenerator.updatingTelegram(in: result.metadata, channelID: channelId)
             let job = BrowserUploadJob(videoURL: result.outputURL, thumbnailURL: result.thumbnailURL, platforms: [.youtube],
-                title: metadata.title, caption: metadata.description, hashtags: [], isPublic: true, headless: false)
+                title: metadata.title, caption: metadata.description, hashtags: [], keywordTags: metadata.tags,
+                isPublic: true, headless: false)
             release = try await send(job, key: "essay.youtube", release: release, progress: progress, checkpoint: checkpoint)
             guard let url = release.receipts["essay.youtube"]?.url.flatMap(EssayRelease.youtubeURL) else {
                 throw EssayReleaseError.invalid("YouTube не вернул ссылку эссе. Сохраните её вручную перед продолжением.")

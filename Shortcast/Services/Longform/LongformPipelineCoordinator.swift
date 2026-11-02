@@ -17,6 +17,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
     private let actTitling: any LongformActTitling
     private let editorialReview: LongformEditorialReview
     private let discussionURL: String?
+    private let support: EssaySupport?
     private let modelManager: ModelManager?
 
     init(
@@ -29,6 +30,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         actTitling: any LongformActTitling = LongformActTitleService(),
         editorialReview: LongformEditorialReview = LongformEditorialReview(model: nil),
         discussionURL: String? = nil,
+        support: EssaySupport? = nil,
         modelManager: ModelManager? = nil
     ) {
         self.director = director
@@ -40,6 +42,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         self.actTitling = actTitling
         self.editorialReview = editorialReview
         self.discussionURL = discussionURL
+        self.support = support
         self.modelManager = modelManager
     }
 
@@ -52,10 +55,13 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         essayPlan: EssayPlan? = nil,
         audioSettings: LongformAudioSettings,
         existingArc: LongformNarrativeArc? = nil,
+        allowUserApprovedScenes: Bool = false,
         workingDirectory: URL? = nil,
         channelLogoEnabled: Bool,
         progressHandler: (@Sendable (Double, String) -> Void)? = nil
     ) async throws -> LongformBuildResult {
+        let audioSettings = existingArc?.musicSettings ?? audioSettings
+
 
         // 1. Построение арки: аналитическая 5-актная или прежняя 4-актная
         var arc: LongformNarrativeArc
@@ -92,11 +98,19 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             arc = outcome.arc
         }
 
+        arc.viewerPromise = arc.viewerPromise ?? arc.thesis ?? concept.philosophicalPremise
         arc.discussionURL = discussionURL ?? arc.discussionURL
+        arc.support = arc.support ?? support
+        arc.musicSettings = MusicBedMixing.resolvedSettings(arc.musicSettings ?? audioSettings,
+            for: arc, coldOpenEnabled: audioSettings.coldOpenEnabled)
+        if let issue = arc.support?.validationIssue {
+            throw NSError(domain: "EssaySupport", code: 1, userInfo: [NSLocalizedDescriptionKey: issue])
+        }
         if !selectedMoments.isEmpty, selectedMoments.allSatisfy({ $0.evidenceQuote != nil }) {
             try EssaySceneEvidence.validateArc(
                 arc, selectedMoments: selectedMoments, coldOpenEnabled: audioSettings.coldOpenEnabled,
-                allowApprovedTrim: existingArc != nil)
+                allowApprovedTrim: existingArc != nil,
+                allowUserApprovedScenes: allowUserApprovedScenes)
         }
         let segments = arc.segments
         guard !segments.isEmpty else {
@@ -124,6 +138,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         let sourceAudioTrack = sourceAudioTracks.first
 
         // 2. Кинематографический Cold Open (нарастание саундтрека в затемнении)
+        arc.editorialNotes = LongformEditorialSupport.refreshedNotes(for: arc, transcript: transcript)
         let timeline = LongformTimeline(arc: arc, coldOpenEnabled: audioSettings.coldOpenEnabled)
         let introPadding = timeline.introDuration
         var insertTime = CMTime(seconds: introPadding, preferredTimescale: 600)
@@ -134,6 +149,12 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         let interActGap = LongformTimeline.interActGap
         let intraActGap = LongformTimeline.intraActGap
         let captionSegments = LongformEditorialSupport.captions(transcript.segments, edits: arc.captionEdits)
+        // An archive can predate language checks. Validate only the subtitles
+        // actually selected for this Ukrainian essay, after approved edits.
+        let captionLanguage = transcript.contentLanguage == "uk" || transcript.language == "uk" ? "uk" : transcript.language
+        try TranscriptionService.validateRenderedCaptions(captionSegments, ranges: arc.segments,
+            requestedLanguage: captionLanguage)
+
 
         // Вставляем нарезанные сцены фильма по актам с кинематографическим разделением
         for (actIndex, act) in arc.acts.enumerated() {
@@ -212,9 +233,12 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         progressHandler?(0.50, "Мастеринг непрерывного саундтрека...")
         var audioMix: AVAudioMix? = nil
         let musicURL: URL? = audioSettings.backgroundMusicURL
-        if let rawMusicURL = musicURL,
-           let compMusicTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
-            
+        if arc.musicSettings == nil, let rawMusicURL = musicURL,
+           FileManager.default.isReadableFile(atPath: rawMusicURL.path) {
+            // Не создаём пустой audio track для удалённого/недоступного файла.
+            // AVAssetExportSession может завершиться общим -12123 даже когда
+            // этот track так и не получил ни одного sample. Исходный звук фильма
+            // остаётся в композиции и экспорт продолжается без фоновой музыки.
             // Если видео длиннее саундтрека, бесшовно зацикливаем его с мягким психоакустическим кроссфейдом
             let effectiveMusicURL: URL
             if totalDuration > 0 {
@@ -228,8 +252,10 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             }
 
             let musicAsset = AVURLAsset(url: effectiveMusicURL)
-            if let sourceMusicTrack = (try? await musicAsset.loadTracks(withMediaType: .audio))?.first {
-                let musicDuration = try await musicAsset.load(.duration)
+            if let sourceMusicTrack = (try? await musicAsset.loadTracks(withMediaType: .audio))?.first,
+               let musicDuration = try? await musicAsset.load(.duration),
+               musicDuration.seconds.isFinite, musicDuration.seconds > 0,
+               let compMusicTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
 
                 var musicInsertTime = CMTime.zero
                 while musicInsertTime < totalDurationCM {
@@ -253,7 +279,29 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
                     dialogueFocusEnabled: audioSettings.dialogueFocusEnabled,
                     originalMusicDucking: audioSettings.originalMusicDucking
                 )
+            } else {
+                OperationJournal.shared.append("Configured background music has no readable audio track; exporting with source audio only", level: .warning)
+                Self.logger.warning("Configured background music has no readable audio track; exporting with source audio only")
             }
+        } else if arc.musicSettings == nil, let musicURL {
+            OperationJournal.shared.append("Configured background music is unavailable (\(musicURL.lastPathComponent)); exporting with source audio only", level: .warning)
+            Self.logger.warning("Configured background music is unavailable (\(musicURL.lastPathComponent, privacy: .public)); exporting with source audio only")
+            progressHandler?(0.50, "Фоновая музыка не найдена — продолжаю с оригинальным звуком фильма...")
+        }
+
+        if let musicSettings = arc.musicSettings {
+            if let params = try await MusicBedMixing.add(to: composition, settings: musicSettings,
+                                                         duration: totalDuration, speech: speechIntervals),
+               let track = composition.track(withTrackID: params.trackID) {
+                let mastered = audioMastering.buildAudioMixParameters(composition: composition, musicTrack: track,
+                    speechTrack: compSpeechTrack, speechIntervals: speechIntervals, sceneCutPoints: sceneCutPoints,
+                    cutTransitions: cutTransitions, totalDuration: totalDuration, baseMusicVolume: musicSettings.musicVolume,
+                    duckingEnabled: false, dialogueFocusEnabled: musicSettings.dialogueFocusEnabled,
+                    originalMusicDucking: musicSettings.originalMusicDucking)
+                let mix = AVMutableAudioMix()
+                mix.inputParameters = mastered.inputParameters.filter { $0.trackID != params.trackID } + [params]
+                audioMix = mix
+            } else { audioMix = nil }
         }
 
         // 4. Отрисовка фирменных кинематографических оверлеев Shortcast Cinema (1920x1080)
@@ -315,6 +363,18 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             hookText: arc.hookText,
             ctaText: LongformEditorialSupport.finalCard(for: arc)
         )
+
+        if let support = arc.support, support.showsCredits {
+            progressHandler?(0.72, "Финальная карточка: благодарности \(support.nicknames.count) донатерам…")
+            let finalText = LongformEditorialSupport.finalCard(for: arc)
+            let card = DonorCreditsRenderer.makeLayer(support: support, ctaText: finalText,
+                theme: concept.word, start: speechFinishTime, duration: outroPadding, canvas: renderSize)
+            if channelLogoEnabled, let logo = overlayLayer.sublayers?.last {
+                overlayLayer.insertSublayer(card, below: logo)
+            } else {
+                overlayLayer.addSublayer(card)
+            }
+        }
 
         // Подложка глубокого чёрного цвета (YUV Black Fix — предотвращает появление зелёных полос)
         let blackBackgroundLayer = CALayer()
@@ -402,8 +462,8 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
 
         var finalVideoURL = cleanOutputURL
         if isAntiCopyrightActive {
-            progressHandler?(0.90, "Применение защиты YouTube Shield (Anti-Copyright)...")
-            let antiCopyrightService = AntiCopyrightService(config: audioSettings.antiCopyrightPreset.config)
+            progressHandler?(0.90, "Обработка изображения и звука...")
+            let antiCopyrightService = AntiCopyrightService(config: audioSettings.antiCopyrightPreset.config, preserveTimeline: true)
             do {
                 let protectedURL = try await antiCopyrightService.process(
                     videoURL: intermediateURL,
@@ -415,13 +475,14 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
                     try? FileManager.default.removeItem(at: intermediateURL)
                 }
             } catch {
-                Self.logger.warning("AntiCopyright pass failed, fallback to raw render: \(error.localizedDescription)")
-                finalVideoURL = intermediateURL
+                OperationJournal.shared.append("Shield failed; original render retained: \(error.localizedDescription)", level: .error)
+                Self.logger.error("Shield failed; original render retained: \(error.localizedDescription)")
+                throw AntiCopyrightError.processingFailed("Обработка эффектов не завершена; исходный рендер сохранён: " + error.localizedDescription)
             }
         }
 
         // 5.5. Пост-экспортная нормализация по общим целям CinemaAudioMasteringService.
-        // Это ПОСЛЕДНЯЯ аудио-операция конвейера: после защиты от Content ID и до обложки,
+        // Это ПОСЛЕДНЯЯ аудио-операция конвейера: после обработки эффектов и до обложки,
         // поэтому её результат уже никем не перекодируется. Имя файла и расширение сохраняются,
         // их читают генератор обложки и LongformResultsView. Этап не фатален: без ffmpeg,
         // без свободного места или при ошибке прохода остается предыдущий рендер.
@@ -435,6 +496,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
                     workingDirectory: workingDirectory
                 )
             } catch {
+                OperationJournal.shared.append("Loudness pass failed, keeping pre-normalized render: \(error.localizedDescription)", level: .warning)
                 Self.logger.warning("Loudness pass failed, keeping pre-normalized render: \(error.localizedDescription)")
             }
         }
@@ -444,10 +506,13 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         let validationService = RenderValidationService()
         let validationResult = await validationService.validateLongform(
             outputURL: finalVideoURL,
+            expectedDurationRange: allowUserApprovedScenes ? 0.1...Double.greatestFiniteMagnitude
+                : EssayDurationPolicy.rendered.lowerBound...(EssayDurationPolicy.rendered.upperBound + timeline.supportExtraDuration),
             workingDirectory: workingDirectory
         )
         if validationResult.hasIssues {
             let report = validationResult.issues.map { $0.description }.joined(separator: ", ")
+            OperationJournal.shared.append("Longform render rejected by validation: \(report)", level: .error)
             Self.logger.error("Longform render rejected by validation: \(report)")
             throw NSError(
                 domain: "LongformPipeline",
@@ -463,17 +528,22 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         var packagingWarning: String?
         do {
             var coverConcept = arc.concept
+            coverConcept.coverText = arc.coverText ?? arc.concept.coverText
             if let title = arc.publicationTitle, !title.trimmed.isEmpty { coverConcept.suggestedTitle = title }
             thumbnail = try await thumbnailGenerator.generateReviewedThumbnail(sourceAsset: sourceAsset,
                 segments: segments, concept: coverConcept, movieTitle: movieTitle, outputURL: thumbOutputURL)
         } catch is CancellationError { throw CancellationError() }
         catch {
             packagingWarning = error.localizedDescription
+            OperationJournal.shared.append("Cover not created: \(error.localizedDescription)", level: .warning)
             Self.logger.warning("Cover not created: \(error.localizedDescription)")
         }
 
         // 7. Формирование вирусных метаданных
         progressHandler?(0.98, "Генерация упаковки YouTube...")
+        if let collection = CompilationManifest.load(for: sourceURL) {
+            arc.sourceAttributions = collection.sources.map(\.title)
+        }
         let metadata = LongformMetadataGenerator.generate(
             movieTitle: movieTitle,
             concept: concept,
@@ -542,6 +612,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
 
                 let detail = exportFailureDescription(for: exportSession, fallback: error)
                 failures.append("\(preset): \(detail)")
+                OperationJournal.shared.append("Longform export failed with preset \(preset): \(detail)", level: .warning)
                 Self.logger.warning("Longform export failed with preset \(preset, privacy: .public): \(detail, privacy: .public)")
             }
         }

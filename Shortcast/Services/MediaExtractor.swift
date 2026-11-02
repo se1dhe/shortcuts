@@ -79,13 +79,20 @@ enum MediaExtractor {
         let mustDownmix = (selectedTrack?.channels ?? 2) >= 6
         guard mustFixContainer || isolatingAudio || mustDownmix else { return sourceURL }
 
-        let inputDirectory = workingDirectory.appendingPathComponent("input", isDirectory: true)
+        let films = workingDirectory.appendingPathComponent("films", isDirectory: true).standardizedFileURL.path
+        let inputDirectory = sourceURL.standardizedFileURL.path.hasPrefix(films + "/")
+            ? sourceURL.deletingLastPathComponent()
+            : workingDirectory.appendingPathComponent("input", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: inputDirectory, withIntermediateDirectories: true)
         } catch {
             throw MediaExtractorError.inputConversionFailed(error.localizedDescription)
         }
 
+        if sourceURL.standardizedFileURL.path.hasPrefix(films + "/") {
+            let required = Int64((try? sourceURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+            try FilmLibrary.requireSpace(folder: inputDirectory, bytes: required > Int64.max / 2 ? Int64.max : required * 2)
+        }
         let sourceSize = (try? sourceURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         let baseCleanName = sourceURL.deletingPathExtension().lastPathComponent
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
@@ -214,6 +221,88 @@ enum MediaExtractor {
         throw MediaExtractorError.inputConversionFailed("FFmpeg could not produce a playable MP4 from this file.")
     }
 
+    /// Commit the verified replacement before removing either copy of the MKV.
+    /// A failed validation/save leaves both sources intact; a deletion failure is recoverable.
+    static func finishMKVImport(
+        project: FilmProject, sourceURL: URL, originalURL: URL?, outputURL: URL,
+        workingDirectory: URL, selectedAudioStreamIndex: Int?,
+        save: @Sendable (FilmProject) async throws -> Void
+    ) async throws -> FilmProject {
+        guard sourceURL.pathExtension.lowercased() == "mkv",
+              outputURL.pathExtension.lowercased() == "mp4",
+              sourceURL.resolvingSymlinksInPath() != outputURL.resolvingSymlinksInPath() else {
+            throw MediaExtractorError.inputConversionFailed("Нельзя заменить исходник этим файлом.")
+        }
+        OperationJournal.shared.append("Проверяем длительность, видео и звук подготовленного MP4…")
+        let probe = try await BinaryDownloadService.ensureAvailable(.ffprobe, workingDirectory: workingDirectory)
+        let sourceTracks = await inspectAudioTracks(sourceURL: sourceURL, ffprobe: probe)
+        if let selectedAudioStreamIndex, !sourceTracks.contains(where: { $0.id == selectedAudioStreamIndex }) {
+            throw MediaExtractorError.inputConversionFailed("Выбранная аудиодорожка отсутствует в исходнике.")
+        }
+        let probeResult = try await ProcessRunner.shared.run(executableURL: probe,
+            arguments: ["-v", "error", "-show_entries", "format=duration", "-of", "json", sourceURL.path])
+        guard probeResult.isSuccess, let data = probeResult.standardOutput.data(using: .utf8),
+              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let format = json["format"] as? [String: Any],
+              let text = format["duration"] as? String, let sourceDuration = Double(text),
+              sourceDuration.isFinite, sourceDuration > 0 else {
+            throw MediaExtractorError.inputConversionFailed("Не удалось проверить длительность исходника.")
+        }
+        let asset = AVURLAsset(url: outputURL)
+        let duration = try await asset.load(.duration).seconds
+        let video = try await asset.loadTracks(withMediaType: .video)
+        let audio = try await asset.loadTracks(withMediaType: .audio)
+        let outputTracks = await inspectAudioTracks(sourceURL: outputURL, ffprobe: probe)
+        guard duration.isFinite, abs(duration - sourceDuration) <= 2,
+              !video.isEmpty, audio.count == 1, outputTracks.count == 1 else {
+            throw MediaExtractorError.inputConversionFailed("MP4 неполный либо не содержит единственную выбранную аудиодорожку.")
+        }
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.maximumSize = CGSize(width: 320, height: 180)
+        generator.requestedTimeToleranceBefore = CMTime(seconds: 0.1, preferredTimescale: 600)
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.1, preferredTimescale: 600)
+        for time in [min(0.25, duration * 0.1), duration * 0.5, max(0, duration - 0.25)] {
+            try Task.checkCancellation()
+            _ = try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600))
+        }
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: audio[0], outputSettings: [AVFormatIDKey: kAudioFormatLinearPCM])
+        guard reader.canAdd(output) else { throw MediaExtractorError.inputConversionFailed("Не удалось проверить звук MP4.") }
+        reader.add(output)
+        reader.timeRange = CMTimeRange(start: CMTime(seconds: max(0, duration - 1), preferredTimescale: 600),
+                                       duration: CMTime(seconds: min(1, duration), preferredTimescale: 600))
+        guard reader.startReading(), output.copyNextSampleBuffer() != nil else {
+            throw MediaExtractorError.inputConversionFailed("Не удалось прочитать звук MP4.")
+        }
+        reader.cancelReading()
+        var adopted = project
+        adopted.sourceMovieURL = outputURL
+        adopted.fileSizeBytes = Int64(try outputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+        adopted.selectedAudioTrackId = outputTracks[0].id
+        try Task.checkCancellation()
+        try await save(adopted)
+        OperationJournal.shared.append("MP4 проверен, проект привязан к подготовленной копии.")
+        var removedPaths: Set<String> = []
+        for url in [sourceURL, originalURL].compactMap({ $0 }) {
+            guard url.pathExtension.lowercased() == "mkv",
+                  url.resolvingSymlinksInPath() != outputURL.resolvingSymlinksInPath(),
+                  removedPaths.insert(url.standardizedFileURL.path).inserted,
+                  FileManager.default.fileExists(atPath: url.path) else { continue }
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                try FileManager.default.removeItem(at: url)
+                let amount = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+                OperationJournal.shared.append("Удалён исходный MKV: \(url.lastPathComponent). Освобождено \(amount).")
+                DirectorRunLog.write("MKV cleanup: removed \(url.lastPathComponent), bytes=\(bytes)")
+            } catch {
+                OperationJournal.shared.append("MP4 готов, но MKV не удалось удалить: \(url.lastPathComponent). \(error.localizedDescription)", level: .warning)
+            }
+        }
+        return adopted
+    }
+
     private static let copyableAudioCodecs: Set<String> = ["aac", "mp3", "ac3"]
 
     private struct ProbedVideoStream: Sendable {
@@ -339,7 +428,11 @@ enum MediaExtractor {
     private static func runFFmpeg(_ ffmpeg: URL, arguments: [String], outputURL: URL) async -> Bool {
         try? FileManager.default.removeItem(at: outputURL)
         do {
-            _ = try await ProcessRunner.shared.run(executableURL: ffmpeg, arguments: arguments)
+            let result = try await ProcessRunner.shared.run(executableURL: ffmpeg, arguments: arguments)
+            guard result.isSuccess else {
+                try? FileManager.default.removeItem(at: outputURL)
+                return false
+            }
         } catch {
             try? FileManager.default.removeItem(at: outputURL)
             return false

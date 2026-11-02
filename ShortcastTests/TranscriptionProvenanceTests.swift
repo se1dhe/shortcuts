@@ -599,3 +599,125 @@ struct TranscriptionProvenanceTests {
         #expect(TranscriptProvenance.cache.isOurs == true)
     }
 }
+
+/// Explicit source-audio investigation. It never changes the film's transcript,
+/// sidecars or project: Whisper receives a unique isolated temporary audio clip.
+@Suite("Live Ukrainian ending ASR", .enabled(if: ProcessInfo.processInfo.environment["SHORTCAST_PROBE_UK_END"] == "1"))
+@MainActor
+struct UkrainianEndingASRProbeTests {
+    @Test func transcribesOriginalAudioWithForcedUkrainian() async throws {
+        let env = ProcessInfo.processInfo.environment
+        let archive = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Shortcast/Projects/117F97CB-226B-490F-A16A-F4B42FFF9718.shortcastproj")
+        let archiveBefore = try Data(contentsOf: archive)
+        let object = try #require(try JSONSerialization.jsonObject(with: archiveBefore) as? [String: Any])
+        let source = try #require(env["SHORTCAST_PROBE_UK_END_SOURCE"] ?? (object["sourceMovieURL"] as? String))
+        let sourceURL = source.hasPrefix("file:") ? try #require(URL(string: source)) : URL(fileURLWithPath: source)
+        let folder = URL(fileURLWithPath: "/private/tmp/shortcast-uk-end-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let clip = folder.appendingPathComponent("source-5610-5627.wav")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: env["SHORTCAST_FFMPEG"] ?? "/opt/homebrew/bin/ffmpeg")
+        process.arguments = ["-hide_banner", "-loglevel", "error", "-nostdin", "-ss", "5610", "-t", "17", "-i", sourceURL.path,
+                             "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", clip.path]
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+        #expect(FileManager.default.fileExists(atPath: clip.path))
+        let cache = env["SHORTCAST_PROBE_WHISPER_CACHE"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let transcript = try await TranscriptionService().transcript(for: clip, languageHint: "uk", modelCacheDir: cache)
+        #expect(!transcript.segments.isEmpty)
+        let encoded = try JSONEncoder().encode(transcript)
+        let transcriptObject = try JSONSerialization.jsonObject(with: encoded)
+        let report: [String: Any] = [
+            "audioClipPath": clip.path, "sourceURL": sourceURL.absoluteString, "sourceStart": 5610,
+            "sourceEnd": 5627, "forcedLanguage": "uk", "transcript": transcriptObject
+        ]
+        let output = URL(fileURLWithPath: "/private/tmp/shortcast-uk-end-transcript.json")
+        try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: output, options: .atomic)
+        print("Ukrainian ending ASR: \(output.path); source audio: \(clip.path)")
+        #expect(try Data(contentsOf: archive) == archiveBefore)
+    }
+}
+
+@Suite("Ukrainian transcription language")
+struct UkrainianTranscriptionLanguageTests {
+    private let russianTail = [
+        TranscriptSegment(start: 5611, end: 5613, text: "Все хорошо, Трумэн."),
+        TranscriptSegment(start: 5613.5, end: 5615, text: "Я понимаю."),
+        TranscriptSegment(start: 5616, end: 5619, text: "Я знаю тебя от родины."),
+        TranscriptSegment(start: 5620, end: 5623, text: "Я видел, как ты родился.")
+    ]
+    private let ukrainianTail = [
+        TranscriptSegment(start: 5611, end: 5613, text: "Усе гаразд, Трумене."),
+        TranscriptSegment(start: 5613.5, end: 5615, text: "Я розумію."),
+        TranscriptSegment(start: 5616, end: 5619, text: "Я знаю тебе від народження."),
+        TranscriptSegment(start: 5620, end: 5623, text: "Я бачив, як ти народився.")
+    ]
+
+    @Test("Local Russian drift is caught despite Ukrainian majority and wrong global metadata")
+    func localDrift() throws {
+        let majority = (0..<30).map { index in
+            TranscriptSegment(start: Double(index * 10), end: Double(index * 10 + 5),
+                text: "Українською розповідаємо про свободу людини та її право на власне життя.")
+        }
+        let transcript = Transcript(segments: majority + russianTail, language: "en", provenance: .whisper)
+        #expect(transcript.contentLanguage == "uk")
+        let drift = TranscriptionService.ukrainianLanguageDrift(in: transcript.segments)
+        #expect(drift.count == 1)
+        #expect(drift.first?.start == 5611)
+        #expect(throws: TranscriptionError.self) {
+            try TranscriptionService.validateRequestedLanguage(segments: transcript.segments, requestedLanguage: "uk")
+        }
+        try TranscriptionService.validateRequestedLanguage(segments: russianTail, requestedLanguage: "ru")
+        try TranscriptionService.validateRequestedLanguage(segments: russianTail, requestedLanguage: nil)
+    }
+
+    @Test("Neutral shared speech and isolated foreign names are not language drift")
+    func sharedPhrasesAndNames() throws {
+        for lines in [[TranscriptSegment(start: 10, end: 12, text: "Так. Добре. Мама. Тато.")],
+                      [TranscriptSegment(start: 10, end: 14, text: "Це Ед Гарріс, а ось Трумен — ми бачимо його справжню реакцію.")], ukrainianTail] {
+            try TranscriptionService.validateRequestedLanguage(segments: lines, requestedLanguage: "uk")
+        }
+    }
+
+    @Test("Rendered caption gate checks only selected corrected text, not unused raw ASR")
+    func selectedAndCorrectedCaptions() throws {
+        let raw = ukrainianTail.map { TranscriptSegment(start: $0.start - 100, end: $0.end - 100, text: $0.text) } + russianTail
+        #expect(throws: TranscriptionError.self) {
+            try TranscriptionService.validateRenderedCaptions(raw, ranges: [.init(start: 5596, end: 5627)], requestedLanguage: "uk")
+        }
+        try TranscriptionService.validateRenderedCaptions(raw, ranges: [.init(start: 5500, end: 5525)], requestedLanguage: "uk")
+        let edits = zip(russianTail, ukrainianTail).map {
+            LongformCaptionEdit(start: $0.start, end: $0.end, original: $0.text, replacement: $1.text)
+        }
+        let corrected = LongformEditorialSupport.captions(raw, edits: edits)
+        try TranscriptionService.validateRenderedCaptions(corrected, ranges: [.init(start: 5596, end: 5627)], requestedLanguage: "uk")
+        #expect(raw.suffix(4).map(\.text) == russianTail.map(\.text))
+    }
+}
+
+extension UkrainianTranscriptionLanguageTests {
+    @Test("Requested Ukrainian cache rejects unknown or mismatched metadata and Russian chunks stamped uk")
+    func requestedLanguageCacheGate() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("shortcast-uk-cache-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let video = directory.appendingPathComponent("movie.mp4")
+        let sidecar = video.deletingPathExtension().appendingPathExtension("srt")
+        for language in [nil, "en", "uk"] as [String?] {
+            let transcript = Transcript(segments: russianTail, language: language, provenance: .whisper)
+            TranscriptionService.saveSidecar(transcript: transcript, for: video, model: "test")
+            let decision = TranscriptionService.sidecarDecision(forSidecar: sidecar, requestedLanguage: "uk")
+            if case .foreign(_, .languageMismatch) = decision {} else {
+                Issue.record("Russian/unknown/mismatched cached transcript was accepted for Ukrainian decoding")
+            }
+        }
+        let good = Transcript(segments: ukrainianTail, language: "uk", provenance: .whisper)
+        TranscriptionService.saveSidecar(transcript: good, for: video, model: "test")
+        #expect(TranscriptionService.sidecarDecision(forSidecar: sidecar, requestedLanguage: "uk").isVerified)
+        let russian = Transcript(segments: russianTail, language: "ru", provenance: .whisper)
+        TranscriptionService.saveSidecar(transcript: russian, for: video, model: "test")
+        #expect(TranscriptionService.sidecarDecision(forSidecar: sidecar, requestedLanguage: "ru").isVerified)
+    }
+}

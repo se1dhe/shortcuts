@@ -7,10 +7,16 @@ struct StudioVideoPlayer: View {
     @State private var player: AVPlayer?
 
     var body: some View {
-        VideoPlayer(player: player)
+        Group {
+            if let player {
+                StudioPlayerSurface(player: player)
+            } else {
+                Color.black
+            }
+        }
             .task(id: url) {
                 player?.pause()
-                let next = AVPlayer(url: url)
+                let next = MontageVideoPreviewPlayer.makeVideoOnlyPlayer(url: url)
                 player = next
                 // The rendered files open with a brief dip from black. Preview
                 // an actual frame rather than present an apparently empty file.

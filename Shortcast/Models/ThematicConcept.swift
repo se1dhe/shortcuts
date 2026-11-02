@@ -27,9 +27,27 @@ struct ThematicConcept: Codable, Identifiable, Equatable, Hashable, Sendable {
     var philosophicalPremise: String
     
     /// Заголовок для YouTube, который предложила модель
-    var suggestedTitle: String
+    var suggestedTitle: String {
+        didSet { suggestedTitle = Self.cleanTitle(suggestedTitle) }
+    }
+
+    /// A percent sign needs a preceding quantity; an isolated model token is not a title.
+    static func cleanTitle(_ title: String) -> String {
+        var result = ""
+        for character in title {
+            if character == "%" || character == "％" {
+                guard result.last(where: { !$0.isWhitespace })?.isNumber == true else { continue }
+            }
+            result.append(character)
+        }
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
     
     /// Акцентный цвет субтитров реплик ("#F5D020" золотой или "#E50914" красный)
+    var coverText: String? = nil
+    var essayFormat: EssayFormat? = nil
+    var format: EssayFormat { essayFormat ?? .analytical }
+
     var accentColorHex: String
 
     /// Флаг главного выбора нейросети (100% фокус эссе, выбранный моделью)
@@ -54,7 +72,7 @@ struct ThematicConcept: Codable, Identifiable, Equatable, Hashable, Sendable {
         self.word = word
         self.tagline = tagline
         self.philosophicalPremise = philosophicalPremise
-        self.suggestedTitle = suggestedTitle
+        self.suggestedTitle = Self.cleanTitle(suggestedTitle)
         self.accentColorHex = accentColorHex
         self.isPrimaryChoice = isPrimaryChoice
         self.aiReasoning = aiReasoning
@@ -62,16 +80,18 @@ struct ThematicConcept: Codable, Identifiable, Equatable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case word, tagline, philosophicalPremise, suggestedTitle
+        case word, tagline, philosophicalPremise, suggestedTitle, coverText, essayFormat
         case accentColorHex, isPrimaryChoice, aiReasoning, source
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        essayFormat = try c.decodeIfPresent(EssayFormat.self, forKey: .essayFormat)
+        coverText = try c.decodeIfPresent(String.self, forKey: .coverText)
         word = try c.decode(String.self, forKey: .word)
         tagline = try c.decode(String.self, forKey: .tagline)
         philosophicalPremise = try c.decode(String.self, forKey: .philosophicalPremise)
-        suggestedTitle = try c.decode(String.self, forKey: .suggestedTitle)
+        suggestedTitle = Self.cleanTitle(try c.decode(String.self, forKey: .suggestedTitle))
         accentColorHex = try c.decodeIfPresent(String.self, forKey: .accentColorHex) ?? "#F5D020"
         isPrimaryChoice = try c.decodeIfPresent(Bool.self, forKey: .isPrimaryChoice) ?? false
         aiReasoning = try c.decodeIfPresent(String.self, forKey: .aiReasoning)

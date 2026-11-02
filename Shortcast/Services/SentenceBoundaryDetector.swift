@@ -53,6 +53,24 @@ struct SentenceBoundaryDetector: SentenceBoundaryDetecting {
         self.pauseThreshold = pauseThreshold
     }
 
+    /// Silence handles stop before the next speech attack. In a short gap,
+    /// leave half the pause for the neighboring utterance; long gaps retain
+    /// a 200 ms guard. Padding never grants permission to enter a new line.
+    static func safeTailEnd(after speechEnd: Double, desiredEnd: Double, speech: [TimeSegment]) -> Double {
+        guard speechEnd.isFinite, desiredEnd.isFinite, desiredEnd > speechEnd else { return speechEnd }
+        let valid = speech.filter { $0.start.isFinite && $0.end.isFinite && $0.end > $0.start }
+        if valid.contains(where: { $0.start < speechEnd - 0.001 && $0.end > speechEnd + 0.001 }) { return speechEnd }
+        guard let nextStart = valid.filter({ $0.start >= speechEnd - 0.001 && $0.end > speechEnd + 0.001 })
+            .map(\.start).min() else { return desiredEnd }
+        let gap = max(0, nextStart - speechEnd)
+        return min(desiredEnd, speechEnd + gap - min(0.2, gap / 2))
+    }
+
+    private func paddedEnd(_ end: Double, sentences: [DetectedSentence]) -> Double {
+        Self.safeTailEnd(after: end, desiredEnd: end + tailPadding,
+                         speech: sentences.map { TimeSegment(start: $0.start, end: $0.end) })
+    }
+
     // MARK: - Detected Sentence Model
 
     struct DetectedSentence: Sendable, Equatable {
@@ -197,10 +215,10 @@ struct SentenceBoundaryDetector: SentenceBoundaryDetecting {
         if (refinedEnd - refinedStart) < minSegmentDuration {
             // Look for a sentence ending that reaches at least minSegmentDuration while staying within maxLimit
             if let extendedSentence = sentences.first(where: {
-                let candidateEnd = $0.end + tailPadding
+                let candidateEnd = paddedEnd($0.end, sentences: sentences)
                 return (candidateEnd - refinedStart) >= minSegmentDuration && (candidateEnd - refinedStart) <= maxLimit
             }) {
-                refinedEnd = extendedSentence.end + tailPadding
+                refinedEnd = paddedEnd(extendedSentence.end, sentences: sentences)
             }
         }
 
@@ -251,22 +269,22 @@ struct SentenceBoundaryDetector: SentenceBoundaryDetecting {
 
     func snapToSentenceEnd(timestamp: Double, maxAllowedDuration: Double, sentences: [DetectedSentence]) -> Double {
         guard !sentences.isEmpty else {
-            return timestamp + tailPadding
+            return paddedEnd(timestamp, sentences: sentences)
         }
 
         // 1. If timestamp is enclosed in a sentence: snap to its end with tail padding
         if let enclosing = sentences.first(where: { timestamp >= $0.start && timestamp <= $0.end }) {
-            return enclosing.end + tailPadding
+            return paddedEnd(enclosing.end, sentences: sentences)
         }
 
         // 2. If timestamp is before all sentences: keep timestamp plus tailPadding
         if let first = sentences.first, timestamp < first.start {
-            return timestamp + tailPadding
+            return paddedEnd(timestamp, sentences: sentences)
         }
 
         // 3. If timestamp is after all sentences: keep timestamp plus tailPadding (avoid jumping back to earlier dialogue)
         if let last = sentences.last, timestamp > last.end {
-            return timestamp + tailPadding
+            return paddedEnd(timestamp, sentences: sentences)
         }
 
         // 4. In a pause between sentences: find closest sentence by end timestamp
@@ -274,15 +292,15 @@ struct SentenceBoundaryDetector: SentenceBoundaryDetecting {
             abs(timestamp - $0.end) < abs(timestamp - $1.end)
         })
         if let closest = closest {
-            return closest.end + tailPadding
+            return paddedEnd(closest.end, sentences: sentences)
         }
 
-        return timestamp + tailPadding
+        return paddedEnd(timestamp, sentences: sentences)
     }
 
     func findPreviousSentenceEnd(before: Double, sentences: [DetectedSentence]) -> Double? {
         let candidates = sentences.compactMap { s -> Double? in
-            let endWithPadding = s.end + tailPadding
+            let endWithPadding = paddedEnd(s.end, sentences: sentences)
             return endWithPadding <= (before + 0.001) ? endWithPadding : nil
         }
         return candidates.max()

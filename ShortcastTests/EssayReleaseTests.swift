@@ -10,8 +10,9 @@ private func releaseFixture() -> (LongformBuildResult, Transcript) {
     let ranges = (0..<4).map { i -> TimeSegment in
         let start = Double(i * 60 + 10)
         lines += [TranscriptSegment(start: start, end: start + 8, text: "Це питання особистої свободи."),
-                  TranscriptSegment(start: start + 9, end: start + 24, text: "За власний вибір доводиться відповідати.")]
-        return TimeSegment(start: start, end: start + 25)
+                  TranscriptSegment(start: start + 9, end: start + 24, text: "За власний вибір доводиться відповідати."),
+                  TranscriptSegment(start: start + 28, end: start + 45, text: "Тепер усе залежить тільки від тебе.")]
+        return TimeSegment(start: start, end: start + 46)
     }
     let arc = LongformNarrativeArc(id: "release", movieTitle: "Тестовий фільм", concept: concept,
         acts: [LongformAct(type: .hook, title: "Вибір", dramaticBeat: "Початок", segments: Array(ranges.prefix(2))),
@@ -208,14 +209,83 @@ struct EssayReleaseTests {
         #expect(workspace.currentEssayRelease == nil)
     }
 
-    @Test("Candidates contain only approved scenes, complete lines and 38–58 second stories")
+    @Test("Full-film candidates include the ending and ignore essay theme and scene choices")
+    func fullFilmCoverage() throws {
+        let (result, _) = releaseFixture()
+        let transcript = Transcript(segments: (0..<900).map { index in
+            TranscriptSegment(start: Double(index * 5), end: Double(index * 5 + 4), text: "Репліка фільму \(index).")
+        }, language: "uk")
+        let windows = EssayShortDirector.catalogue(arc: result.arc, transcript: transcript)
+        #expect(windows.count > 48)
+        #expect(try #require(windows.last?.segments.last).end > 4400)
+        #expect(windows.contains { $0.segments[0].start > result.arc.segments.map(\.end).max()! })
+        var other = result.arc
+        other.thesis = "Інша тема, яку не треба нав'язувати шортсам"
+        other.acts = []
+        let alternate = EssayShortDirector.catalogue(arc: other, transcript: transcript)
+        #expect(windows.map(\.segments) == alternate.map(\.segments))
+        let batches = try EssayShortDirector.batches(windows)
+        #expect(batches.count > 1)
+        #expect(batches.flatMap { $0 }.map(\.id) == windows.map(\.id))
+        #expect(batches.allSatisfy { $0.map { $0.prompt.count + 2 }.reduce(0, +) <= EssayShortDirector.promptBudget })
+    }
+
+    @Test("Long-film scan sees every batch before ranking, with no essay thesis in prompts")
+    func scansAllParts() async throws {
+        let (result, _) = releaseFixture()
+        var arc = result.arc
+        arc.thesis = "СЕКРЕТНА_ТЕЗА_ЕСЕ"
+        let transcript = Transcript(segments: (0..<360).map { index in
+            TranscriptSegment(start: Double(index * 5), end: Double(index * 5 + 4),
+                text: "За власний вибір доводиться відповідати. Репліка \(index).")
+        }, language: "uk")
+        let requests = OSAllocatedUnfairLock(initialState: [String]())
+        let gateway = DirectorChatGateway(readiness: { true }, identifier: { "fixture-model" }, completion: { instructions, prompt, _ in
+            requests.withLock { $0.append(prompt) }
+            let ids = prompt.components(separatedBy: "\n").filter { $0.hasPrefix("S") }.compactMap { $0.split(separator: " ").first.map(String.init) }
+            guard let first = ids.first, let last = ids.last else { return nil }
+            if instructions.contains("Замість shorts") {
+                let rows = Array(Set([first, last])).sorted().map { ["candidateID": $0, "why": "Сильний конфлікт у діалозі"] }
+                return String(data: try! JSONSerialization.data(withJSONObject: ["candidates": rows]), encoding: .utf8)
+            }
+            return try? releaseReply([first]).replacingOccurrences(of: "Хто обирає твоє життя?", with: "Хто обирає? \(first)")
+        })
+        let selected = try await EssayShortDirector(model: gateway).plan(arc: arc, transcript: transcript)
+        let prompts = requests.withLock { $0 }
+        let windows = EssayShortDirector.catalogue(arc: result.arc, transcript: transcript)
+        for window in windows { #expect(prompts.contains { $0.contains("\(window.id) [") }) }
+        #expect(prompts.allSatisfy { !$0.contains("СЕКРЕТНА_ТЕЗА_ЕСЕ") })
+        #expect(selected.allSatisfy { $0.selectedSourceSegments == $0.segments })
+        #expect(EssayRelease(essayKey: "test", shorts: selected).usesWholeFilmSelection)
+        for short in selected { try EssayShortEditing.validate(short, arc: result.arc, sourceDuration: 1800) }
+    }
+
+    @Test("Invalid scan IDs stop selection rather than silently skipping part of the film")
+    func refusesSkippedBatch() async {
+        let (result, _) = releaseFixture()
+        let transcript = Transcript(segments: (0..<360).map { index in
+            TranscriptSegment(start: Double(index * 5), end: Double(index * 5 + 4),
+                text: "За власний вибір доводиться відповідати. Репліка \(index).")
+        }, language: "uk")
+        let calls = OSAllocatedUnfairLock(initialState: 0)
+        let gateway = DirectorChatGateway(readiness: { true }, identifier: { "fixture-model" }, completion: { _, _, _ in
+            calls.withLock { $0 += 1 }
+            return #"{"candidates":[{"candidateID":"invented","why":"Вигадана сцена"}]}"#
+        })
+        await #expect(throws: EssayReleaseError.self) {
+            try await EssayShortDirector(model: gateway).plan(arc: result.arc, transcript: transcript)
+        }
+        #expect(calls.withLock { $0 } == 2)
+    }
+
+    @Test("Candidates use complete source lines and 38–58 second stories")
     func catalogue() {
         let (result, transcript) = releaseFixture()
         let windows = EssayShortDirector.catalogue(arc: result.arc, transcript: transcript)
         #expect(windows.count >= 2)
         for window in windows {
             #expect((38...58.04).contains(window.duration + 3))
-            #expect(window.segments.allSatisfy { segment in result.arc.segments.contains { $0.start <= segment.start && $0.end >= segment.end } })
+            #expect(window.segments.allSatisfy { range in transcript.segments.contains { $0.end == range.end } })
             #expect(window.segments.allSatisfy { range in transcript.segments.contains { $0.start == range.start } })
         }
     }
@@ -455,4 +525,23 @@ struct EssayReleaseTests {
         #expect(recovered.jobs.withLock { $0.count == 3 && $0.allSatisfy { $0.action == "youtube-comment" } })
         #expect(before == 2 && state.receipts["essay.youtube.comment"]?.state == .published)
     }
+}
+
+
+@Test("Reset publication retains edited media and destinations while clearing all receipts")
+func resetPublicationRetainsMedia() {
+    let (result, _) = releaseFixture()
+    var release = EssayRelease(essayKey: EssayRelease.key(for: result.arc))
+    release.shorts = [.init(id: "short1", angle: "Кут", hook: "Хук", title: "Назва", why: "Діалог", payoffQuote: "Цитата", question: "Чому?", segments: [.init(start: 1, end: 40)])]
+    release.essayYouTubeURL = "https://www.youtube.com/watch?v=abcdefghijk"
+    release.receipts["essay.youtube"] = .init(state: .published, url: release.essayYouTubeURL, message: "Done")
+    release.receipts["short1.youtube"] = .init(state: .needsReview, message: "Unknown")
+    release.relatedVideoConfirmed = ["short1"]; release.includeTikTok = false
+    let shorts = release.shorts, key = release.essayKey
+    release.resetPublicationState()
+    #expect(release.receipts.isEmpty)
+    #expect(release.essayYouTubeURL == nil)
+    #expect(release.relatedVideoConfirmed.isEmpty)
+    #expect(release.shorts == shorts && release.essayKey == key)
+    #expect(!release.wantsTikTok)
 }

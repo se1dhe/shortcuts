@@ -21,6 +21,7 @@ enum DirectorRunLog {
         source: String = "director",
         directory: URL = DirectorRunLog.directory
     ) {
+        OperationJournal.shared.append(message)
         lock.lock()
         defer { lock.unlock() }
         FileHandle.standardError.write(Data("[shortcast/\(source)] \(message)\n".utf8))
@@ -84,5 +85,49 @@ enum DirectorRunLog {
         for url in raws.dropFirst(maxRawDumps) {
             try? fm.removeItem(at: url)
         }
+    }
+}
+
+/// Thread-safe journal shared by background services and every operation screen.
+final class OperationJournal: @unchecked Sendable {
+    enum Level: String, Sendable { case info, warning, error }
+    struct Entry: Identifiable, Sendable {
+        let id: UUID
+        let time: Date
+        let message: String
+        let level: Level
+    }
+    static let shared = OperationJournal()
+    private let lock = NSLock()
+    private var entries: [Entry] = []
+
+    func begin(_ title: String) {
+        lock.lock()
+        entries.removeAll(keepingCapacity: true)
+        entries.append(Entry(id: UUID(), time: Date(), message: title, level: .info))
+        lock.unlock()
+    }
+
+    func append(_ message: String, level: Level? = nil) {
+        guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let severity = level ?? Self.inferredLevel(message)
+        lock.lock()
+        defer { lock.unlock() }
+        guard entries.last?.message != message || entries.last?.level != severity else { return }
+        entries.append(Entry(id: UUID(), time: Date(), message: message, level: severity))
+    }
+
+    func snapshot() -> [Entry] {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries
+    }
+
+    /// Retried/rejected candidates are recoverable; terminal failures are explicit
+    /// at their call sites. A word inside a film title must not mark it critical.
+    static func inferredLevel(_ message: String) -> Level {
+        let value = message.lowercased()
+        return ["⚠", "warning", "rejected", "fallback", "повторная попытка", "предупрежд", "недоступ", "не найдена", "обірван", "truncated", "failed"]
+            .contains(where: value.contains) ? .warning : .info
     }
 }

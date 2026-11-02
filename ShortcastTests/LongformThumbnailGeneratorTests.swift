@@ -5,6 +5,7 @@ import CoreText
 import QuartzCore
 import AppKit
 import AVFoundation
+import Vision
 @testable import Shortcast
 
 @Suite("Longform Thumbnail Generator Tests")
@@ -424,5 +425,90 @@ struct LongformOverlayTypographyTests {
         ))
         #expect(pixels.height < legacy.height - 3.0)
         #expect(pixels.width < legacy.width - 10.0)
+    }
+}
+
+
+extension LongformThumbnailGeneratorTests {
+    @Test("Depth headlines keep their final letters inside the canvas")
+    func depthHeadlineDoesNotClipLongWords() {
+        for word in ["ПРАВДИ", "ВІДПОВІДАЛЬНОСТІ", "СВОБОДИ", "Я"] {
+            for k: CGFloat in [0.5, 1, 2] {
+                let rect = CGRect(x: 0, y: 0, width: 1920 * 0.97 * k, height: 1080 * 0.27 * k)
+                let fitted = LongformThumbnailComposer.fittedText(word, in: rect,
+                    maxSize: 360 * k, minSize: 220 * k, serif: false, wide: true)
+                let width = (word as NSString).size(withAttributes: fitted.attributes(at: 0, effectiveRange: nil)).width
+                let scale = LongformThumbnailComposer.safeHorizontalScale(for: fitted,
+                    availableWidth: rect.width, preferred: 2.1)
+                #expect(width * scale <= rect.width)
+                #expect(scale > 0 && scale <= 2.1)
+            }
+        }
+    }
+
+    @Test("Cover headings preserve whole words and fit the text slot")
+    func wholeWordHeadingLayout() {
+        let heading = "ВИКРИВЛЕНА РЕАЛЬНІСТЬ ЯК ВТЕЧА ВІД ВІДПОВІДАЛЬНОСТІ ЗА ВЧИНКИ"
+        for scale: CGFloat in [0.5, 1, 2] {
+            let slot = LongformCoverTextSlots.make(layoutMode: .leftTextRightFace,
+                canvas: CGSize(width: 1920 * scale, height: 1080 * scale), hookHeight: 190 * scale).themeWord
+            let value = LongformThumbnailComposer.fittedText(heading, in: slot,
+                maxSize: 108 * scale, minSize: 54 * scale, serif: true)
+            #expect(value.string.split(whereSeparator: \.isWhitespace) == heading.split(whereSeparator: \.isWhitespace))
+            #expect(value.string.components(separatedBy: "\n").contains("ВІДПОВІДАЛЬНОСТІ"))
+            let bounds = value.boundingRect(with: CGSize(width: slot.width, height: 100_000),
+                                            options: [.usesLineFragmentOrigin, .usesFontLeading])
+            #expect(ceil(bounds.height) + 2 <= slot.height)
+            for line in value.string.components(separatedBy: "\n") {
+                #expect((line as NSString).size(withAttributes: value.attributes(at: 0, effectiveRange: nil)).width <= slot.width)
+            }
+        }
+    }
+
+}
+
+@Suite("Saved essay title repair")
+struct SavedEssayTitleRepairTests {
+    @Test func strayPercentIsRemovedButQuantitiesRemain() {
+        #expect(ThematicConcept.cleanTitle("Ціна виживання %") == "Ціна виживання")
+        #expect(ThematicConcept.cleanTitle("100% відповідальності і 50 % ризику") == "100% відповідальності і 50 % ризику")
+    }
+
+    /// Explicit local maintenance: redraw the saved cover with its original frame.
+    @Test func repairSavedCoverWhenRequested() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let path = env["SHORTCAST_REPAIR_COVER_PROJECT"],
+              let frame = env["SHORTCAST_REPAIR_COVER_FRAME"] else { return }
+        let projectURL = URL(fileURLWithPath: path)
+        let data = try Data(contentsOf: projectURL)
+        var root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let selected = try #require(root["selectedConcept"] as? [String: Any])
+        let originalTitle = try #require(selected["suggestedTitle"] as? String)
+        let cleanTitle = ThematicConcept.cleanTitle(originalTitle)
+        func repair(_ value: Any) -> Any {
+            if let text = value as? String { return text.replacingOccurrences(of: originalTitle, with: cleanTitle) }
+            if let array = value as? [Any] { return array.map(repair) }
+            if let object = value as? [String: Any] { return object.mapValues(repair) }
+            return value
+        }
+        root = try #require(repair(root) as? [String: Any])
+        let result = try #require(root["longformResult"] as? [String: Any])
+        let arc = try #require(result["arc"] as? [String: Any])
+        let concept = try JSONDecoder().decode(ThematicConcept.self, from: JSONSerialization.data(withJSONObject: root["selectedConcept"]!))
+        let imageSource = try #require(CGImageSourceCreateWithURL(URL(fileURLWithPath: frame) as CFURL, nil))
+        let image = try #require(CGImageSourceCreateImageAtIndex(imageSource, 0, nil))
+        let request = VNDetectFaceRectanglesRequest()
+        request.usesCPUOnly = true
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        let face = request.results?.max { $0.boundingBox.width * $0.boundingBox.height < $1.boundingBox.width * $1.boundingBox.height }?.boundingBox
+        let candidate = ThumbnailCandidateFrame(time: 2266.933, image: image, faceBox: face, score: 1, averageLuminance: 0.5)
+        let rendered = try LongformThumbnailComposer().composeThumbnail(candidate: candidate, concept: concept,
+            movieTitle: arc["movieTitle"] as? String ?? "Інтерстеллар")
+        let coverURL = try #require(URL(string: result["thumbnailURL"] as? String ?? ""))
+        let jpeg = try #require(NSBitmapImageRep(cgImage: rendered).representation(using: .jpeg, properties: [.compressionFactor: 0.95]))
+        try data.write(to: URL(fileURLWithPath: "/private/tmp/shortcast-before-cover-repair.shortcastproj"), options: .atomic)
+        try Data(contentsOf: coverURL).write(to: URL(fileURLWithPath: "/private/tmp/shortcast-before-cover-repair.jpg"), options: .atomic)
+        try jpeg.write(to: coverURL, options: .atomic)
+        try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys]).write(to: projectURL, options: .atomic)
     }
 }

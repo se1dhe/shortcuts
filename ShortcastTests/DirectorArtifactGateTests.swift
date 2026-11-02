@@ -151,12 +151,13 @@ struct DirectorArtifactGateTests {
     /// Обрезанный ответ — не успех. Раньше его «долечивал» парсер.
     @Test("truncated reply is rejected")
     func rejectsTruncatedReply() {
-        let moments = (0..<18).map { index in
-            SelectedMoment(
+        let moments: [SelectedMoment] = (0..<18).map { index in
+            let role: LongformActType = index == 0 ? .hook : LongformActType.canonicalAnalyticOrder[1 + (index - 1) % 4]
+            return SelectedMoment(
                 startTime: Double(index) * 30,
                 endTime: Double(index) * 30 + 25,
                 reason: "Сцена \(index)",
-                dramaticWeight: 0.8)
+                dramaticWeight: 0.8, actRole: role)
         }
         let result = ThematicAnalysisResult(
             primaryConcept: ThematicConcept(
@@ -176,7 +177,7 @@ struct DirectorArtifactGateTests {
             Issue.record("обрезанный ответ принят гейтом")
         }
 
-        switch DirectorArtifactGate.analysis(result, completeness: .complete) {
+        switch DirectorArtifactGate.analysis(analysis(poolSize: 14), completeness: .complete) {
         case .accepted, .repaired: break
         case .rejected(let reason, let code):
             Issue.record("полный анализ отклонён: \(code.rawValue) — \(reason)")
@@ -195,17 +196,18 @@ struct DirectorArtifactGateTests {
                 suggestedTitle: "Назва",
                 source: .llm),
             aiReasoning: "Розбір",
-            selectedMoments: (0..<poolSize).map { index in
-                SelectedMoment(
+            selectedMoments: (0..<poolSize).map { index -> SelectedMoment in
+                let role: LongformActType = index == 0 ? .hook : LongformActType.canonicalAnalyticOrder[1 + (index - 1) % 4]
+                return SelectedMoment(
                     startTime: Double(index) * 30,
                     endTime: Double(index) * 30 + 25,
                     reason: "Сцена \(index)",
-                    dramaticWeight: 0.8)
+                    dramaticWeight: 0.8, actRole: role)
             },
             source: .llm)
     }
 
-    @Test("pool gate rejects emptiness and runaway, accepts thin")
+    @Test("pool gate rejects emptiness, runaway and thin analytical plans")
     func poolRangeRules() {
         if case .rejected(_, let code) = DirectorArtifactGate.analysis(analysis(poolSize: 0), completeness: .complete) {
             #expect(code == .empty)
@@ -219,10 +221,12 @@ struct DirectorArtifactGateTests {
             Issue.record("развалившийся пул из 23 сцен принят")
         }
 
-        switch DirectorArtifactGate.analysis(analysis(poolSize: 9), completeness: .complete) {
+        if case .rejected(_, let code) = DirectorArtifactGate.analysis(analysis(poolSize: 9), completeness: .complete) {
+            #expect(code == .poolOutOfRange)
+        } else { Issue.record("аналитический план без достаточного материала принят") }
+        switch DirectorArtifactGate.analysis(analysis(poolSize: 14), completeness: .complete) {
         case .accepted, .repaired: break
-        case .rejected(let reason, let code):
-            Issue.record("тонкий пул отклонён: \(code.rawValue) — \(reason)")
+        case .rejected(let reason, _): Issue.record("\(reason)")
         }
     }
 

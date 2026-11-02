@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 import CoreGraphics
+import CoreImage
 import UniformTypeIdentifiers
 import Vision
 
@@ -145,6 +146,11 @@ final class LongformThumbnailCandidateSelector: Sendable {
             if diverse.count == 24 { break }
         }
         DirectorRunLog.write("cover candidates: sampled=\(times.count) clearPortraits=\(candidates.count) diverse=\(diverse.count)")
+        DirectorRunLog.write("cover composition: " + diverse.prefix(6).map { candidate in
+            let face = candidate.faceBox ?? .zero
+            return String(format: "t=%.1f face=(%.2f,%.2f) size=%.2f top=%.2f score=%.0f", candidate.time,
+                          face.midX, face.midY, face.width * face.height, face.maxY, candidate.score)
+        }.joined(separator: "; "))
         return diverse
     }
 
@@ -196,14 +202,14 @@ final class LongformThumbnailCandidateSelector: Sendable {
         // 1. Оценка лица
         if let box = bestFaceBox {
             let area = box.width * box.height
-            // Идеальный портретный план для обложки (крупный или поясной план героя)
-            if area >= 0.035 && area <= 0.40 {
-                score += 550.0
-            } else if area > 0.40 && area <= 0.65 {
-                score += 400.0 // Сверхкрупный драматический план
-            } else if area > 0.015 {
-                score += 200.0 // Средний общий план
-            }
+            // Средний план оставляет место и для лица, и для выразительного текста.
+            if area >= 0.025 && area <= 0.14 { score += 520 }
+            else if area > 0.14 && area <= 0.22 { score += 120 }
+            else if area > 0.22 { score -= 320 }
+            else if area > 0.015 { score += 120 }
+
+            // Над головой должен оставаться воздух, чтобы слой героя не съедал заголовок.
+            score += max(-500, min(500, (0.78 - box.maxY) * 1_800))
 
             // Композиция по правилу третей (лицо сбоку идеально оставляет место для гигантского текста)
             let midX = box.midX
@@ -214,6 +220,15 @@ final class LongformThumbnailCandidateSelector: Sendable {
             } else {
                 score += 150.0 // Лицо по центру
             }
+
+            // Для обложки нужен воздух над персонажем: целимся в лицо чуть
+            // ниже середины кадра, чтобы слоган жил в свободной верхней зоне.
+            let lowerFaceCenter = box.midY
+            score += 900 - abs(lowerFaceCenter - 0.40) * 2_200
+
+            // Предпочитаем героя ближе к центру/правой трети: слева остаётся
+            // пространство для заголовка, а маска героя может дать глубину.
+            score += 520 - abs(box.midX - 0.62) * 2_000
 
             // Одиночный портрет главного героя предпочтительнее массовки
             if faceCount == 1 {
@@ -297,6 +312,18 @@ final class LongformThumbnailComposer: Sendable {
                       y: min(pane.minY, max(pane.maxY - size.height, desiredY)), width: size.width, height: size.height)
     }
 
+    /// Full-bleed frame used for the cover. Keep this exact rect for both the
+    /// background and the Vision cutout so the foreground cannot ghost.
+    static func fullFrameRect(imageSize: CGSize, faceBox: CGRect?, canvas: CGSize) -> CGRect {
+        let scale = max(canvas.width / imageSize.width, canvas.height / imageSize.height)
+        let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        let face = faceBox ?? CGRect(x: 0.58, y: 0.25, width: 0.2, height: 0.4)
+        let desiredX = canvas.width * 0.68 - face.midX * size.width
+        let desiredY = canvas.height * 0.5 - face.midY * size.height
+        return CGRect(x: min(0, max(canvas.width - size.width, desiredX)),
+                      y: min(0, max(canvas.height - size.height, desiredY)), width: size.width, height: size.height)
+    }
+
     func composeThumbnail(candidate: ThumbnailCandidateFrame, concept: ThematicConcept, movieTitle: String,
                           renderSize: CGSize = CGSize(width: 1920, height: 1080)) throws -> CGImage {
         let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
@@ -306,79 +333,161 @@ final class LongformThumbnailComposer: Sendable {
             throw ThumbnailSelectionError.noVerifiedLead
         }
         let bounds = CGRect(origin: .zero, size: renderSize), k = renderSize.height / 1080
+        let imageRect = Self.fullFrameRect(imageSize: CGSize(width: candidate.image.width, height: candidate.image.height),
+                                           faceBox: candidate.faceBox, canvas: renderSize)
         context.setFillColor(Self.obsidian.cgColor); context.fill(bounds)
-        context.saveGState()
-        context.clip(to: CGRect(x: renderSize.width * 0.38, y: 0, width: renderSize.width * 0.62, height: renderSize.height))
-        let imageRect = Self.imageRect(imageSize: CGSize(width: candidate.image.width, height: candidate.image.height),
-                                      faceBox: candidate.faceBox, canvas: renderSize)
         context.interpolationQuality = .high
         context.draw(candidate.image, in: imageRect)
-        context.restoreGState()
+        let textOnLeft = (candidate.faceBox?.midX ?? 0.68) >= 0.5
         if let gradient = CGGradient(colorsSpace: space, colors: [Self.obsidian.cgColor,
-            Self.obsidian.withAlphaComponent(0.96).cgColor, Self.obsidian.withAlphaComponent(0).cgColor] as CFArray,
-            locations: [0, 0.38, 1]) {
-            context.drawLinearGradient(gradient, start: CGPoint(x: renderSize.width * 0.27, y: 0),
-                end: CGPoint(x: renderSize.width * 0.65, y: 0), options: [.drawsBeforeStartLocation])
+            Self.obsidian.withAlphaComponent(0.9).cgColor, Self.obsidian.withAlphaComponent(0).cgColor] as CFArray,
+            locations: [0, 0.48, 1]) {
+            let startX = textOnLeft ? 0 : renderSize.width
+            let endX = textOnLeft ? renderSize.width * 0.76 : renderSize.width * 0.24
+            context.drawLinearGradient(gradient, start: CGPoint(x: startX, y: 0),
+                end: CGPoint(x: endX, y: 0), options: [.drawsBeforeStartLocation])
         }
-        if let shade = CGGradient(colorsSpace: space,
-            colors: [Self.obsidian.withAlphaComponent(0.72).cgColor, Self.obsidian.withAlphaComponent(0).cgColor] as CFArray,
-            locations: [0, 1]) {
-            context.drawLinearGradient(shade, start: CGPoint(x: 0, y: 0), end: CGPoint(x: 0, y: renderSize.height * 0.26), options: [])
-            context.drawLinearGradient(shade, start: CGPoint(x: 0, y: renderSize.height),
-                end: CGPoint(x: 0, y: renderSize.height * 0.83), options: [])
-        }
-        drawViewfinder(in: context, canvas: renderSize)
-        let layout = LongformCoverTextSlots.make(layoutMode: .leftTextRightFace, canvas: renderSize, hookHeight: 190 * k)
         let previous = NSGraphicsContext.current
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
         defer { NSGraphicsContext.current = previous }
-        let brand = NSMutableAttributedString(string: "КАДР & СЕНС", attributes: [
-            .font: serif(30 * k), .foregroundColor: Self.ivory, .kern: 4 * k])
-        brand.addAttribute(.foregroundColor, value: Self.gold, range: NSRange(location: 5, length: 1))
-        brand.draw(in: layout.badge)
-        let heading = concept.suggestedTitle.trimmed.isEmpty ? concept.word : concept.suggestedTitle
-        drawFitted(heading.uppercased(), in: layout.themeWord, maxSize: 108 * k, minSize: 54 * k,
-                   color: Self.ivory, serif: true, tracking: 0)
-        context.setFillColor(Self.gold.cgColor); context.fill(layout.rule)
-        drawFitted(movieTitle.uppercased(), in: layout.hook, maxSize: 48 * k, minSize: 28 * k,
-                   color: Self.gold, serif: false, tracking: 2 * k)
-        ("УКРАЇНСЬКЕ КІНОЕСЕ" as NSString).draw(at: CGPoint(x: layout.badge.minX, y: 82 * k),
-            withAttributes: [.font: NSFont.systemFont(ofSize: 22 * k, weight: .medium),
-                             .foregroundColor: Self.ivory.withAlphaComponent(0.7), .kern: 3 * k])
-        if let image = NSImage(named: "EssayCoverBrandMark") {
-            var rect = NSRect(origin: .zero, size: image.size)
-            if let mark = image.cgImage(forProposedRect: &rect, context: nil, hints: nil) {
-                context.draw(mark, in: ChannelLogoPlacement.essayCover(canvas: renderSize, inset: 48 * k))
-            }
+        let cleanedTitle = ThematicConcept.cleanTitle(concept.coverText ?? concept.word)
+        let heading = cleanedTitle.isEmpty ? concept.word : cleanedTitle
+        let words = heading.uppercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        if words.count == 2 {
+            let firstWidth = renderSize.width * 0.42
+            let firstX = textOnLeft ? renderSize.width * 0.055 : renderSize.width * 0.525
+            let firstWordRect = CGRect(x: firstX, y: renderSize.height * 0.68,
+                width: firstWidth, height: renderSize.height * 0.22)
+            drawFitted(words[0], in: firstWordRect, maxSize: 176 * k, minSize: 112 * k,
+                       color: Self.ivory, serif: false, tracking: 0)
+
+            // The second word deliberately runs behind the lead's head. Its
+            // final letters remain on the far side of the silhouette, while
+            // the person mask creates the depth break through the middle.
+            let secondWidth = renderSize.width * 0.97
+            let secondX = renderSize.width * 0.015
+            let secondWordRect = CGRect(x: secondX, y: renderSize.height * 0.50,
+                width: secondWidth, height: renderSize.height * 0.27)
+            drawFitted(words[1], in: secondWordRect, maxSize: 360 * k, minSize: 220 * k,
+                       color: Self.ivory, serif: false, tracking: 0, wide: true, horizontalScale: 2.1)
+        } else {
+            let textWidth = renderSize.width * 0.70
+            let headingRect = CGRect(x: textOnLeft ? renderSize.width * 0.055 : renderSize.width * 0.945 - textWidth,
+                y: renderSize.height * 0.39, width: textWidth, height: renderSize.height * 0.54)
+            drawFitted(heading.uppercased(), in: headingRect, maxSize: 176 * k, minSize: 112 * k,
+                       color: Self.ivory, serif: false, tracking: 0)
+        }
+        // Draw the aligned foreground last: a selected lower-centered portrait
+        // lets the subject overlap only the edge of the slogan for real depth.
+        if let foreground = Self.foregroundSubject(from: candidate.image) {
+            context.interpolationQuality = .high
+            context.draw(foreground, in: imageRect)
         }
         guard let image = context.makeImage() else { throw ThumbnailSelectionError.noVerifiedLead }
         return image
     }
 
+    private static func foregroundSubject(from image: CGImage) -> CGImage? {
+        let handler = VNImageRequestHandler(cgImage: image)
+        let request = VNGeneratePersonSegmentationRequest()
+        request.qualityLevel = .accurate
+        request.outputPixelFormat = kCVPixelFormatType_OneComponent8
+        do {
+            try handler.perform([request])
+            guard let observation = request.results?.first else { return nil }
+            let source = CIImage(cgImage: image)
+            let rawMask = CIImage(cvPixelBuffer: observation.pixelBuffer)
+            let scaleX = source.extent.width / rawMask.extent.width
+            let scaleY = source.extent.height / rawMask.extent.height
+            let mask = rawMask.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+                .cropped(to: source.extent)
+            let clear = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: 0)).cropped(to: source.extent)
+            let foreground = source.applyingFilter("CIBlendWithMask", parameters: [
+                kCIInputBackgroundImageKey: clear,
+                kCIInputMaskImageKey: mask
+            ])
+            return CIContext().createCGImage(foreground, from: source.extent)
+        } catch {
+            DirectorRunLog.write("cover person depth unavailable: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
     private func serif(_ size: CGFloat) -> NSFont {
         NSFont(name: "Georgia-Bold", size: size) ?? NSFont.systemFont(ofSize: size, weight: .bold)
     }
-    private func drawFitted(_ text: String, in rect: CGRect, maxSize: CGFloat, minSize: CGFloat,
-                            color: NSColor, serif useSerif: Bool, tracking: CGFloat) {
+    /// AppKit's word wrapping still falls back to splitting an oversized word.
+    /// Build explicit lines and fit their actual glyph widths before drawing.
+    static func fittedText(_ text: String, in rect: CGRect, maxSize: CGFloat,
+                           minSize: CGFloat, serif useSerif: Bool, tracking: CGFloat = 0,
+                           wide: Bool = false) -> NSAttributedString {
+        let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
         var size = maxSize
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byWordWrapping
-        paragraph.lineSpacing = maxSize * 0.04
-        var attributed = NSAttributedString()
-        var measured = CGRect.zero
-        repeat {
-            let font = useSerif ? serif(size) : (NSFont(name: "AvenirNext-DemiBold", size: size) ?? NSFont.boldSystemFont(ofSize: size))
-            attributed = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color,
-                .paragraphStyle: paragraph, .kern: tracking])
-            measured = attributed.boundingRect(with: CGSize(width: rect.width, height: 4000),
-                options: [.usesLineFragmentOrigin, .usesFontLeading])
-            if measured.height <= rect.height && measured.width <= rect.width + 1 { break }
-            size -= 2
-        } while size >= minSize
-        // Верхний край фиксирован: разные длины названия не сдвигают название фильма.
-        attributed.draw(with: CGRect(x: rect.minX, y: rect.maxY - min(rect.height, ceil(measured.height)),
-            width: rect.width, height: min(rect.height, ceil(measured.height) + 2)),
-            options: [.usesLineFragmentOrigin, .usesFontLeading])
+        while true {
+            let font = useSerif
+                ? (NSFont(name: "Georgia-Bold", size: size) ?? NSFont.boldSystemFont(ofSize: size))
+                : wide
+                    ? (NSFont(name: "AvenirNext-Heavy", size: size) ?? NSFont.systemFont(ofSize: size, weight: .heavy))
+                    : (NSFont(name: "AvenirNextCondensed-Heavy", size: size)
+                    ?? NSFont(name: "HelveticaNeue-CondensedBlack", size: size)
+                    ?? NSFont.boldSystemFont(ofSize: size))
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineBreakMode = .byClipping
+            paragraph.hyphenationFactor = 0
+            paragraph.lineSpacing = size * 0.04
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: font, .paragraphStyle: paragraph, .kern: tracking * size / maxSize]
+            func width(_ line: String) -> CGFloat {
+                (line as NSString).size(withAttributes: attributes).width
+            }
+            var lines: [String] = []
+            for word in words {
+                if let last = lines.last, width(last + " " + word) <= rect.width - 2 {
+                    lines[lines.count - 1] = last + " " + word
+                } else { lines.append(word) }
+            }
+            let value = NSAttributedString(string: lines.joined(separator: "\n"), attributes: attributes)
+            let bounds = value.boundingRect(with: CGSize(width: rect.width, height: 100_000),
+                                             options: [.usesLineFragmentOrigin, .usesFontLeading])
+            let fitsWidth = lines.allSatisfy { width($0) <= rect.width - 2 }
+            if (fitsWidth && ceil(bounds.height) + 2 <= rect.height) || size <= 1 { return value }
+            // minSize is the preferred lower bound; unusually long words must
+            // fit even below it rather than break in the middle or be clipped.
+            size = max(1, size - (size > minSize ? 2 : 1))
+        }
+    }
+
+    private func drawFitted(_ text: String, in rect: CGRect, maxSize: CGFloat, minSize: CGFloat,
+                            color: NSColor, serif useSerif: Bool, tracking: CGFloat, wide: Bool = false,
+                            horizontalScale: CGFloat = 1) {
+        let fitted = Self.fittedText(text, in: rect, maxSize: maxSize, minSize: minSize,
+                                    serif: useSerif, tracking: tracking, wide: wide)
+        let attributed = NSMutableAttributedString(attributedString: fitted)
+        attributed.addAttribute(.foregroundColor, value: color, range: NSRange(location: 0, length: attributed.length))
+        let measured = attributed.boundingRect(with: CGSize(width: rect.width, height: 100_000),
+                                               options: [.usesLineFragmentOrigin, .usesFontLeading])
+        let scale = Self.safeHorizontalScale(for: attributed, availableWidth: rect.width, preferred: horizontalScale)
+        let context = NSGraphicsContext.current!.cgContext
+        context.saveGState()
+        context.translateBy(x: rect.minX, y: 0)
+        context.scaleBy(x: scale, y: 1)
+        context.translateBy(x: -rect.minX, y: 0)
+        attributed.draw(with: CGRect(x: rect.minX, y: rect.maxY - ceil(measured.height) - 2,
+                                     width: rect.width, height: ceil(measured.height) + 2),
+                        options: [.usesLineFragmentOrigin, .usesFontLeading])
+        context.restoreGState()
+    }
+
+    /// Stretch the depth headline only as far as the actual glyph widths permit.
+    /// A fixed factor clips longer slogans even when the unscaled text fits.
+    static func safeHorizontalScale(for text: NSAttributedString, availableWidth: CGFloat,
+                                    preferred: CGFloat) -> CGFloat {
+        guard text.length > 0, availableWidth > 0 else { return 1 }
+        let attributes = text.attributes(at: 0, effectiveRange: nil)
+        let width = text.string.components(separatedBy: "\n")
+            .map { ($0 as NSString).size(withAttributes: attributes).width }.max() ?? 0
+        guard width.isFinite, width > 0 else { return 1 }
+        return min(max(0.01, preferred), max(0.01, (availableWidth - 2) / width))
     }
     private func drawViewfinder(in context: CGContext, canvas: CGSize) {
         let k = canvas.height / 1080, inset = 34 * k, length = 34 * k

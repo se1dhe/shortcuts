@@ -15,6 +15,8 @@ struct LongformResultsView: View {
     @Environment(ModelManager.self) private var modelManager
     @Environment(AppSettings.self) private var settings
 
+    @State private var showPackagingExperiments = false
+    @State private var playbackAudio = EssayResultPlaybackAudio()
     @State private var player: AVPlayer? = nil
     @State private var actPlaybackObserver: Any?
     @State private var activeActID: String?
@@ -26,6 +28,7 @@ struct LongformResultsView: View {
     @State private var copiedTags = false
     @State private var copiedComment = false
 
+    @State private var showSupportEditor = false
     @State private var showSubtitleEditor = false
     @State private var showActEditor = false
     @State private var editingShort: EssayShort?
@@ -52,6 +55,7 @@ struct LongformResultsView: View {
                                 .font(.headline)
                         }
 
+                        Text(result.arc.concept.format.title).font(.caption).foregroundStyle(.secondary)
                         Text(result.metadata.title)
                             .font(.title3.weight(.bold))
                             .lineLimit(1)
@@ -70,6 +74,7 @@ struct LongformResultsView: View {
                         .help("Проверить диалоги с соседним контекстом, уточнить границы сцен и пересобрать эссе на той же теме")
 
                         Button {
+                            suspendResultsPlayback()
                             showSubtitleEditor = true
                         } label: {
                             HStack(spacing: 5) {
@@ -83,6 +88,7 @@ struct LongformResultsView: View {
                         .help("Исправить неточности в субтитрах и перерендерить видео с тем же монтажом")
 
                         Button {
+                            suspendResultsPlayback()
                             showActEditor = true
                         } label: {
                             HStack(spacing: 5) {
@@ -97,7 +103,10 @@ struct LongformResultsView: View {
                         Menu("Монтаж шортсов", systemImage: "scissors") {
                             if let release = workspace.currentEssayRelease, !release.shorts.isEmpty {
                                 ForEach(release.shorts) { short in
-                                    Button(short.title) { editingShort = short }
+                                    Button(short.title) {
+                                        suspendResultsPlayback()
+                                        editingShort = short
+                                    }
                                         .disabled(!EssayShortEditing.canEdit(short, in: release))
                                 }
                             } else {
@@ -118,6 +127,55 @@ struct LongformResultsView: View {
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 16)
+
+                if let rebuildError = workspace.errorMessage {
+                    HStack(alignment: .top, spacing: 11) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .padding(.top, 2)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Пересборка не завершилась")
+                                .font(.subheadline.weight(.bold))
+                            Text("Показан предыдущий экспорт длительностью \(formatDuration(result.duration)). Новая версия не сохранена.")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                            if workspace.stagedArc != nil {
+                                Text("Черновик таймингов сохранён. Откройте «Монтажный стол», чтобы продолжить с него.")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(StudioTheme.accent)
+                                Button("Повторить сборку", systemImage: "arrow.clockwise") {
+                                    guard let draft = workspace.stagedArc else { return }
+                                    workspace.rebuildLongformWithModifiedArc(
+                                        modifiedArc: draft,
+                                        existingResult: result,
+                                        modelManager: modelManager,
+                                        settings: settings
+                                    )
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(StudioTheme.accent)
+                            }
+                            Text(rebuildError)
+                                .font(.caption)
+                                .textSelection(.enabled)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(13)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.orange.opacity(0.35), lineWidth: 1))
+                    .padding(.horizontal, 20)
+                } else if workspace.stagedArc != nil {
+                    Label("Черновик монтажа сохранён и ждёт сборки. Откройте «Монтажный стол», чтобы продолжить.",
+                          systemImage: "film.stack")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(StudioTheme.accent)
+                        .padding(13)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(StudioTheme.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+                        .padding(.horizontal, 20)
+                }
 
                 if let notes = result.arc.editorialNotes, !notes.isEmpty {
                     DisclosureGroup("Замечания к монтажу (\(notes.count))") {
@@ -256,7 +314,7 @@ struct LongformResultsView: View {
                 // One explicit editorial approval hands the final essay to the
                 // short generator and opens the complete publication package.
                 VStack(spacing: 8) {
-                    Text("Проверьте монтаж и реплики. Когда эссе готово, переходите к двум шортсам на его основе.")
+                    Text("Проверьте монтаж и реплики. Когда эссе готово, переходите к подбору двух сильных моментов всего фильма.")
                         .font(.caption).foregroundStyle(.secondary)
                     Button {
                         player?.pause()
@@ -301,6 +359,14 @@ struct LongformResultsView: View {
                             .accessibilityLabel("Обновить всё оформление публикации")
                             .help("Обновить обложку и тексты публикации. Видео повторно не рендерится.")
                         }
+                        Button("Варианты упаковки и результаты", systemImage: "rectangle.on.rectangle") {
+                            suspendResultsPlayback(); showPackagingExperiments = true
+                        }.disabled(workspace.isBusy)
+                        .sheet(isPresented: $showPackagingExperiments) { PackagingExperimentsView() }
+                        Button("Поддержка и благодарности", systemImage: "heart.text.square") {
+                            suspendResultsPlayback()
+                            showSupportEditor = true
+                        }.disabled(workspace.isBusy)
                         if let warning = workspace.longformPackagingError ?? result.packagingWarning {
                             Label(warning, systemImage: "exclamationmark.triangle")
                                 .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
@@ -338,7 +404,18 @@ struct LongformResultsView: View {
                             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copiedDescription = false }
                         }
 
-                        // 3. Теги
+                        metadataCard(
+                            title: "Теги YouTube · ключевые слова",
+                            content: result.metadata.tags.joined(separator: ", "),
+                            copied: copiedTags,
+                            lineLimit: 3
+                        ) {
+                            copyToClipboard(result.metadata.tags.joined(separator: ", "))
+                            copiedTags = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copiedTags = false }
+                        }
+
+                        // Хештеги в описании — отдельное поле от keyword tags API.
                         metadataCard(
                             title: "Хештеги YouTube",
                             content: result.metadata.hashtagText,
@@ -427,14 +504,21 @@ struct LongformResultsView: View {
             .padding(18)
             .frame(width: 400)
         }
-        .sheet(item: $editingShort) { short in
+        .sheet(isPresented: $showSupportEditor, onDismiss: resumeResultsPlayback) {
+            EssaySupportEditor(support: result.arc.support ?? EssaySupport(donatelloURL: settings.donatelloURL,
+                    creditsEnabled: false, nicknames: settings.essaySupport.nicknames),
+                ctaText: LongformEditorialSupport.finalCard(for: result.arc), theme: result.arc.concept.word) { support in
+                try await workspace.saveEssaySupport(support, modelManager: modelManager, settings: settings)
+            }
+        }
+        .sheet(item: $editingShort, onDismiss: resumeResultsPlayback) { short in
             if let source = workspace.job?.url, let transcript = workspace.storedTranscript ?? workspace.currentProject?.transcript {
                 EssayShortEditorView(short: short, result: result, transcript: transcript, sourceURL: source) { edited in
                     try await workspace.rebuildEssayShort(edited, settings: settings)
                 }
             }
         }
-        .sheet(isPresented: $showSubtitleEditor) {
+        .sheet(isPresented: $showSubtitleEditor, onDismiss: resumeResultsPlayback) {
             if let transcript = workspace.storedTranscript {
                 LongformSubtitleEditorView(
                     arc: result.arc,
@@ -472,15 +556,21 @@ struct LongformResultsView: View {
                 .frame(minWidth: 1000, minHeight: 680)
             }
         }
-        .sheet(isPresented: $showActEditor) {
+        .sheet(isPresented: $showActEditor, onDismiss: {
+            if case .longformResults = workspace.phase {
+                resumeResultsPlayback()
+            }
+        }) {
             if let transcript = workspace.storedTranscript {
+                let editorArc = workspace.stagedArc ?? result.arc
                 LongformActEditorView(
-                    arc: result.arc,
-                    concept: result.arc.concept,
+                    arc: editorArc,
+                    concept: editorArc.concept,
                     movieTitle: movieTitle,
                     transcriptSegments: transcript.segments,
                     sourceURL: workspace.job?.url,
                     coldOpenEnabled: result.audioSettings?.coldOpenEnabled ?? true,
+                    audioSettings: result.audioSettings ?? LongformAudioSettings(),
                     onReview: { draft, progress in
                         try await workspace.reviewLongformEditorDraft(
                             draft, modelManager: modelManager, settings: settings, progress: progress)
@@ -496,19 +586,20 @@ struct LongformResultsView: View {
                     },
                     onCancel: {
                         showActEditor = false
+                        resumeResultsPlayback()
                     }
                 )
             }
         }
         .onAppear {
-            let next = AVPlayer(url: result.outputURL)
-            player = next
-            observeActPlayback(on: next)
+            resumeResultsPlayback()
         }
         .onChange(of: result.outputURL) { _, newURL in
             removeActPlaybackObserver()
             player?.pause()
-            let next = AVPlayer(url: newURL)
+            player?.replaceCurrentItem(with: nil)
+            playbackAudio.stop()
+            let next = MontageVideoPreviewPlayer.makeVideoOnlyPlayer(url: newURL)
             player = next
             playbackTime = 0
             isVideoPlaying = false
@@ -516,9 +607,7 @@ struct LongformResultsView: View {
             observeActPlayback(on: next)
         }
         .onDisappear {
-            removeActPlaybackObserver()
-            player?.pause()
-            player = nil
+            suspendResultsPlayback()
         }
         .background(StudioTheme.background)
         .preferredColorScheme(.dark)
@@ -532,8 +621,11 @@ struct LongformResultsView: View {
                 if fullscreenPlayerWindow == nil {
                     StudioPlayerSurface(player: player)
                 }
-                playerControls
-                    .padding(14)
+                VStack {
+                    if playbackAudio.isPreparing { Text("Подготавливаю звук…").padding(8).background(.black.opacity(0.8)) }
+                    if let error = playbackAudio.error { Text(error).foregroundStyle(.orange).padding(8) }
+                    playerControls
+                }.padding(14)
             } else {
                 ProgressView()
             }
@@ -548,10 +640,9 @@ struct LongformResultsView: View {
         HStack(spacing: 12) {
             Button {
                 guard let player else { return }
-                if isVideoPlaying { player.pause() } else { player.play() }
-                isVideoPlaying.toggle()
+                playbackAudio.toggle(player: player, url: result.outputURL, duration: result.duration)
             } label: {
-                Image(systemName: isVideoPlaying ? "pause.fill" : "play.fill")
+                Image(systemName: playbackAudio.isPreparing ? "hourglass" : (isVideoPlaying ? "pause.fill" : "play.fill"))
                     .font(.system(size: 14, weight: .bold))
                     .frame(width: 30, height: 30)
                     .contentShape(Rectangle())
@@ -568,10 +659,11 @@ struct LongformResultsView: View {
                 get: { playbackTime },
                 set: { value in
                     playbackTime = value
-                    player?.seek(to: CMTime(seconds: value, preferredTimescale: 600),
-                                 toleranceBefore: .zero, toleranceAfter: .zero)
                 }
-            ), in: 0...max(result.duration, 0.1))
+            ), in: 0...max(result.duration, 0.1), onEditingChanged: { editing in
+                guard !editing else { return }
+                if let player { playbackAudio.seek(player: player, url: result.outputURL, time: playbackTime, duration: result.duration) }
+            })
             .tint(StudioTheme.accent)
 
             Text(formatDuration(result.duration))
@@ -598,7 +690,11 @@ struct LongformResultsView: View {
 
     private func openFullscreenPlayer() {
         guard let player, fullscreenPlayerWindow == nil else { return }
-        let content = FullscreenEssayPlayerView(player: player, duration: result.duration) {
+        let content = FullscreenEssayPlayerView(player: player, duration: result.duration, onToggle: {
+            playbackAudio.toggle(player: player, url: result.outputURL, duration: result.duration)
+        }, onSeek: { time in
+            playbackAudio.seek(player: player, url: result.outputURL, time: time, duration: result.duration)
+        }) {
             let window = fullscreenPlayerWindow
             fullscreenPlayerWindow = nil
             window?.close()
@@ -619,6 +715,25 @@ struct LongformResultsView: View {
         DispatchQueue.main.async { window.toggleFullScreen(nil) }
     }
 
+    /// Editors create their own source-film preview player. Tear down the result
+    /// player's item before presenting one so macOS never has two active audio
+    /// queues competing during seek/preroll.
+    private func suspendResultsPlayback() {
+        removeActPlaybackObserver()
+        playbackAudio.stop()
+        player?.pause()
+        player?.replaceCurrentItem(with: nil)
+        player = nil
+        isVideoPlaying = false
+    }
+
+    private func resumeResultsPlayback() {
+        guard player == nil else { return }
+        let next = MontageVideoPreviewPlayer.makeVideoOnlyPlayer(url: result.outputURL)
+        player = next
+        observeActPlayback(on: next)
+    }
+
     private var activeActTitle: String? {
         guard let activeActID else { return nil }
         return result.arc.acts.first(where: { $0.id == activeActID })?.type.displayName
@@ -631,8 +746,7 @@ struct LongformResultsView: View {
                 coldOpenEnabled: result.audioSettings?.coldOpenEnabled ?? true
               ).start(ofAct: index) else { return }
         activeActID = result.arc.acts[index].id
-        player?.seek(to: CMTime(seconds: start, preferredTimescale: 600),
-                     toleranceBefore: .zero, toleranceAfter: .zero)
+        if let player { playbackAudio.seek(player: player, url: result.outputURL, time: start, duration: result.duration) }
     }
 
     private func observeActPlayback(on player: AVPlayer) {

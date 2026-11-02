@@ -45,6 +45,30 @@ async function uploadThumbnail(dialog, thumbnailPath, isShort) {
   progress('Обложка передана редактору YouTube; предпросмотр доступен.');
 }
 
+async function fillYouTubeKeywordTags(dialog, keywordTags = []) {
+  const tags = [...new Set(keywordTags.map(tag => String(tag).trim()).filter(Boolean))];
+  if (!tags.length) return;
+  if (tags.join('').length > 500) throw new Error('Суммарная длина тегов YouTube превышает 500 символов.');
+
+  // Keyword tags live in Studio's expanded metadata panel and are separate
+  // from #hashtags in the video description.
+  const showMore = dialog.getByText(/^(Show more|Показать больше|Показати більше)$/i).first();
+  if (await showMore.isVisible()) await showMore.click();
+  const container = dialog.locator('#tags-container, ytcp-form-input-container#tags-container').first();
+  const input = container.locator('input[aria-label], input').first();
+  await input.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {
+    throw new Error('YouTube не показал поле ключевых тегов. Теги не удалось проверить; публикация остановлена.');
+  });
+  for (const tag of tags) {
+    await input.fill(tag);
+    await input.press('Enter');
+  }
+  const visibleTags = await container.innerText();
+  const missing = tags.filter(tag => !visibleTags.toLocaleLowerCase().includes(tag.toLocaleLowerCase()));
+  if (missing.length) throw new Error('YouTube не подтвердил сохранение тегов: ' + missing.join(', '));
+  progress('Ключевые теги YouTube заполнены и проверены: ' + tags.length);
+}
+
 async function goToChecks(dialog) {
   for (let step = 0; step < 4; step++) {
     const current = await studioStep(dialog);
@@ -101,7 +125,7 @@ async function captureFailure(page, stage, error) {
 }
 
 /** Waits for actual transfer, processing and checks before making anything public. */
-export async function uploadToYouTube(page, { videoPath, thumbnailPath, title, caption, hashtags = [], isPublic = true, isShort = false }) {
+export async function uploadToYouTube(page, { videoPath, thumbnailPath, title, caption, hashtags = [], keywordTags = [], isPublic = true, isShort = false }) {
   let stage = 'Открытие Studio';
   let fileSelected = false;
   try {
@@ -125,6 +149,7 @@ export async function uploadToYouTube(page, { videoPath, thumbnailPath, title, c
     stage = 'Заполнение и проверка полей'; progress(stage);
     await setVerifiedYouTubeField(page, titleBox, cleanTitle, 'Заголовок');
     await setVerifiedYouTubeField(page, descriptionBox, cleanDescription, 'Описание');
+    await fillYouTubeKeywordTags(dialog, keywordTags);
     await uploadThumbnail(dialog, thumbnailPath, isShort);
     const audience = dialog.locator('[name="VIDEO_MADE_FOR_KIDS_NOT_MFK"]').first();
     await waitEnabled(audience, 'Видео не для детей');
@@ -139,6 +164,7 @@ export async function uploadToYouTube(page, { videoPath, thumbnailPath, title, c
     stage = 'Проверка контента'; progress(stage);
     await goToChecks(dialog);
     const checksStatus = await waitForYouTubePhase(page, 'checks', { progress });
+    if (checksStatus.harmlessClaim) progress('Content ID: YouTube подтвердил отсутствие ограничения видео либо влияние только на монетизацию. Продолжаем по выбранному правилу.');
     stage = 'Настройка доступа'; progress(stage);
     for (let step = 0; step < 3 && !(await dialog.locator(PUBLIC).first().isVisible()); step++) {
       await advanceStudioStep(dialog);
@@ -153,7 +179,7 @@ export async function uploadToYouTube(page, { videoPath, thumbnailPath, title, c
     stage = 'Подтверждение публикации'; progress(stage);
     await waitEnabled(dialog.locator('#done-button').first(), 'Опубликовать', 60000);
     const videoUrl = await confirmedYouTubeURL(page);
-    console.log(JSON.stringify({ type: 'success', platform: 'youtube', message: isShort ? 'YouTube Shorts опубликован' : 'Эссе YouTube опубликовано', url: videoUrl }));
+    console.log(JSON.stringify({ type: 'success', platform: 'youtube', message: (isShort ? 'YouTube Shorts опубликован' : 'Эссе YouTube опубликовано') + (checksStatus.harmlessClaim ? ' · Content ID: допустимая заявка без подтверждённой блокировки' : ''), url: videoUrl }));
   } catch (error) {
     error.keepBrowserOpen = fileSelected && !page.isClosed();
     await captureFailure(page, stage, error);

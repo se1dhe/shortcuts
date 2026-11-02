@@ -15,32 +15,35 @@ struct EssayShortRenderSmokeTests {
         let source = directory.appendingPathComponent("source.mp4")
         let generated = try await ProcessRunner.shared.run(executableURL: URL(fileURLWithPath: "/opt/homebrew/bin/ffmpeg"),
             arguments: ["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30",
-                        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "20",
+                        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "45",
                         "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-pix_fmt", "yuv420p", source.path])
         #expect(generated.isSuccess)
         let concept = ThematicConcept(word: "ВИБІР", tagline: "Ціна вибору",
             philosophicalPremise: "Особистий вибір", suggestedTitle: "Ціна вибору")
         let arc = LongformNarrativeArc(movieTitle: "Тестовий фільм", concept: concept,
             acts: [LongformAct(type: .hook, title: "Вибір", dramaticBeat: "Початок",
-                              segments: [.init(start: 0, end: 20)])], summary: "Тест")
+                              segments: [.init(start: 0, end: 45)])], summary: "Тест")
         let result = LongformBuildResult(outputURL: directory.appendingPathComponent("essay.mp4"), arc: arc,
-            metadata: LongformMetadataGenerator.generate(movieTitle: arc.movieTitle, concept: concept, arc: arc), duration: 20)
+            metadata: LongformMetadataGenerator.generate(movieTitle: arc.movieTitle, concept: concept, arc: arc), duration: 45)
         let transcript = Transcript(segments: [TranscriptSegment(start: 3, end: 8, text: "Початкова репліка")], language: "uk")
         var short = EssayShort(id: "short1", angle: "Ціна свободи", hook: "Хто обирає?", title: "Вибір",
-            why: "Діалог", payoffQuote: "Це твій вибір", question: "Яка ціна?", segments: [.init(start: 1, end: 16)])
+            why: "Діалог", payoffQuote: "Це твій вибір", question: "Яка ціна?", segments: [.init(start: 1, end: 38)])
         short.captionEdits = [.init(start: 3, end: 8, original: "Початкова репліка", replacement: "Виправлена репліка")]
-        try EssayShortEditing.validate(short, arc: arc, sourceDuration: 20)
+        try EssayShortEditing.validate(short, arc: arc, sourceDuration: 45)
         let rendered = try await EssayShortRenderer().render(short, sourceURL: source, result: result,
             transcript: transcript, telegramURL: nil, directory: directory)
         let output = try #require(rendered.outputURL), cover = try #require(rendered.coverURL)
         let asset = AVURLAsset(url: output)
         let duration = try await asset.load(.duration).seconds
-        #expect(abs(duration - 18) < 0.15)
+        #expect(abs(duration - 37) < 0.15)
         let video = try #require(try await asset.loadTracks(withMediaType: .video).first)
         #expect(try await video.load(.naturalSize) == CGSize(width: 1080, height: 1920))
         #expect(try await asset.loadTracks(withMediaType: .audio).count == 1)
         #expect(FileManager.default.fileExists(atPath: cover.path))
         #expect(rendered.captionEdits == short.captionEdits)
+        let preview = URL(fileURLWithPath: "/private/tmp/shortcast-clean-short-preview.mp4")
+        try? FileManager.default.removeItem(at: preview)
+        try FileManager.default.copyItem(at: output, to: preview)
         #expect(!FileManager.default.fileExists(atPath: result.outputURL.path))
     }
 }

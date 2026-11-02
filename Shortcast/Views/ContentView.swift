@@ -18,6 +18,7 @@ struct ContentView: View {
             stageNavigation
             Rectangle().fill(StudioTheme.line).frame(height: 1)
             stageContent.frame(maxWidth: .infinity, maxHeight: .infinity)
+            OperationLogPanel(isActive: workspace.isBusy || workspace.isRegeneratingConcepts)
         }
         .background(StudioTheme.background)
         .preferredColorScheme(.dark)
@@ -188,9 +189,10 @@ struct ContentView: View {
                 onCancel: {
                     workspace.cancelLongformSelection()
                 },
-                onRegenerate: {
+                onRegenerate: { format in
                     Task {
                         await workspace.regenerateThematicConcepts(
+                            format: format,
                             modelManager: modelManager,
                             directorProfile: settings.copywriterModel.directorProfile
                         )

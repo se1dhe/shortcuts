@@ -6,8 +6,13 @@ struct DropZoneView: View {
     let isDropTargeted: Bool
     let onChooseFile: (URL, VideoSourceMetadata?) -> Void
     @Environment(WorkspaceModel.self) private var workspace
+    @Environment(AppSettings.self) private var settings
+    @State private var library = FilmLibrary.shared
     @State private var projects: [FilmProject] = []
     @State private var unsupported = false
+    @State private var showFilmPlan = false
+    @State private var plannedFilm: PlannedFilm?
+    @State private var showCompilation = false
 
     var body: some View {
         ScrollView {
@@ -29,22 +34,38 @@ struct DropZoneView: View {
                     }.frame(maxWidth: 470, alignment: .leading)
                     dropArea
                 }
+                PlannedFilmsStartPanel { film in
+                    if let film { plannedFilm = film } else { showFilmPlan = true }
+                }
                 if let error = workspace.errorMessage {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .font(.callout).foregroundStyle(.orange).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading).studioPanel(padding: 16)
                 }
                 HStack(spacing: 22) {
-                    feature("text.alignleft", title: "Тема и драматургия", text: "Анализ диалогов и пять актов эссе")
+                    feature("text.alignleft", title: "Тема и драматургия", text: "Киноистория или аналитическое эссе")
                     feature("slider.horizontal.3", title: "Ваш монтаж", text: "Сцены, хуки и субтитры можно изменить")
                     feature("paperplane", title: "Один выпуск", text: "YouTube, TikTok и Telegram")
                 }
+                Button("Собрать эссе из нескольких фильмов, серий или интервью…", systemImage: "film.stack") { showCompilation = true }
                 if !projects.isEmpty { recentProjects }
                 HStack(spacing: 6) {
                     Image(systemName: "externaldrive")
                     Text("Фильм и обработка остаются на Mac. Публикация запускается отдельно.")
                 }.font(.system(size: 11)).foregroundStyle(StudioTheme.muted)
             }.frame(maxWidth: 1120).padding(40).frame(maxWidth: .infinity)
+        }
+        .sheet(isPresented: $showCompilation) { CompilationSourceView(onChooseFile: onChooseFile) }
+        .sheet(item: $plannedFilm) { film in
+            if let directory = settings.workingDirectory { FilmTorrentBrowser(film: film, workingDirectory: directory) }
+        }
+        .sheet(isPresented: $showFilmPlan) { FilmPlanLibraryView(onChooseFile: onChooseFile) }
+        .onChange(of: library.downloads.map { $0.state }) { _, _ in
+            guard !workspace.isBusy, workspace.pendingAudioSelection == nil,
+                  let task = library.downloads.first(where: { $0.state == "Скачан" }),
+                  FileManager.default.fileExists(atPath: task.sourceURL.path) else { return }
+            plannedFilm = nil; showFilmPlan = false
+            onChooseFile(task.sourceURL, VideoSourceMetadata(title: task.film.title))
         }
         .alert("Выберите видеофайл", isPresented: $unsupported) {
             Button("Понятно", role: .cancel) {}

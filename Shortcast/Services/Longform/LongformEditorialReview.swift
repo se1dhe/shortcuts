@@ -17,12 +17,21 @@ struct LongformEditorialReview: Sendable {
         let id: Int
         let message: String
         let accepted: Bool
+        var remainingNotes: Int? = nil
+        var resolved: Bool { accepted && remainingNotes == 0 }
     }
 
     struct Outcome: Sendable {
         let arc: LongformNarrativeArc
         let attempts: [Attempt]
         let changes: [SceneChange]
+        var summary: String {
+            let notes = arc.editorialNotes ?? []
+            let status = attempts.contains(where: \.accepted)
+                ? "Проверка завершена." : "Проверка завершена без принятого предложения модели."
+            let counts = " Сохранено изменений сцен: \(changes.count). Замечаний осталось: \(notes.count)."
+            return status + counts + (notes.isEmpty ? "" : "\n" + notes.joined(separator: "\n"))
+        }
     }
 
     struct SceneChange: Sendable, Identifiable {
@@ -34,13 +43,14 @@ struct LongformEditorialReview: Sendable {
         let reason: String
     }
 
-    static func options(for range: TimeSegment, transcript: Transcript) -> [Option] {
+    static func options(for range: TimeSegment, transcript: Transcript, anchor: TimeSegment? = nil) -> [Option] {
         let lines = transcript.segments.sorted { $0.start < $1.start }
         let filmEnd = lines.map(\.end).max() ?? range.end
         var result = [Option(id: "keep", range: range)]
         func add(_ id: String, start: Double, end: Double) {
             let candidate = TimeSegment(start: max(0, start), end: min(end, filmEnd))
             guard LongformEditorialSupport.allowed(candidate, around: range),
+                  LongformEditorialSupport.allowed(candidate, around: anchor ?? range),
                   !result.contains(where: { $0.range == candidate }) else { return }
             result.append(Option(id: id, range: candidate))
         }
@@ -58,7 +68,8 @@ struct LongformEditorialReview: Sendable {
         }
         // Действие может продолжаться без реплик: модель видит вариант с хвостом,
         // но не получает выдуманного описания того, что в нём изображено.
-        let tailEnd = min(range.end + 6, lines.first(where: { $0.start > range.end })?.start ?? filmEnd)
+        let tailEnd = min(filmEnd, SentenceBoundaryDetector.safeTailEnd(after: range.end, desiredEnd: range.end + 6,
+            speech: lines.map { TimeSegment(start: $0.start, end: $0.end) }))
         if tailEnd > range.end + 0.5 { add("aftermath", start: range.start, end: tailEnd) }
         return result
     }
@@ -71,7 +82,10 @@ struct LongformEditorialReview: Sendable {
     У кожної сцени є ID і готові варіанти меж: обирай лише наданий option.
     ВИПРАВ УСІ ПОТОЧНІ ЗАУВАЖЕННЯ, ДЕ Є БЕЗПЕЧНИЙ ВАРІАНТ МЕЖ: не залишай їх у notes після виправлення.
     Якщо вихід закінчується одразу за реплікою, обери aftermath, коли він не заходить у наступну сцену.
-    Якщо вхід починається без контексту, обери context; якщо попередня репліка змінює зміст — поясни це в notes.
+    Саме слово «А» чи «Але» не доводить нестачу контексту: самодостатнє запитання з конкретним предметом може починатися так.
+    Якщо вхід справді незрозумілий, обери context ЛИШЕ ЯКЩО цей ID є серед варіантів цієї сцени і попередня репліка пояснює предмет.
+    Якщо context немає або він починається новим незрозумілим посиланням, не вигадуй його й не розширюй сцену заради самого розширення.
+    keep дозволений: коли жоден варіант не усуває проблему, збережи сцену й конкретно поясни нерозв'язане зауваження в notes.
     aftermath означає 6 секунд реального матеріалу після слів, а НЕ підтвердження певної дії.
     Не переставляй акти, не додавай нових сцен, не змінюй тему, не переписуй репліки дубляжу.
     Якщо бачиш явну помилку ASR, запропонуй виправлення в captionSuggestions за номером L.
@@ -96,7 +110,8 @@ struct LongformEditorialReview: Sendable {
         for (actIndex, act) in arc.acts.enumerated() {
             for (sceneIndex, range) in act.segments.enumerated() {
                 number += 1
-                let options = options(for: range, transcript: transcript).map {
+                let anchor = LongformEditorialSupport.anchor(for: range, role: act.type, in: arc)
+                let options = options(for: range, transcript: transcript, anchor: anchor).map {
                     "\($0.id)=\(String(format: "%.2f", $0.range.start))–\(String(format: "%.2f", $0.range.end))"
                 }.joined(separator: "; ")
                 func dialogue(_ lower: Double, _ upper: Double, limit: Int) -> String {
@@ -148,6 +163,11 @@ struct LongformEditorialReview: Sendable {
         var best = arc
         best.editorialNotes = initialNotes
         var bestNoteCount = initialNotes.count
+        var bestAutomaticCount = initialNotes.count
+        func fingerprint(_ candidate: LongformNarrativeArc) -> String {
+            candidate.segments.map { "\(Int(($0.start * 1000).rounded())):\(Int(($0.end * 1000).rounded()))" }.joined(separator: ",")
+        }
+        var seenCandidates = Set([fingerprint(arc)])
         var repairContext: String?
         var didAccept = false
         let maxAttempts = 4
@@ -190,30 +210,42 @@ struct LongformEditorialReview: Sendable {
             guard let reviewed else { continue }
 
             let notes = reviewed.editorialNotes ?? []
-            let fingerprint = reviewed.segments.map { "\(Int($0.start * 100)):\(Int($0.end * 100))" }.joined(separator: ",")
-            let currentFingerprint = working.segments.map { "\(Int($0.start * 100)):\(Int($0.end * 100))" }.joined(separator: ",")
-            let changed = fingerprint != currentFingerprint
-            let improved = notes.count <= bestNoteCount
-            if improved {
+            let candidateFingerprint = fingerprint(reviewed)
+            let currentFingerprint = fingerprint(working)
+            let changed = candidateFingerprint != currentFingerprint
+            let repeated = !seenCandidates.insert(candidateFingerprint).inserted
+            let automaticCount = LongformEditorialSupport.notes(for: reviewed, transcript: transcript).count
+            // First valid semantic review can add useful model notes, but a new
+            // mechanically detected fault must never replace a cleaner montage.
+            let retain = automaticCount < bestAutomaticCount
+                || (automaticCount == bestAutomaticCount && (!didAccept || notes.count < bestNoteCount))
+            let adjustedScenes = zip(working.segments, reviewed.segments).filter { $0.0 != $0.1 }.count
+            if retain {
                 best = reviewed
                 bestNoteCount = notes.count
+                bestAutomaticCount = automaticCount
+                didAccept = true
             }
             attempts.append(Attempt(id: attemptNumber,
-                message: changed ? "Вариант прошёл проверку; замечаний осталось: \(notes.count)." : "Вариант прошёл проверку, границы не изменились; замечаний осталось: \(notes.count).",
-                accepted: true))
-            let adjustedScenes = zip(working.segments, reviewed.segments).filter { $0.0 != $0.1 }.count
-            working = reviewed
-            didAccept = true
-            progress("Попытка \(attemptNumber)/\(maxAttempts) · вариант прошёл все технические проверки; изменено сцен: \(adjustedScenes), осталось замечаний: \(notes.count).")
-
-            if notes.isEmpty {
-                result = reviewed
+                message: retain
+                    ? "Сохранён проверенный вариант; изменено сцен относительно предыдущего принятого варианта: \(adjustedScenes); осталось замечаний: \(notes.count)."
+                    : "Вариант технически допустим, но не улучшил проверку; в итоговый монтаж не принят. Замечаний в варианте: \(notes.count).",
+                accepted: retain, remainingNotes: notes.count))
+            progress("Попытка \(attemptNumber)/\(maxAttempts) · проверено изменений сцен: \(adjustedScenes); замечаний в варианте: \(notes.count); \(retain ? "вариант принят" : "сохранён предыдущий монтаж").")
+            working = best
+            result = best
+            if retain && notes.isEmpty {
                 progress("Все замечания устранены; изменения прошли проверку.")
                 break
             }
+            if repeated || !changed {
+                progress("Останавливаю повторные запросы: модель вернула уже проверенные границы без улучшения. Итоговые замечания и число сохранённых изменений показаны ниже.")
+                break
+            }
+
             if attemptNumber < maxAttempts, !notes.isEmpty {
                 result = best
-                repairContext = "После проверки остаются замечания: \(notes.joined(separator: " | ")). Предыдущий набор границ: \(fingerprint). Сопоставь замечания с предыдущим выбором и найди другой допустимый вариант для проблемных сцен. Не повторяй вариант, который не устранил замечание. Если ни один вариант границ не решает проблему, объясни это конкретно в notes и продолжи искать решение для остальных сцен."
+                repairContext = "После проверки остаются замечания: \(notes.joined(separator: " | ")). Отклонённый или проверенный набор границ: \(candidateFingerprint). Сопоставь замечания с предыдущим выбором и найди другой допустимый вариант для проблемных сцен. Не повторяй вариант, который не устранил замечание. Если ни один вариант границ не решает проблему, объясни это конкретно в notes и продолжи искать решение для остальных сцен."
                 progress("Проверенный вариант оставил \(notes.count) замечаний; анализирую альтернативы для проблемных сцен…")
             } else {
                 result = best
@@ -227,7 +259,6 @@ struct LongformEditorialReview: Sendable {
         }
         if didAccept {
             result.editorialReviewModelID = await model.modelID
-            DirectorRunLog.write("editorial review: accepted edits=\(result.sceneEdits?.count ?? 0) attempts=\(attempts.count)")
         }
         var changes: [SceneChange] = []
         for (actIndex, pair) in zip(arc.acts, result.acts).enumerated() {
@@ -237,6 +268,7 @@ struct LongformEditorialReview: Sendable {
                     scene: sceneIndex + 1, oldRange: ranges.0, newRange: ranges.1, reason: reason))
             }
         }
+        DirectorRunLog.write("editorial review: retainedSceneChanges=\(changes.count) remainingNotes=\(result.editorialNotes?.count ?? 0) attempts=\(attempts.count)")
         let remaining = result.editorialNotes?.count ?? 0
         if didAccept {
             progress(remaining == 0
@@ -245,7 +277,9 @@ struct LongformEditorialReview: Sendable {
         } else {
             progress("Модель не получила проверенный вариант за \(attempts.count) попытки. Монтаж сохранён без изменений; причины указаны в журнале.")
         }
-        return Outcome(arc: result, attempts: attempts, changes: changes)
+        let outcome = Outcome(arc: result, attempts: attempts, changes: changes)
+        progress(outcome.summary)
+        return outcome
     }
 
     private static func validationFeedback(_ raw: String, arc: LongformNarrativeArc,
@@ -264,8 +298,8 @@ struct LongformEditorialReview: Sendable {
             guard seen.insert(edit.scene).inserted else { return "Сцена \(edit.scene) указана повторно. Укажи её один раз." }
             let (ai, si) = placements[edit.scene - 1]
             let range = arc.acts[ai].segments[si]
-            let available = options(for: range, transcript: transcript).map(\.id).joined(separator: ", ")
-            guard options(for: range, transcript: transcript).contains(where: { $0.id == edit.option }) else {
+            let available = options(for: range, transcript: transcript, anchor: LongformEditorialSupport.anchor(for: range, role: arc.acts[ai].type, in: arc)).map(\.id).joined(separator: ", ")
+            guard options(for: range, transcript: transcript, anchor: LongformEditorialSupport.anchor(for: range, role: arc.acts[ai].type, in: arc)).contains(where: { $0.id == edit.option }) else {
                 return "Для сцены \(edit.scene) выбран вариант «\(edit.option)», которого нет в списке. Разрешены: \(available). Выбери один из них."
             }
         }
@@ -284,14 +318,16 @@ struct LongformEditorialReview: Sendable {
               let edit = edits.first(where: { candidate in
                   guard let scene = candidate["scene"] as? Int, let id = candidate["option"] as? String,
                         let (ai, si) = placement(scene, in: arc) else { return false }
-                  return !options(for: arc.acts[ai].segments[si], transcript: transcript).contains { $0.id == id }
+                  let range = arc.acts[ai].segments[si]
+                  return !options(for: range, transcript: transcript,
+                      anchor: LongformEditorialSupport.anchor(for: range, role: arc.acts[ai].type, in: arc)).contains { $0.id == id }
               }),
               let scene = edit["scene"] as? Int,
               let (ai, si) = placement(scene, in: arc) else {
             return "Верни строго: {\"edits\":[],\"notes\":[\"конкретное решение\"]}. Не добавляй title, hook и captionSuggestions."
         }
         let range = arc.acts[ai].segments[si]
-        let options = Self.options(for: range, transcript: transcript)
+        let options = Self.options(for: range, transcript: transcript, anchor: LongformEditorialSupport.anchor(for: range, role: arc.acts[ai].type, in: arc))
             .map { "\($0.id) = \(String(format: "%.2f", $0.range.start))–\(String(format: "%.2f", $0.range.end))" }
             .joined(separator: "; ")
         let nearby = transcript.segments.filter { $0.end > range.start - 8 && $0.start < range.end + 8 }
@@ -312,20 +348,20 @@ struct LongformEditorialReview: Sendable {
               let invalidEdit = edits.first(where: { edit in
                   guard let scene = edit["scene"] as? Int, let id = edit["option"] as? String,
                         let (ai, si) = placement(scene, in: arc) else { return false }
-                  return !options(for: arc.acts[ai].segments[si], transcript: transcript).contains { $0.id == id }
+                  let range = arc.acts[ai].segments[si]
+                  return !options(for: range, transcript: transcript,
+                      anchor: LongformEditorialSupport.anchor(for: range, role: arc.acts[ai].type, in: arc)).contains { $0.id == id }
               }),
               let scene = invalidEdit["scene"] as? Int,
               let (ai, si) = placement(scene, in: arc) else { return nil }
 
         let range = arc.acts[ai].segments[si]
-        let allAvailable = options(for: range, transcript: transcript)
-        // A focused repair exists because the current scene has an active note.
-        // Ask the model for a real alternative; keeping the same broken boundary
-        // would only turn a rejected edit into a silent no-op.
-        let alternatives = allAvailable.filter { $0.id != "keep" }
-        let available = alternatives.isEmpty ? allAvailable : alternatives
+        let allAvailable = options(for: range, transcript: transcript, anchor: LongformEditorialSupport.anchor(for: range, role: arc.acts[ai].type, in: arc))
+        // A technically allowed trim is not necessarily a semantic improvement.
+        // Keep remains an explicit choice when every alternative makes the entry worse.
+        let available = allAvailable
         let rejectedOption = invalidEdit["option"] as? String ?? "неизвестный ID"
-        guard available.count > 1 else { return nil }
+        guard !available.isEmpty else { return nil }
         let optionList = available.map {
             "{\"option\":\"\($0.id)\",\"start\":\(String(format: "%.2f", $0.range.start)),\"end\":\(String(format: "%.2f", $0.range.end))}"
         }.joined(separator: ", ")
@@ -334,7 +370,7 @@ struct LongformEditorialReview: Sendable {
             .joined(separator: "\n")
         let prompt = """
         Виправ лише одне редакторське рішення для кіноесе.
-        Для сцени \(scene) попередня модель вибрала неіснуючий варіант «\(rejectedOption)». Не повторюй його. Сама оціни контекст реплік і вибери найкращий варіант зі списку. Не використовуй жодного іншого ID і не обирай межу навмання.
+        Для сцени \(scene) попередня модель вибрала неіснуючий варіант «\(rejectedOption)». Не повторюй його. Сама оціни контекст реплік і вибери найкращий варіант зі списку. Не використовуй жодного іншого ID і не обирай межу навмання. Якщо альтернативи не усувають зауваження, обери keep і поясни причину.
         Зауваження: \(issue)
         Тема: \(arc.concept.word). Функція акта: \(arc.acts[ai].dramaticBeat)
         ДОСТУПНІ ВАРІАНТИ: [\(optionList)]
@@ -353,6 +389,8 @@ struct LongformEditorialReview: Sendable {
               let id = choice["option"] as? String,
               let reason = choice["reason"] as? String, !reason.trimmed.isEmpty,
               let selected = available.first(where: { $0.id == id }) else { return nil }
+        let anchor = LongformEditorialSupport.anchor(for: range, role: arc.acts[ai].type, in: arc)
+        guard selected.id == "keep" || LongformEditorialSupport.allowed(selected.range, around: anchor) else { return nil }
         var revised = arc
         revised.acts[ai].segments[si] = selected.range
         let sorted = revised.segments.sorted { $0.start < $1.start }
@@ -388,7 +426,7 @@ struct LongformEditorialReview: Sendable {
                   !edit.reason.trimmed.isEmpty else { return nil }
             let (ai, si) = placements[edit.scene - 1]
             let original = arc.acts[ai].segments[si]
-            guard let option = options(for: original, transcript: transcript).first(where: { $0.id == edit.option })
+            guard let option = options(for: original, transcript: transcript, anchor: LongformEditorialSupport.anchor(for: original, role: arc.acts[ai].type, in: arc)).first(where: { $0.id == edit.option })
             else { return nil }
             if option.id == "keep" { continue }
             let anchor = LongformEditorialSupport.anchor(for: original, role: arc.acts[ai].type, in: arc)
@@ -482,9 +520,10 @@ struct LongformEditorialReview: Sendable {
                 let lastSpeech = transcript.segments.filter { $0.start < range.end && $0.end > range.start }
                     .map(\.end).max() ?? range.end
                 guard abs(lastSpeech - range.end) < 0.3 else { continue }
-                let nextSpeech = transcript.segments.filter { $0.start >= range.end }.map(\.start).min() ?? filmEnd
+                let safeSpeechEnd = SentenceBoundaryDetector.safeTailEnd(after: range.end, desiredEnd: range.end + 6,
+                    speech: transcript.segments.map { TimeSegment(start: $0.start, end: $0.end) })
                 let nextSelected = arc.segments.filter { $0.start >= range.end }.map(\.start).min() ?? filmEnd
-                let end = min(range.end + 6, nextSpeech, nextSelected, filmEnd, range.start + 40)
+                let end = min(safeSpeechEnd, nextSelected, filmEnd, range.start + 40)
                 let candidate = TimeSegment(start: range.start, end: end)
                 let anchor = LongformEditorialSupport.anchor(for: range, role: act.type, in: arc)
                 guard end - range.end >= 1, LongformEditorialSupport.allowed(candidate, around: anchor) else { continue }

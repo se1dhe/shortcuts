@@ -1041,3 +1041,132 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         return ctx.makeImage()
     }
 }
+
+/// The same Core Animation card is used by the live preview and the video exporter.
+enum DonorCreditsRenderer {
+    private static func styledText(_ text: String, size: CGFloat, color: NSColor,
+                                   scale: CGFloat, serif: Bool = false) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        paragraph.lineBreakMode = .byWordWrapping
+        let font = serif ? (NSFont(name: "Georgia", size: size) ?? .systemFont(ofSize: size))
+            : NSFont.systemFont(ofSize: size, weight: .medium)
+        return NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color,
+            .paragraphStyle: paragraph, .kern: 0.7 * scale])
+    }
+
+    /// Measure the exact attributed text we draw, at unconstrained height: a
+    /// constrained measurement can hide the overflow containing the final URL.
+    static func fittedCTA(_ text: String, in size: CGSize, scale: CGFloat) -> NSAttributedString {
+        var fontSize = 44 * scale
+        while true {
+            let value = styledText(text, size: fontSize,
+                color: NSColor(calibratedWhite: 0.93, alpha: 1), scale: scale)
+            let bounds = value.boundingRect(with: CGSize(width: size.width, height: 100_000),
+                options: [.usesLineFragmentOrigin, .usesFontLeading])
+            if ceil(bounds.height) <= size.height - 12 * scale && ceil(bounds.width) <= size.width || fontSize <= scale {
+                return value
+            }
+            fontSize = max(scale, fontSize - scale)
+        }
+    }
+
+    static func makeLayer(support: EssaySupport, ctaText: String, theme: String,
+                          start: Double, duration: Double, canvas: CGSize = CGSize(width: 1920, height: 1080),
+                          loops: Bool = false) -> CALayer {
+        let root = CALayer()
+        root.name = "donorFinalCard"
+        root.frame = CGRect(origin: .zero, size: canvas)
+        root.backgroundColor = NSColor(calibratedWhite: 0.025, alpha: 1).cgColor
+        let k = canvas.height / 1080
+        let gold = NSColor(calibratedRed: 0.91, green: 0.77, blue: 0.51, alpha: 1)
+        let width = canvas.width
+        let end = start + duration
+        let total = max(end, 1)
+        func rasterizedLabel(_ value: NSAttributedString, rect: CGRect) -> CALayer {
+            let result = CALayer()
+            result.frame = rect
+            let image = NSImage(size: rect.size)
+            image.lockFocus()
+            value.draw(with: CGRect(origin: .zero, size: rect.size), options: [.usesLineFragmentOrigin, .usesFontLeading])
+            image.unlockFocus()
+            var proposed = CGRect(origin: .zero, size: rect.size)
+            result.contents = image.cgImage(forProposedRect: &proposed, context: nil, hints: nil)
+            result.contentsScale = 1
+            return result
+        }
+        func label(_ text: String, rect: CGRect, size: CGFloat, color: NSColor, serif: Bool = false) -> CALayer {
+            rasterizedLabel(styledText(text, size: size, color: color, scale: k, serif: serif), rect: rect)
+        }
+        root.addSublayer(label("КАДР & СЕНС", rect: CGRect(x: width * 0.1, y: canvas.height * 0.87, width: width * 0.8, height: 44 * k),
+                               size: 26 * k, color: gold))
+        root.addSublayer(label(theme.uppercased(), rect: CGRect(x: width * 0.08, y: canvas.height * 0.74, width: width * 0.84, height: 88 * k),
+                               size: 56 * k, color: .white, serif: true))
+        let ctaRect = CGRect(x: width * 0.12, y: canvas.height * 0.43, width: width * 0.76, height: canvas.height * 0.24)
+        let cta = rasterizedLabel(fittedCTA(ctaText, in: ctaRect.size, scale: k), rect: ctaRect)
+        cta.name = "donorFinalCTA"
+        root.addSublayer(cta)
+        if support.showsCredits {
+            let rule = CALayer()
+            rule.frame = CGRect(x: width * 0.45, y: canvas.height * 0.4, width: width * 0.1, height: 2 * k)
+            rule.backgroundColor = gold.cgColor
+            root.addSublayer(rule)
+            root.addSublayer(label("ДЯКУЄМО ЗА ПІДТРИМКУ", rect: CGRect(x: width * 0.1, y: canvas.height * 0.335, width: width * 0.8, height: 38 * k),
+                                   size: 24 * k, color: gold))
+            let viewport = CALayer()
+            viewport.name = "donorViewport"
+            viewport.frame = CGRect(x: width * 0.1, y: canvas.height * 0.105, width: width * 0.8, height: canvas.height * 0.21)
+            viewport.masksToBounds = true
+            let mask = CAGradientLayer()
+            mask.frame = viewport.bounds
+            mask.colors = [NSColor.clear.cgColor, NSColor.white.cgColor, NSColor.white.cgColor, NSColor.clear.cgColor]
+            mask.locations = [0, 0.16, 0.84, 1]
+            mask.startPoint = CGPoint(x: 0.5, y: 0)
+            mask.endPoint = CGPoint(x: 0.5, y: 1)
+            viewport.mask = mask
+            let columns = support.nicknames.count == 1 ? 1 : 2
+            let rows = Int(ceil(Double(support.nicknames.count) / Double(columns)))
+            let rowHeight: CGFloat = 76 * k
+            let height = CGFloat(rows) * rowHeight
+            let content = CALayer()
+            content.name = "donorNames"
+            content.anchorPoint = .zero
+            content.bounds = CGRect(x: 0, y: 0, width: viewport.bounds.width, height: height)
+            content.position = CGPoint(x: 0, y: -height)
+            let columnWidth = viewport.bounds.width / CGFloat(columns)
+            for (index, nickname) in support.nicknames.enumerated() {
+                var size: CGFloat = 46 * k
+                while size > 24 * k && (nickname as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: size, weight: .medium)]).width > columnWidth - 40 * k {
+                    size -= 2 * k
+                }
+                let cell = CGRect(x: CGFloat(index % columns) * columnWidth + 20 * k,
+                    y: height - CGFloat(index / columns + 1) * rowHeight,
+                    width: columnWidth - 40 * k, height: rowHeight)
+                content.addSublayer(label(nickname, rect: cell, size: size, color: .white))
+            }
+            let scroll = CAKeyframeAnimation(keyPath: "position.y")
+            scroll.values = [-height, -height, viewport.bounds.height, viewport.bounds.height]
+            scroll.keyTimes = [0, NSNumber(value: (start + 0.65) / total), NSNumber(value: (end - 0.65) / total), 1]
+            scroll.duration = total
+            scroll.beginTime = AVCoreAnimationBeginTimeAtZero
+            scroll.fillMode = .both
+            scroll.isRemovedOnCompletion = false
+            scroll.repeatCount = loops ? .infinity : 0
+            content.add(scroll, forKey: "donorScroll")
+            viewport.addSublayer(content)
+            root.addSublayer(viewport)
+        }
+        let fade = CAKeyframeAnimation(keyPath: "opacity")
+        fade.values = [0, 0, 1, 1, 0]
+        fade.keyTimes = [0, NSNumber(value: start / total), NSNumber(value: (start + 0.45) / total),
+                         NSNumber(value: (end - 0.5) / total), 1]
+        fade.duration = total
+        fade.beginTime = AVCoreAnimationBeginTimeAtZero
+        fade.fillMode = .both
+        fade.isRemovedOnCompletion = false
+        fade.repeatCount = loops ? .infinity : 0
+        root.opacity = 0
+        root.add(fade, forKey: "donorCardFade")
+        return root
+    }
+}

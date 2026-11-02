@@ -16,15 +16,15 @@ enum EssaySceneEvidence {
         let filmEnd = transcript.segments.map(\.end).filter(\.isFinite).max() ?? 0
         let moments = analysis.selectedMoments
         var issues: [String] = []
-        guard EssayDurationPolicy.pool.contains(moments.count) else {
+        guard analysis.primaryConcept.format.sceneCount.contains(moments.count) else {
             throw InvalidSelection(issues: ["нужно 14–22 сцены от модели, получено \(moments.count)"])
         }
         if analysis.essayPlan?.thesis?.trimmed.isEmpty != false {
             issues.append("нет тезиса эссе")
         }
-        for role in LongformActType.canonicalAnalyticOrder {
+        for role in analysis.primaryConcept.format.roles {
             let count = moments.filter { $0.actRole == role }.count
-            let minimum = role == .hook ? 1 : 3
+            let minimum = analysis.primaryConcept.format.minimumScenes(role)
             if count < minimum {
                 issues.append("для акта \(role.promptKey) нужно \(minimum) сцен, получено \(count)")
             }
@@ -48,7 +48,7 @@ enum EssaySceneEvidence {
             if !moment.dramaticWeight.isFinite || !(0...1).contains(moment.dramaticWeight) {
                 issues.append("\(label): недопустимый вес")
             }
-            if moment.actRole.map({ !LongformActType.canonicalAnalyticOrder.contains($0) }) ?? true {
+            if moment.actRole.map({ !analysis.primaryConcept.format.roles.contains($0) }) ?? true {
                 issues.append("\(label): нет аналитической роли")
             }
             if moment.supports?.trimmed.isEmpty != false {
@@ -93,17 +93,21 @@ enum EssaySceneEvidence {
         _ arc: LongformNarrativeArc,
         selectedMoments: [SelectedMoment],
         coldOpenEnabled: Bool,
-        allowApprovedTrim: Bool = false
+        allowApprovedTrim: Bool = false,
+        allowUserApprovedScenes: Bool = false
     ) throws {
         var issues: [String] = []
-        if arc.acts.map(\.type) != LongformActType.canonicalAnalyticOrder {
+        if arc.acts.map(\.type) != arc.concept.format.roles {
             issues.append("нарушен порядок смысловых актов")
         }
         var seen: [TimeSegment] = []
         for act in arc.acts {
             if act.segments.isEmpty { issues.append("пустой акт \(act.type.promptKey)") }
             for range in act.segments {
-                if !selectedMoments.contains(where: { moment in
+                if !range.start.isFinite || !range.end.isFinite || range.start < 0 || range.duration < 0.1 {
+                    issues.append("некорректные границы фрагмента в акте \(act.type.promptKey)")
+                }
+                if !allowUserApprovedScenes && !selectedMoments.contains(where: { moment in
                     let sameRange = abs(moment.startTime - range.start) < 0.001
                         && abs(moment.endTime - range.end) < 0.001
                     let approvedTrim = allowApprovedTrim && range.duration >= EssayDurationPolicy.sceneLength.lowerBound
@@ -124,15 +128,20 @@ enum EssaySceneEvidence {
                 }) {
                     issues.append("в монтаж попала неподтверждённая сцена или изменена её роль")
                 }
-                if seen.contains(where: { $0.start < range.end && range.start < $0.end }) {
+                if !allowUserApprovedScenes && seen.contains(where: { $0.start < range.end && range.start < $0.end }) {
                     issues.append("в монтаже повторяется фрагмент фильма")
                 }
                 seen.append(range)
             }
         }
-        let duration = LongformTimeline(arc: arc, coldOpenEnabled: coldOpenEnabled).duration
-        if !duration.isFinite || !EssayDurationPolicy.rendered.contains(duration) {
-            issues.append("подтверждённый монтаж не укладывается в 4:00–8:00")
+        let timeline = LongformTimeline(arc: arc, coldOpenEnabled: coldOpenEnabled)
+        let duration = timeline.duration
+        let editorialDuration = duration - timeline.supportExtraDuration
+        if !duration.isFinite || duration <= 0.1
+            || (!allowUserApprovedScenes && !EssayDurationPolicy.rendered.contains(editorialDuration)) {
+            issues.append(allowUserApprovedScenes
+                ? "длительность монтажа некорректна"
+                : "подтверждённый монтаж не укладывается в 4:00–8:00")
         }
         guard issues.isEmpty else { throw InvalidSelection(issues: issues) }
     }

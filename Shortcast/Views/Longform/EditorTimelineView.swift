@@ -1,7 +1,8 @@
 import SwiftUI
+import AppKit
 
 /// An editable clip in the final sequence. Source time and sequence time are kept distinct.
-struct EditorTimelineClip: Identifiable {
+struct EditorTimelineClip: Identifiable, Equatable, Sendable {
     let id: UUID
     let start: Double
     let end: Double
@@ -12,6 +13,42 @@ struct EditorTimelineClip: Identifiable {
     var quote: String? = nil
     var duration: Double { max(0, end - start) }
 }
+/// Piecewise mapping keeps the playhead aligned even when short clips receive
+/// a minimum visual width or the sequence has been zoomed.
+struct EditorTimelineGeometry {
+    let clips: [EditorTimelineClip]
+    let widths: [CGFloat]
+    let spacing: CGFloat
+    var duration: Double { EditorTimelineMapping.duration(clips) }
+
+    func x(for seconds: Double) -> CGFloat {
+        let time = seconds.isFinite ? max(0, min(duration, seconds)) : 0
+        var elapsed = 0.0
+        var x: CGFloat = 12
+        for (index, clip) in clips.enumerated() {
+            if time < elapsed + clip.duration || index == clips.count - 1 {
+                return x + widths[index] * CGFloat(clip.duration > 0 ? max(0, min(1, (time - elapsed) / clip.duration)) : 0)
+            }
+            elapsed += clip.duration; x += widths[index] + spacing
+        }
+        return x
+    }
+
+    func time(at position: CGFloat) -> Double {
+        guard position.isFinite else { return 0 }
+        var elapsed = 0.0
+        var x: CGFloat = 12
+        for (index, clip) in clips.enumerated() {
+            let end = x + widths[index]
+            if position <= end { return elapsed + clip.duration * Double(max(0, min(1, (position - x) / max(1, widths[index])))) }
+            elapsed += clip.duration
+            if position <= end + spacing { return elapsed }
+            x = end + spacing
+        }
+        return duration
+    }
+}
+
 struct EditorTimelineView: View {
     let clips: [EditorTimelineClip]
     let selectedID: UUID?
@@ -22,7 +59,13 @@ struct EditorTimelineView: View {
     let onRemove: ((UUID) -> Void)?
     var onTrimStart: ((UUID, Double) -> Void)? = nil
     var onTrimEnd: ((UUID, Double) -> Void)? = nil
+    var playhead: Double = 0
+    var isPlaying = false
+    var onTogglePlayback: (() -> Void)? = nil
+    var onSeek: ((Double, Bool) -> Void)? = nil
     @State private var zoom: CGFloat = 1
+    @State private var coordinateSpaceID = UUID()
+    @State private var wheelTime: Double?
 
     private var totalDuration: Double { clips.reduce(0) { $0 + $1.duration } }
 
@@ -33,11 +76,24 @@ struct EditorTimelineView: View {
                     Label("МОНТАЖНАЯ ЛИНИЯ", systemImage: "film.stack")
                         .font(.system(size: 11, weight: .bold)).tracking(1.2)
                         .foregroundStyle(StudioTheme.accent)
-                    Text("Перетаскивайте края клипа для точной подрезки · «+» вставляет сцену в стык")
+                    Text("Линейка — переход · два пальца влево/вправо — перемотка · ⌥ + прокрутка — сдвиг шкалы")
                         .font(.system(size: 10, weight: .medium)).foregroundStyle(StudioTheme.muted)
                 }
                 Spacer()
                 HStack(spacing: 14) {
+                    if let onTogglePlayback {
+                        Button(action: onTogglePlayback) {
+                            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                        }
+                        .buttonStyle(.bordered).controlSize(.small)
+                        .help(isPlaying ? "Пауза монтажа" : "Воспроизвести монтаж с текущего места")
+                        .accessibilityLabel(isPlaying ? "Пауза монтажа" : "Воспроизвести монтаж")
+                        Text(timecode(playhead))
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(StudioTheme.accent)
+                            .accessibilityLabel("Позиция воспроизведения")
+                            .accessibilityValue(timecode(playhead))
+                    }
                     metric(clips.count, label: sceneLabel(clips.count))
                     metric(max(0, clips.count - 1), label: cutLabel(max(0, clips.count - 1)))
                     VStack(alignment: .trailing, spacing: 2) {
@@ -76,10 +132,15 @@ struct EditorTimelineView: View {
                     let widths = clips.map { max(72, CGFloat($0.duration) * scale) }
                     let trackWidth = widths.reduce(0, +) + spacing * CGFloat(max(0, clips.count - 1))
                     let canvasWidth = max(viewport.size.width, trackWidth + 24)
+                    let geometry = EditorTimelineGeometry(clips: clips, widths: widths, spacing: spacing)
 
                     ScrollView(.horizontal, showsIndicators: canvasWidth > viewport.size.width + 1) {
                         VStack(alignment: .leading, spacing: 7) {
                             ruler(widths: widths, spacing: spacing, width: canvasWidth)
+                                .contentShape(Rectangle())
+                                .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named(coordinateSpaceID))
+                                    .onChanged { onSeek?(geometry.time(at: $0.location.x), true) }
+                                    .onEnded { onSeek?(geometry.time(at: $0.location.x), false) })
                             ZStack(alignment: .topLeading) {
                                 HStack(spacing: spacing) {
                                     ForEach(Array(clips.enumerated()), id: \.element.id) { index, clip in
@@ -93,7 +154,8 @@ struct EditorTimelineView: View {
                                             onMoveLater: onMoveLater.map { callback in { callback(clip.id) } },
                                             onRemove: onRemove.map { callback in { callback(clip.id) } },
                                             onTrimStart: onTrimStart.map { callback in { callback(clip.id, $0) } },
-                                            onTrimEnd: onTrimEnd.map { callback in { callback(clip.id, $0) } }
+                                            onTrimEnd: onTrimEnd.map { callback in { callback(clip.id, $0) } },
+                                            onSeek: onSeek.map { callback in { seconds in callback(seconds, false) } }
                                         )
                                         .frame(width: widths[index], height: 104)
                                     }
@@ -117,7 +179,49 @@ struct EditorTimelineView: View {
                             .background(StudioTheme.background.opacity(0.46), in: RoundedRectangle(cornerRadius: 11))
                             .overlay(RoundedRectangle(cornerRadius: 11).stroke(StudioTheme.line, lineWidth: 1))
                         }
+                        .overlay(alignment: .topLeading) {
+                            if onSeek != nil {
+                                VStack(spacing: 0) {
+                                    Image(systemName: "triangle.fill").rotationEffect(.degrees(180))
+                                        .font(.system(size: 10)).frame(width: 18, height: 12)
+                                        .contentShape(Rectangle())
+                                        .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named(coordinateSpaceID))
+                                            .onChanged { onSeek?(geometry.time(at: $0.location.x), true) }
+                                            .onEnded { onSeek?(geometry.time(at: $0.location.x), false) })
+                                    Rectangle().frame(width: 1.5, height: 120).allowsHitTesting(false)
+                                }
+                                .foregroundStyle(Color(hex: "F2F0EA"))
+                                .shadow(color: .black.opacity(0.9), radius: 2)
+                                .frame(width: 18)
+                                .offset(x: geometry.x(for: playhead) - 9)
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel("Указатель воспроизведения")
+                                .accessibilityValue(timecode(playhead))
+                                .accessibilityAdjustableAction { direction in
+                                    let time = playhead + (direction == .increment ? 1 : -1)
+                                    onSeek?(min(totalDuration, max(0, time)), false)
+                                }
+                            }
+                        }
+                        .background {
+                            if onSeek != nil {
+                                TimelineTrackpadInput { movement, editing in
+                                    let origin = wheelTime ?? playhead
+                                    let time = geometry.time(at: geometry.x(for: origin) + movement)
+                                    wheelTime = editing ? time : nil
+                                    onSeek?(time, editing)
+                                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                            }
+                        }
+                        .coordinateSpace(name: coordinateSpaceID)
                         .padding(.vertical, 3)
+                    }
+                    .accessibilityScrollAction { edge in
+                        switch edge {
+                        case .leading: onSeek?(max(0, playhead - 3), false)
+                        case .trailing: onSeek?(min(totalDuration, playhead + 3), false)
+                        default: break
+                        }
                     }
                 }
                 .frame(height: 140)
@@ -216,6 +320,7 @@ private struct EditorTimelineClipBlock: View {
     let onRemove: (() -> Void)?
     let onTrimStart: ((Double) -> Void)?
     let onTrimEnd: ((Double) -> Void)?
+    let onSeek: ((Double) -> Void)?
 
     @State private var inOrigin: Double?
     @State private var inWidth: CGFloat = 1
@@ -271,7 +376,11 @@ private struct EditorTimelineClipBlock: View {
             .padding(.leading, 13).padding(.trailing, 8).padding(.vertical, 8)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .onTapGesture(perform: onSelect)
+            .gesture(SpatialTapGesture().onEnded { value in
+                if let onSeek {
+                    onSeek(sequenceStart + clip.duration * Double(max(0, min(1, value.location.x / max(1, geometry.size.width)))))
+                } else { onSelect() }
+            })
 
             HStack(spacing: 0) {
                 trimHandle(isLeading: true, blockWidth: geometry.size.width)
@@ -332,5 +441,60 @@ private struct EditorTimelineClipBlock: View {
     private func timecode(_ seconds: Double) -> String {
         let value = max(0, Int(seconds.rounded()))
         return String(format: "%02d:%02d:%02d", value / 3600, value / 60 % 60, value % 60)
+    }
+}
+
+
+/// Observe horizontal wheel events only while the pointer is inside this
+/// timeline's visible viewport. Vertical scrolling and Option-pan stay native.
+private struct TimelineTrackpadInput: NSViewRepresentable {
+    let onScroll: (CGFloat, Bool) -> Void
+    func makeNSView(context: Context) -> TimelineWheelView {
+        let view = TimelineWheelView(); view.onScroll = onScroll; view.install(); return view
+    }
+    func updateNSView(_ nsView: TimelineWheelView, context: Context) { nsView.onScroll = onScroll }
+    static func dismantleNSView(_ nsView: TimelineWheelView, coordinator: ()) { nsView.uninstall() }
+}
+
+private final class TimelineWheelView: NSView {
+    var onScroll: (CGFloat, Bool) -> Void = { _, _ in }
+    private var monitor: Any?
+    private var finish: DispatchWorkItem?
+    private var active = false
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func install() {
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            let handled = MainActor.assumeIsolated {
+                guard let self, event.window === self.window,
+                      !event.modifierFlags.contains(.option),
+                      self.visibleRect.contains(self.convert(event.locationInWindow, from: nil)) else { return false }
+                let shifted = event.modifierFlags.contains(.shift)
+                let horizontal = abs(event.scrollingDeltaX) > 0.001 ? event.scrollingDeltaX : event.deltaX
+                let vertical = abs(event.scrollingDeltaY) > 0.001 ? event.scrollingDeltaY : event.deltaY
+                let delta = shifted && abs(horizontal) < 0.01 ? vertical : horizontal
+                guard self.active || abs(delta) > abs(vertical) * 0.7 || shifted && abs(delta) > 0 else { return false }
+                self.finish?.cancel()
+                let ended = event.phase == .ended || event.phase == .cancelled || event.momentumPhase == .ended
+                if ended {
+                    self.active = false; self.onScroll(0, false)
+                } else {
+                    self.active = true
+                    self.onScroll(-delta * (event.hasPreciseScrollingDeltas ? 1 : 12), true)
+                    let completion = DispatchWorkItem { [weak self] in
+                        guard let self else { return }
+                        self.active = false; self.onScroll(0, false)
+                    }
+                    self.finish = completion
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.16, execute: completion)
+                }
+                return true
+            }
+            return handled ? nil : event
+        }
+    }
+    func uninstall() {
+        finish?.cancel(); finish = nil
+        if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil
     }
 }

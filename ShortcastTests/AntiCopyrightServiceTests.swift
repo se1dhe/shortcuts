@@ -1,4 +1,5 @@
 import XCTest
+import AVFoundation
 import CoreGraphics
 import CoreImage
 import CoreMedia
@@ -306,7 +307,7 @@ final class AntiCopyrightServiceTests: XCTestCase {
     func testPresetDisplayName() {
         XCTAssertEqual(AntiCopyrightPreset.off.displayName, "Отключено")
         XCTAssertEqual(AntiCopyrightPreset.subtle.displayName, "Мягкая (Subtle)")
-        XCTAssertEqual(AntiCopyrightPreset.cinemaShield.displayName, "YouTube Cinema Shield (Рекомендуется для фильмов)")
+        XCTAssertEqual(AntiCopyrightPreset.cinemaShield.displayName, "Кинематографическая обработка")
     }
 
     func testPresetConfig() {
@@ -317,5 +318,43 @@ final class AntiCopyrightServiceTests: XCTestCase {
 
     func testAllPresetsCaseIterable() {
         XCTAssertEqual(AntiCopyrightPreset.allCases.count, 7)
+    }
+}
+
+@MainActor
+final class ShieldExportRegressionTests: XCTestCase {
+    func testInPlaceProcessingPreservesTimelineAndAudio() async throws {
+        guard ProcessInfo.processInfo.environment["SHORTCAST_RENDER_SMOKE"] == "1" else { throw XCTSkip("Opt-in media export") }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("input.mp4")
+        _ = try await ProcessRunner.shared.run(executableURL: URL(fileURLWithPath: "/opt/homebrew/bin/ffmpeg"), arguments: [
+            "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+            "-t", "2", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", file.path])
+        let service = AntiCopyrightService(config: .moderate,
+            pictureRegion: CGRect(x: 0, y: 90, width: 640, height: 180), activeDuration: 1.5, preserveTimeline: true)
+        _ = try await service.process(videoURL: file, outputURL: file, workingDirectory: dir)
+        let asset = AVURLAsset(url: file)
+        let duration = try await asset.load(.duration).seconds
+        XCTAssertEqual(duration, 2, accuracy: 0.15)
+        let audio = try await asset.loadTracks(withMediaType: .audio)
+        XCTAssertFalse(audio.isEmpty)
+        XCTAssertEqual(service.config.audioSpeedMultiplier, 1)
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasPrefix(".shield-") }
+        XCTAssertTrue(leftovers.isEmpty)
+    }
+
+    func testFailedProcessingDoesNotDeleteDestination() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("input.mp4")
+        let previous = Data("existing export must survive".utf8)
+        try previous.write(to: file)
+        do {
+            _ = try await AntiCopyrightService.cinemaShield.process(videoURL: file, outputURL: file, workingDirectory: dir)
+            XCTFail("Invalid input must fail")
+        } catch { XCTAssertEqual(try Data(contentsOf: file), previous) }
     }
 }

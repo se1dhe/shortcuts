@@ -111,7 +111,7 @@ echo "==> Ensuring ad-hoc code signature and permissions..."
 
 # 4. Sync browser-publisher automation scripts to Application Support
 PUBLISHER_SRC="$PROJECT_ROOT/scripts/browser-publisher"
-if [[ -d "$PUBLISHER_SRC" ]]; then
+if [[ "${SHORTCAST_SKIP_PUBLISHER_SYNC:-0}" != "1" && -d "$PUBLISHER_SRC" ]]; then
   PUBLISHER_DEST="$HOME/Library/Application Support/Shortcast/browser-publisher"
   mkdir -p "$PUBLISHER_DEST"
   /usr/bin/rsync -a --delete --delete-excluded --exclude '/test/' --exclude 'node_modules/.cache' "$PUBLISHER_SRC/" "$PUBLISHER_DEST/" || true

@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import MLX
 import Gemma4Swift
 import MLXLMCommon
 import MLXVLM
@@ -22,11 +23,13 @@ struct LongformPackagingService: Sendable {
         return LongformThumbnailGenerator(verifier: ThumbnailSubjectVerifier(model: gateway, leadingCast: cast))
     }
 
-    static func updatingText(_ result: LongformBuildResult) -> LongformBuildResult {
-        let timeline = LongformTimeline(arc: result.arc, coldOpenEnabled: result.audioSettings?.coldOpenEnabled ?? true)
-        let metadata = LongformMetadataGenerator.generate(movieTitle: result.arc.movieTitle,
-            concept: result.arc.concept, arc: result.arc, timeline: timeline)
-        return LongformBuildResult(outputURL: result.outputURL, arc: result.arc, metadata: metadata,
+    static func updatingText(_ result: LongformBuildResult, transcript: Transcript? = nil) -> LongformBuildResult {
+        var arc = result.arc
+        if let transcript { arc.editorialNotes = LongformEditorialSupport.refreshedNotes(for: arc, transcript: transcript) }
+        let timeline = LongformTimeline(arc: arc, coldOpenEnabled: result.audioSettings?.coldOpenEnabled ?? true)
+        let metadata = LongformMetadataGenerator.generate(movieTitle: arc.movieTitle,
+            concept: arc.concept, arc: arc, timeline: timeline)
+        return LongformBuildResult(outputURL: result.outputURL, arc: arc, metadata: metadata,
             duration: result.duration, thumbnailURL: result.thumbnailURL, validationResult: result.validationResult,
             audioSettings: result.audioSettings, thumbnailSubject: result.thumbnailSubject, packagingWarning: result.packagingWarning)
     }
@@ -34,11 +37,12 @@ struct LongformPackagingService: Sendable {
     func refresh(_ result: LongformBuildResult, sourceURL: URL) async throws -> LongformBuildResult {
         let text = Self.updatingText(result)
         let output = ExportLayout.artifact(in: result.outputURL.deletingLastPathComponent(), kind: .cover,
-            base: result.arc.concept.word, ext: "jpg")
+            base: result.arc.concept.word + "_" + UUID().uuidString.prefix(8), ext: "jpg")
         var thumbnail: ReviewedThumbnail?
         var warning: String?
         do {
             var coverConcept = result.arc.concept
+            coverConcept.coverText = result.arc.coverText ?? result.arc.concept.coverText
             if let title = result.arc.publicationTitle, !title.trimmed.isEmpty { coverConcept.suggestedTitle = title }
             thumbnail = try await thumbnailGenerator.generateReviewedThumbnail(sourceAsset: AVURLAsset(url: sourceURL),
                 segments: result.arc.segments, concept: coverConcept, movieTitle: result.arc.movieTitle, outputURL: output)
@@ -56,8 +60,9 @@ struct LongformPackagingService: Sendable {
         avoidingTimes: [Double]
     ) async throws -> LongformBuildResult {
         let output = ExportLayout.artifact(in: result.outputURL.deletingLastPathComponent(), kind: .cover,
-            base: result.arc.concept.word, ext: "jpg")
+            base: result.arc.concept.word + "_" + UUID().uuidString.prefix(8), ext: "jpg")
         var coverConcept = result.arc.concept
+            coverConcept.coverText = result.arc.coverText ?? result.arc.concept.coverText
         if let title = result.arc.publicationTitle, !title.trimmed.isEmpty {
             coverConcept.suggestedTitle = title
         }
@@ -74,10 +79,14 @@ struct LongformPackagingService: Sendable {
 
 /// Использует штатный VLM loader MLX: он поддерживает shared-KV и quantized
 /// per-layer projections E4B, которых нет в старом фасаде Gemma4Engine.
-private actor CoverVisionSession {
+actor CoverVisionSession {
     private let model: Gemma4Pipeline.Model
     private var container: ModelContainer?
     init(model: Gemma4Pipeline.Model) { self.model = model }
+    func unload() {
+        container = nil
+        MLX.Memory.clearCache()
+    }
     func complete(image: URL, prompt: String) async throws -> String {
         if container == nil {
             guard let path = Gemma4ModelCache.localPath(for: model) else {

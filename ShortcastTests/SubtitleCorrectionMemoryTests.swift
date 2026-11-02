@@ -100,3 +100,104 @@ struct SubtitleCorrectionMemoryTests {
         #expect(memory.promptExamples(for: "Зовсім інший текст.", filmKey: "fight", language: "uk").isEmpty)
     }
 }
+
+@Suite("Phrase-isolated subtitle correction")
+struct PhraseIsolatedSubtitleCorrectionTests {
+    private actor Model: LongformActTitleModeling {
+        enum Mode { case valid, wrongFirstID, contextLeak }
+        let mode: Mode
+        private(set) var requests: [LongformSubtitleCorrectionInput] = []
+        private(set) var prompts: [String] = []
+        init(_ mode: Mode = .valid) { self.mode = mode }
+        var isReady: Bool { get async { true } }
+        var modelID: String? { get async { "fixture" } }
+        func complete(instructions: String, prompt: String, maxTokens: Int) async -> String? {
+            let marker = prompt.range(of: "ЦЕЛЕВАЯ РЕПЛИКА", options: .backwards)
+                ?? prompt.range(of: "ЦІЛЬОВА РЕПЛІКА", options: .backwards)
+            guard let marker,
+                  let json = JSONVariantParser.extractJSONObject(from: String(prompt[marker.upperBound...])),
+                  let row = try? JSONDecoder().decode(LongformSubtitleCorrectionInput.self, from: Data(json.utf8)) else { return nil }
+            requests.append(row); prompts.append(prompt)
+            let id = mode == .wrongFirstID && row.id == 1 ? 999 : row.id
+            let replacement = mode == .contextLeak ? row.text + " " + row.after : row.text + " corrected"
+            let value: [String: Any] = ["edits": [["id": id, "replacement": replacement, "reason": "ASR correction"]]]
+            return (try? JSONSerialization.data(withJSONObject: value)).flatMap { String(data: $0, encoding: .utf8) }
+        }
+    }
+    private func row(_ id: Int) -> LongformSubtitleCorrectionInput {
+        .init(id: id, act: "Act", timecode: "00:10", before: "An earlier line for reference.",
+              text: "Target line \(id).", after: "A later line for reference.")
+    }
+    private func directory() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) }
+
+    @Test func bulkUsesExactlyTheSameRequestAsTheSinglePhraseButton() async throws {
+        let folder = directory(); defer { try? FileManager.default.removeItem(at: folder) }
+        let input = (1...20).map(row)
+        let batchModel = Model()
+        let bulk = try await LongformSubtitleCorrectionService(model: batchModel, logDirectory: folder)
+            .correct(input, movieTitle: "Fixture", language: "en") { _ in }
+        let singleModel = Model()
+        let singleService = LongformSubtitleCorrectionService(model: singleModel, logDirectory: folder)
+        var individual: [LongformSubtitleCorrectionSuggestion] = []
+        for phrase in input {
+            individual += try await singleService.correct([phrase], movieTitle: "Fixture", language: "en") { _ in }.suggestions
+        }
+        #expect(await batchModel.requests.map(\.id) == Array(1...20))
+        #expect(await batchModel.prompts == singleModel.prompts)
+        #expect(bulk.suggestions == individual)
+        #expect(bulk.checkedCount == 20)
+    }
+
+    @Test func aWrongPhraseIDCannotStealAnotherCaptionsEditOrLoseGoodResults() async throws {
+        let folder = directory(); defer { try? FileManager.default.removeItem(at: folder) }
+        let model = Model(.wrongFirstID)
+        let result = try await LongformSubtitleCorrectionService(model: model, logDirectory: folder)
+            .correct([row(1), row(2)], movieTitle: "Fixture", language: "en") { _ in }
+        #expect(await model.requests.map(\.id) == [1, 1, 2])
+        #expect(result.suggestions.map(\.id) == [2])
+        #expect(result.checkedCount == 1)
+        #expect(result.failedPhraseCount == 1)
+    }
+
+    @Test func neighboursCannotBeAppendedToTheCorrectedCaption() async throws {
+        let folder = directory(); defer { try? FileManager.default.removeItem(at: folder) }
+        let result = try await LongformSubtitleCorrectionService(model: Model(.contextLeak), logDirectory: folder)
+            .correct([row(1)], movieTitle: "Fixture", language: "en") { _ in }
+        #expect(result.suggestions.isEmpty)
+        #expect(result.failedPhraseCount == 1)
+    }
+
+    @Test func stoppingRetainsAlreadyCheckedSuggestions() async throws {
+        let folder = directory(); defer { try? FileManager.default.removeItem(at: folder) }
+        let model = Model()
+        let task = Task {
+            try await LongformSubtitleCorrectionService(model: model, logDirectory: folder)
+                .correct([row(1), row(2)], movieTitle: "Fixture", language: "en") { message in
+                    if message.hasPrefix("Фраза 2/2") { withUnsafeCurrentTask { $0?.cancel() } }
+                }
+        }
+        let result = try await task.value
+        #expect(result.wasCancelled)
+        #expect(result.suggestions.map(\.id) == [1])
+        #expect(result.checkedCount == 1)
+        #expect(await model.requests.count == 1)
+    }
+
+    @Test func contextStaysInsideTheSameScene() {
+        let concept = ThematicConcept(word: "ВИБІР", tagline: "", philosophicalPremise: "", suggestedTitle: "Тест")
+        let acts = [LongformAct(type: .form, title: "Form", dramaticBeat: "", segments: [.init(start: 10, end: 20), .init(start: 50, end: 60)]),
+                    LongformAct(type: .psychology, title: "Psychology", dramaticBeat: "", segments: [.init(start: 65, end: 75)])]
+        let arc = LongformNarrativeArc(movieTitle: "Fixture", concept: concept, acts: acts, summary: "")
+        func phrase(_ id: Int, _ act: Int, _ start: Double) -> EditableSubtitlePhrase {
+            EditableSubtitlePhrase(id: UUID(), originalSegmentIndex: id, actIndex: act, actTitle: acts[act].title,
+                actType: acts[act].type, start: start, end: start + 2, text: "Line \(id)", originalText: "Line \(id)")
+        }
+        let rows = EditableSubtitlePhrase.correctionInputs(from: [phrase(1, 0, 10), phrase(2, 0, 14), phrase(3, 0, 50), phrase(4, 1, 65)], arc: arc)
+        #expect(rows[0].before.isEmpty)
+        #expect(rows[0].after == "Line 2")
+        #expect(rows[1].before == "Line 1")
+        #expect(rows[1].after.isEmpty)
+        #expect(rows[2].before.isEmpty && rows[2].after.isEmpty)
+        #expect(rows[3].before.isEmpty)
+    }
+}

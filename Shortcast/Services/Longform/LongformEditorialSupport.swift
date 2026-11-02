@@ -47,7 +47,7 @@ enum LongformEditorialSupport {
                     reason: isManualAddition ? LongformSceneEdit.manualAdditionReason : reason))
             }
         }
-        return edits
+        return edits.filter { $0.original != $0.revised || $0.reason == LongformSceneEdit.manualAdditionReason }
     }
 
     static func finalCard(for arc: LongformNarrativeArc) -> String {
@@ -103,6 +103,16 @@ enum LongformEditorialSupport {
     static func actionableCTA(_ text: String?, destination: String? = nil) -> String? {
         guard let text, !text.trimmed.isEmpty else { return nil }
         let lower = text.lowercased()
+        if let destination, let url = telegramURL(channelID: destination) {
+            // Keep one configured destination even when an older model reply
+            // still asks for comments. The viewer's question stays intact.
+            var directed = text.replacingOccurrences(of: #"(?i)(?:у|в)\s+коментар(?:ях|і)"#, with: "у Telegram", options: .regularExpression)
+            if !directed.lowercased().contains("telegram") && !directed.lowercased().contains("телеграм") && !directed.contains("t.me/") {
+                directed = "Обговорімо в Telegram: " + directed
+            }
+            if !directed.contains(url) { directed += "\n" + url }
+            return directed
+        }
         guard lower.contains("telegram") || lower.contains("телеграм") else { return text }
         if lower.contains("t.me/") || lower.range(of: #"@[a-z][a-z0-9_]{3,31}"#, options: .regularExpression) != nil { return text }
         if let destination, telegramURL(channelID: destination) != nil { return text + "\n" + destination }
@@ -113,6 +123,29 @@ enum LongformEditorialSupport {
         return "Обговорімо в коментарях. " + text
             .replacingOccurrences(of: "Telegram", with: "коментарях", options: .caseInsensitive)
             .replacingOccurrences(of: "Телеграм", with: "коментарях", options: .caseInsensitive)
+    }
+
+    /// A conjunction alone does not make a complete question depend on a prior line.
+    /// Resolve it first, then look for an actual backward reference or causal fragment.
+    static func openingNeedsContext(_ text: String) -> Bool {
+        var words = text.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        while let first = words.first, ["а", "але", "і", "й", "та"].contains(first) { words.removeFirst() }
+        guard let first = words.first else { return false }
+        let token = first.trimmingCharacters(in: .punctuationCharacters)
+        if ["він", "вона", "вони", "воно", "це", "цей", "ця", "ці", "його", "її", "їх", "тому", "бо"].contains(token) { return true }
+        return words.joined(separator: " ").hasPrefix("знаєш, чому")
+    }
+
+    /// Recompute generated diagnostics when opening an archive after a validator
+    /// update. Preserve the editor's semantic notes and the approved montage.
+    static func refreshedNotes(for arc: LongformNarrativeArc, transcript: Transcript) -> [String] {
+        let generatedPhrases = [": вход может требовать предыдущего контекста: «",
+            ": граница пересекает реплику —", ": выход сразу после слов:"]
+        let retained = (arc.editorialNotes ?? []).filter { note in
+            !(note.hasPrefix("Акт ") && generatedPhrases.contains(where: note.contains))
+        }
+        var seen = Set<String>()
+        return (retained + notes(for: arc, transcript: transcript)).filter { seen.insert($0).inserted }
     }
 
     static func notes(for arc: LongformNarrativeArc, transcript: Transcript) -> [String] {
@@ -126,8 +159,7 @@ enum LongformEditorialSupport {
                 if first.start < scene.start - 0.05 || last.end > scene.end + 0.05 {
                     notes.append(prefix + "граница пересекает реплику — проверьте вход и выход на слух.")
                 }
-                let head = first.text.trimmed.lowercased()
-                if ["а ", "але ", "тому ", "бо ", "знаєш, чому", "він ", "вона ", "це "].contains(where: head.hasPrefix) {
+                if openingNeedsContext(first.text) {
                     notes.append(prefix + "вход может требовать предыдущего контекста: «\(first.text.prefix(90))».")
                 }
                 if act.type == .catharsis && scene.end - last.end < 0.3 {

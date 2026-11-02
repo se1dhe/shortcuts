@@ -61,6 +61,7 @@ async function main() {
         title: getArg('--title') || 'Shorts',
         caption: getArg('--caption') || '',
         hashtags: (getArg('--hashtags') || '').split(',').map((s) => s.trim()).filter(Boolean),
+        keywordTags: (getArg('--keyword-tags') || '').split(',').map((s) => s.trim()).filter(Boolean),
         isPublic: getArg('--public') !== 'false',
         headless: getArg('--headless') !== 'false',
       };
@@ -102,6 +103,7 @@ async function main() {
             title: content.title || jobData.title,
             caption: content.caption,
             hashtags: content.hashtags,
+            keywordTags: jobData.keywordTags || [],
             isPublic: jobData.isPublic,
             isShort: jobData.isShort === true,
           });

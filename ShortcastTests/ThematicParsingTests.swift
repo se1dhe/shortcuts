@@ -235,6 +235,23 @@ struct ThematicParsingTests {
         #expect(root["notes"] as? [String] == ["Note: 123", "Ціна: все"])
     }
 
+    /// A live Interstellar essay reply omitted the closing bracket on one
+    /// catalogue row; the rest of the completed JSON was valid.
+    @Test("a missing selection row bracket is repaired without changing its values")
+    func testRepairsMissingSceneRowBracket() throws {
+        let drifted = """
+        {"selection":[
+          ["S0036", "philosophy", 0.8, false, "Дилема про ціну жертви",
+          ["S0037", "catharsis", 0.9, true, "Передача надії крізь час"]
+        ]}
+        """
+        let root = try #require(JSONVariantParser.deserializeTolerant(drifted) as? [String: Any])
+        let rows = try #require(root["selection"] as? [[Any]])
+        #expect(rows.count == 2)
+        #expect(rows[0][0] as? String == "S0036")
+        #expect(rows[0][4] as? String == "Дилема про ціну жертви")
+    }
+
     @Test("an unquoted key inside an object desyncs the brace scanner: honest nil")
     func testUnquotedKeyInsideObjectIsNotRecoverable() {
         // extractJSONObject tracks string state by quote parity; one missing quote

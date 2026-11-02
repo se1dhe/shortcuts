@@ -290,7 +290,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             throw EssaySceneEvidence.InvalidSelection(issues: ["от модели не получен план тезиса и пяти актов"])
         }
         let poolMoments = selectedMoments
-        guard EssayDurationPolicy.pool.contains(poolMoments.count) else {
+        guard concept.format.sceneCount.contains(poolMoments.count) else {
             throw EssaySceneEvidence.InvalidSelection(issues: ["модель должна выбрать 14–22 сцены, получено \(poolMoments.count)"])
         }
         let roleCounts = Dictionary(grouping: poolMoments.compactMap(\.actRole), by: { $0 }).mapValues(\.count)
@@ -298,8 +298,8 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
               roleCounts[.hook, default: 0] == 1 else {
             throw EssaySceneEvidence.InvalidSelection(issues: ["у каждой сцены должна быть роль; hook должен быть назначен ровно один раз"])
         }
-        let missingRoles = LongformActType.canonicalAnalyticOrder.compactMap { role -> String? in
-            let minimum = role == .hook ? 1 : 3
+        let missingRoles = concept.format.roles.compactMap { role -> String? in
+            let minimum = concept.format.minimumScenes(role)
             let count = roleCounts[role, default: 0]
             return count < minimum ? "\(role.promptKey): \(count)/\(minimum)" : nil
         }
@@ -594,7 +594,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         creditsCutoffRatio: Double = 0.95
     ) throws -> LongformNarrativeArc {
         var buckets: [LongformActType: [SelectedMoment]] = [:]
-        for type in LongformActType.canonicalAnalyticOrder {
+        for type in concept.format.roles {
             buckets[type] = []
         }
         for moment in selectedMoments {
@@ -604,7 +604,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
             buckets[role, default: []].append(moment)
         }
         var acts: [LongformAct] = []
-        for type in LongformActType.canonicalAnalyticOrder {
+        for type in concept.format.roles {
             let scenes = buckets[type] ?? []
             guard !scenes.isEmpty else {
                 throw EssaySceneEvidence.InvalidSelection(issues: ["модель не дала сцен для акта \(type.promptKey)"])

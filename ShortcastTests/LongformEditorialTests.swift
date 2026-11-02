@@ -1,5 +1,7 @@
 import Foundation
 import AppKit
+import AVFoundation
+import QuartzCore
 import Testing
 @testable import Shortcast
 
@@ -191,7 +193,7 @@ struct LongformEditorialTests {
         let result = await LongformEditorialReview(model: nil).review(arc: editorialArc(),
             transcript: editorialTranscript(), coldOpenEnabled: true)
         #expect(result.acts == editorialArc().acts)
-        #expect(result.editorialNotes?.contains(where: { $0.contains("недоступен") }) == true)
+        #expect(result.editorialNotes?.contains(where: { $0.contains("не загружена") }) == true)
     }
 
     @Test("CTA has an actionable destination and final text gets enough reading time")
@@ -209,6 +211,11 @@ struct LongformEditorialTests {
         #expect(LongformEditorialSupport.telegramURL(channelID: "@valid_channel") == "https://t.me/valid_channel")
         #expect(LongformEditorialSupport.telegramURL(channelID: "-1001234567890") == nil)
         #expect(LongformEditorialSupport.telegramURL(channelID: "https://evil.example/channel") == nil)
+        let routed = LongformEditorialSupport.actionableCTA("Напишіть у коментарях: що є свобода?", destination: "https://t.me/valid_channel")
+        #expect(routed?.contains("у Telegram") == true)
+        #expect(routed?.contains("у коментарях") == false)
+        #expect(routed?.contains("що є свобода?") == true)
+        #expect(routed?.contains("https://t.me/valid_channel") == true)
         arc.discussionURL = "https://t.me/valid_channel"
         #expect(LongformEditorialSupport.finalCard(for: arc).contains("https://t.me/valid_channel"))
         #expect(LongformMetadataGenerator.generate(movieTitle: arc.movieTitle, concept: arc.concept, arc: arc)
@@ -270,5 +277,191 @@ struct LongformEditorialTests {
             concept: arc.concept, currentPhrase: "Ти не твоя робота"))
         let data = try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
         try data.write(to: URL(fileURLWithPath: "/private/tmp/shortcast-editorial-preview.png"))
+    }
+}
+
+@Suite("Donor credits")
+struct EssaySupportCreditsTests {
+    @MainActor
+    @Test func realFinalCardKeepsTrailingTelegramURLVisibleWithCredits() throws {
+        var arc = editorialArc()
+        arc.conclusionText = "Вихід із ілюзії вимагає відмови від безпечного сценарію заради болісної, але автентичної реальності."
+        arc.ctaText = "Обговоріть у Telegram: чи готові ви зруйнувати свій комфорт заради істини?"
+        arc.discussionURL = "https://t.me/kadr_sens"
+        let text = LongformEditorialSupport.finalCard(for: arc)
+        #expect(text.hasSuffix("https://t.me/kadr_sens"))
+        for canvas in [CGSize(width: 1920, height: 1080), CGSize(width: 1280, height: 720)] {
+            let k = canvas.height / 1080
+            let size = CGSize(width: canvas.width * 0.76, height: canvas.height * 0.24)
+            let value = DonorCreditsRenderer.fittedCTA(text, in: size, scale: k)
+            #expect(value.string == text)
+            #expect((value.attribute(.kern, at: 0, effectiveRange: nil) as? NSNumber)?.doubleValue == Double(0.7 * k))
+            let measured = value.boundingRect(with: CGSize(width: size.width, height: 100_000), options: [.usesLineFragmentOrigin, .usesFontLeading])
+            #expect(ceil(measured.height) <= size.height - 12 * k)
+            let storage = NSTextStorage(attributedString: value)
+            let layout = NSLayoutManager()
+            let container = NSTextContainer(size: CGSize(width: size.width, height: size.height - 12 * k))
+            container.lineFragmentPadding = 0
+            storage.addLayoutManager(layout); layout.addTextContainer(container)
+            let visibleGlyphs = layout.glyphRange(for: container)
+            #expect(NSMaxRange(visibleGlyphs) == layout.numberOfGlyphs)
+            let url = (text as NSString).range(of: "https://t.me/kadr_sens")
+            let urlGlyphs = layout.glyphRange(forCharacterRange: url, actualCharacterRange: nil)
+            #expect(NSMaxRange(urlGlyphs) <= NSMaxRange(visibleGlyphs))
+        }
+    }
+
+    @Test func donationLinkAndCreditsSurviveArchives() throws {
+        var arc = editorialArc()
+        arc.support = EssaySupport(creditsEnabled: true, nicknames: ["@NazarOrbit", "@MavkaMoon", "@KinoVoyager", "@TykhyiKosmos", "@ZorianyiLis", "@NebulaFox"])
+        let restored = try JSONDecoder().decode(LongformNarrativeArc.self, from: JSONEncoder().encode(arc))
+        #expect(restored.support == arc.support)
+        let metadata = LongformMetadataGenerator.generate(movieTitle: arc.movieTitle, concept: arc.concept, arc: arc)
+        #expect(metadata.description.contains("https://donatello.to/kadr_sens"))
+        #expect(EssaySupport.names(from: "@Alpha\n alpha \n\n@Beta") == ["@Alpha", "@Beta"])
+        #expect(EssaySupport.normalizedURL("https://donatello.to.evil.example/kadr_sens") == nil)
+        let withCredits = LongformTimeline(arc: arc)
+        arc.support?.creditsEnabled = false
+        let without = LongformTimeline(arc: arc)
+        #expect(withCredits.placements.map(\.start) == without.placements.map(\.start))
+        #expect(withCredits.speechEnd == without.speechEnd)
+        #expect(withCredits.outroDuration >= 8)
+        #expect(without.supportExtraDuration == 0)
+    }
+
+    @MainActor
+    @Test func realAnimationExport() async throws {
+        guard let source = ProcessInfo.processInfo.environment["SHORTCAST_CREDITS_SMOKE_SOURCE"] else { return }
+        let support = EssaySupport(creditsEnabled: true, nicknames: ["@NazarOrbit", "@MavkaMoon", "@KinoVoyager", "@TykhyiKosmos", "@ZorianyiLis", "@NebulaFox"])
+        let canvas = CGSize(width: 1280, height: 720)
+        let card = DonorCreditsRenderer.makeLayer(support: support,
+            ctaText: "Обговорімо це есе в Telegram. Долучайтеся до розмови — посилання в описі.",
+            theme: "ВІДПОВІДАЛЬНІСТЬ", start: 0, duration: 8, canvas: canvas)
+        let viewport = try #require(card.sublayers?.first(where: { $0.name == "donorViewport" }))
+        let names = try #require(viewport.sublayers?.first)
+        #expect(names.sublayers?.count == 6)
+        let animation = try #require(names.animation(forKey: "donorScroll") as? CAKeyframeAnimation)
+        #expect(animation.duration == 8)
+        let asset = AVURLAsset(url: URL(fileURLWithPath: source))
+        let composition = AVMutableVideoComposition(propertiesOf: asset)
+        composition.renderSize = canvas
+        composition.frameDuration = CMTime(value: 1, timescale: 24)
+        let parent = CALayer(); parent.frame = CGRect(origin: .zero, size: canvas)
+        let video = CALayer(); video.frame = parent.bounds
+        parent.addSublayer(video); parent.addSublayer(card)
+        composition.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: video, in: parent)
+        let output = URL(fileURLWithPath: "/private/tmp/shortcast-donor-finale-preview.mp4")
+        try? FileManager.default.removeItem(at: output)
+        let exporter = try #require(AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality))
+        exporter.videoComposition = composition
+        try await exporter.export(to: output, as: .mp4)
+        let rendered = AVURLAsset(url: output)
+        let duration = try await rendered.load(.duration).seconds
+        #expect(abs(duration - 8) < 0.1)
+        let generator = AVAssetImageGenerator(asset: rendered)
+        for second in [2, 4, 6] {
+            let (image, _) = try await generator.image(at: CMTime(seconds: Double(second), preferredTimescale: 600))
+            let png = try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: "/private/tmp/shortcast-donor-preview-\(second).png"))
+        }
+    }
+}
+
+@Suite("Editorial review regressions")
+struct EditorialReviewRegressionTests {
+    private actor Model: LongformActTitleModeling {
+        let reply: String
+        private(set) var calls = 0
+        init(_ reply: String) { self.reply = reply }
+        var isReady: Bool { get async { true } }
+        var modelID: String? { get async { "regression-fixture" } }
+        func complete(instructions: String, prompt: String, maxTokens: Int) async -> String? {
+            calls += 1
+            return reply
+        }
+    }
+    private func fixture() -> (LongformNarrativeArc, Transcript) {
+        var arc = editorialArc()
+        for index in arc.acts.indices where arc.acts[index].type == .catharsis {
+            arc.acts[index].segments = arc.acts[index].segments.map { TimeSegment(start: $0.start, end: $0.end + 1) }
+        }
+        arc.acts[2].segments[1] = TimeSegment(start: 2107.38, end: 2142.86)
+        let actualLines = [
+            TranscriptSegment(start: 2101.94, end: 2104.98, text: "Головна складність колонізації — генетичне різноманіття."),
+            TranscriptSegment(start: 2105.44, end: 2106.52, text: "А це все вирішує."),
+            TranscriptSegment(start: 2107.38, end: 2108.94, text: "А що буде з людьми на землі?"),
+            TranscriptSegment(start: 2110.24, end: 2112.96, text: "Кинете їх помирати? І моїх дітей?"),
+            TranscriptSegment(start: 2113.04, end: 2116.48, text: "Саме тому план А привабливіший."),
+            TranscriptSegment(start: 2141.04, end: 2142.86, text: "Даю тебе слово.")]
+        let transcript = Transcript(segments: (editorialTranscript().segments + actualLines).sorted { $0.start < $1.start }, language: "uk")
+        return (arc, transcript)
+    }
+
+    @Test func conjunctionIsNotAnUnresolvedReference() {
+        #expect(!LongformEditorialSupport.openingNeedsContext("А що буде з людьми на землі?"))
+        #expect(!LongformEditorialSupport.openingNeedsContext("Але люди ще можуть обрати майбутнє."))
+        #expect(LongformEditorialSupport.openingNeedsContext("А це все вирішує."))
+        #expect(LongformEditorialSupport.openingNeedsContext("Але він уже вирішив."))
+    }
+
+    @Test func repeatedRegressingContextDoesNotReplaceTheSelfContainedQuestion() async {
+        let (arc, transcript) = fixture()
+        #expect(LongformEditorialSupport.notes(for: arc, transcript: transcript).isEmpty)
+        let model = Model(#"{"edits":[{"scene":8,"option":"context","reason":"Додати контекст"}],"notes":[]}"#)
+        let outcome = await LongformEditorialReview(model: model).reviewDetailed(arc: arc, transcript: transcript, coldOpenEnabled: true) { _ in }
+        #expect(await model.calls == 2)
+        #expect(outcome.changes.isEmpty)
+        #expect(outcome.arc.segments == arc.segments)
+        #expect(outcome.arc.editorialNotes?.isEmpty == true)
+        #expect(outcome.attempts.allSatisfy { !$0.accepted })
+        #expect(outcome.summary.contains("Сохранено изменений сцен: 0"))
+    }
+
+    @Test func unresolvedKeepStopsAndExplainsTheActualProblem() async {
+        let (arc, original) = fixture()
+        var lines = original.segments
+        let first = lines.firstIndex(where: { $0.start == 10 })!
+        let originalLine = lines[first]
+        lines[first] = TranscriptSegment(start: originalLine.start, end: originalLine.end, text: "Він уже обрав свою долю.")
+        let transcript = Transcript(segments: lines, language: "uk")
+        let model = Model(#"{"edits":[],"notes":["Потрібна звірка зі звуком: попередник займенника не визначений."]}"#)
+        let outcome = await LongformEditorialReview(model: model).reviewDetailed(arc: arc, transcript: transcript, coldOpenEnabled: true) { _ in }
+        #expect(await model.calls == 1)
+        #expect(outcome.changes.isEmpty)
+        #expect(!outcome.attempts[0].resolved)
+        #expect(outcome.summary.contains("Потрібна звірка зі звуком"))
+    }
+
+    @Test func aRealContextImprovementIsStillApplied() async {
+        let (arc, original) = fixture()
+        var lines = original.segments
+        let first = lines.firstIndex(where: { $0.start == 10 })!
+        let originalLine = lines[first]
+        lines[first] = TranscriptSegment(start: originalLine.start, end: originalLine.end, text: "Він уже обрав свою долю.")
+        let transcript = Transcript(segments: lines, language: "uk")
+        let model = Model(#"{"edits":[{"scene":1,"option":"context","reason":"Відновити попереднє питання"}],"notes":[]}"#)
+        let outcome = await LongformEditorialReview(model: model).reviewDetailed(arc: arc, transcript: transcript, coldOpenEnabled: true) { _ in }
+        #expect(await model.calls == 1)
+        #expect(outcome.changes.count == 1)
+        #expect(outcome.arc.editorialNotes?.isEmpty == true)
+        #expect(outcome.attempts[0].resolved)
+    }
+
+    @Test func cachedFalseWarningIsRefreshedWithoutLosingSemanticAdvice() {
+        let (original, transcript) = fixture()
+        var arc = original
+        let savedScene = arc.segments[7]
+        arc.editorialNotes = ["Акт 3, сцена 2: вход может требовать предыдущего контекста: «А що буде з людьми на землі?».",
+                              "Звірте мотивацію героя з діалогом."]
+        let notes = LongformEditorialSupport.refreshedNotes(for: arc, transcript: transcript)
+        #expect(notes == ["Звірте мотивацію героя з діалогом."])
+        #expect(arc.segments[7] == savedScene)
+    }
+
+    @Test func noOpEditsAreNotReportedAsSavedChanges() {
+        var (arc, _) = fixture()
+        let range = arc.acts[0].segments[0]
+        arc.sceneEdits = [LongformSceneEdit(role: .hook, original: range, revised: range, reason: "Вернули исходную границу")]
+        #expect(LongformEditorialSupport.recordingEdits(from: arc, acts: arc.acts).isEmpty)
     }
 }

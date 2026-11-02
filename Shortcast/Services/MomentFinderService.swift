@@ -261,7 +261,8 @@ final class MomentFinderService {
         transcriptSample: String,
         movieTitle: String,
         movieOverview: String? = nil,
-        transcript: Transcript? = nil
+        transcript: Transcript? = nil,
+        format: EssayFormat = .analytical
     ) async throws -> ThematicAnalysisResult {
         guard container != nil else {
             Self.log("analyzeThematicCore: no model loaded")
@@ -273,15 +274,18 @@ final class MomentFinderService {
         // the transcript was sized for.
         let overview = String((movieOverview?.trimmed ?? "").prefix(Self.thematicOverviewCharCap))
 
+        Self.log("Анализ фильма · формат: \(format.title)")
         var candidates = try await proposeThemeCandidates(
             sample: sample, movieTitle: movieTitle, overview: overview)
         guard var winner = candidates.first else {
             throw ThematicDiscoveryError.noGroundedTheme(
                 "етап 1 не дав жодної теми, яка пройшла б перевірку")
         }
+        winner.essayFormat = format
         var attempted = Set<String>()
         var refreshedCandidates = false
         for _ in 0..<4 {
+            winner.essayFormat = format
             attempted.insert(Self.themeKey(winner.word))
             do {
                 return try await planEssay(around: winner, approvedCandidates: candidates,
@@ -327,6 +331,7 @@ final class MomentFinderService {
         let overview = String((movieOverview?.trimmed ?? "").prefix(Self.thematicOverviewCharCap))
 
         for _ in 0..<12 {
+            winner.essayFormat = concept.essayFormat
             attempted.insert(Self.themeKey(winner.word))
             do {
                 return try await planEssay(
@@ -549,7 +554,7 @@ final class MomentFinderService {
         for attempt in 1...Self.essayPlanAttempts {
             var prompt = attempt == 1
                 ? userPrompt
-                : userPrompt + DirectorStagedAnalysis.essayRetryNote
+                : userPrompt + (winner.format == .analytical ? DirectorStagedAnalysis.essayRetryNote : "\nВиправ попередню помилку. Повний JSON, 8–22 унікальні ID, рівно один hook, щонайменше одна сцена downfall, struggle, catharsis; 4–8 хвилин. Не додавай ролей аналітичного есе.")
             if attempt > 1, let previousSceneContext {
                 prompt += "\n" + previousSceneContext
             }
@@ -580,6 +585,10 @@ final class MomentFinderService {
                     } catch {
                         selectionFailure = error.localizedDescription
                         gateRejection = error.localizedDescription
+                        let rejectedSelection = Self.essaySceneRetryContext(from: raw)
+                        if !rejectedSelection.isEmpty {
+                            previousSceneContext = rejectedSelection
+                        }
                         Self.log("stage=essay attempt \(attempt): selection rejected — \(error.localizedDescription)")
                         continue
                     }
@@ -594,6 +603,7 @@ final class MomentFinderService {
                 previousSceneContext = Self.essaySceneRetryContext(
                     parsed.selectedMoments,
                     catalogue: presentedCatalogue)
+                parsed.primaryConcept.essayFormat = winner.essayFormat
                 parsed.replyCompleteness = reply.completeness
                 let verdict = DirectorArtifactGate.analysis(
                     parsed, completeness: reply.completeness)
@@ -610,7 +620,7 @@ final class MomentFinderService {
                     if case .repaired(_, let reason) = verdict {
                         Self.log("analyzeThematicCore stage=essay attempt \(attempt): gate=repaired theme='\(passed.primaryConcept.word)' — \(reason)")
                     } else {
-                        Self.log("analyzeThematicCore stage=essay attempt \(attempt): gate=accepted theme='\(passed.primaryConcept.word)' moments=\(passed.selectedMoments.count)")
+                        Self.log("План · попытка \(attempt): структура допустима, тема «\(passed.primaryConcept.word)», сцен \(passed.selectedMoments.count). Далее — проверка цитат и смысла.")
                     }
                     if let transcript {
                         do {
@@ -636,6 +646,10 @@ final class MomentFinderService {
                 }
             } catch let rejection as EssayThemeRejected {
                 throw rejection
+            } catch let failure as EssaySemanticReviewFailure {
+                // Retrying the entire selection would throw away valid work
+                // because the independent editor omitted a required reference.
+                throw failure
             } catch {
                 lastError = error
                 Self.log("analyzeThematicCore stage=essay attempt \(attempt) failed: \(error.localizedDescription)")
@@ -763,16 +777,18 @@ final class MomentFinderService {
             catch {
                 lastError = error
                 let detail: String
-                if let discovery = error as? ThematicDiscoveryError, case .noGroundedTheme(let reason) = discovery {
+                if let failure = error as? EssaySemanticReviewFailure {
+                    detail = failure.detail
+                } else if let discovery = error as? ThematicDiscoveryError, case .noGroundedTheme(let reason) = discovery {
                     detail = reason
                 } else { detail = error.localizedDescription }
                 feedback = "\nВиправ лише формат або некоректне поле попередньої відповіді: "
                     + String(detail.prefix(220))
                     + ". Не відхиляй тему через помилку формату. Поверни повний JSON."
-                Self.log("semantic attempt \(attempt) rejected: \(error.localizedDescription)")
+                Self.log("Смысловая проверка · попытка \(attempt)/2: \(detail)" + (attempt < 2 ? " Предупреждение: уточняю ответ редактора; сцены сохраняются." : " Проверка остановлена; эссе не принято."))
             }
         }
-        throw lastError ?? ThematicDiscoveryError.noGroundedTheme("не получено решение по теме и одному хуку")
+        throw EssaySemanticReviewFailure(detail: lastError?.localizedDescription ?? "не получено решение по теме и одному хуку")
     }
 
     /// Короткая вычитка уже выбранных фраз, без повторного выбора темы и сцен.
@@ -938,6 +954,33 @@ final class MomentFinderService {
             return String(format: "%.0f-%.0f=%@", moment.startTime, moment.endTime, role)
         }
         return "Попередньо вибрані сцени (поверни повний список у відповіді; збережи придатні, виправ помилки та ДОДАЙ сцени з матеріалу для кожного недоукомплектованого акту; не дублюй): "
+            + entries.joined(separator: ", ")
+    }
+
+    /// Keep the rejected model selection available on retries too. In particular,
+    /// a duplicate-ID decode failure used to discard the whole selection, leaving
+    /// the next attempt with only a generic validation message and no scene list to
+    /// repair.
+    nonisolated static func essaySceneRetryContext(from raw: String) -> String {
+        guard let json = JSONVariantParser.extractJSONObject(from: raw),
+              let root = JSONVariantParser.deserializeTolerant(json) as? [String: Any],
+              let rows = root["selection"] as? [Any] else { return "" }
+
+        let entries = rows.prefix(EssayDurationPolicy.pool.upperBound).compactMap { row -> String? in
+            if let tuple = row as? [Any], tuple.count >= 2,
+               let id = tuple[0] as? String, let role = tuple[1] as? String {
+                return "\(id.trimmingCharacters(in: .whitespacesAndNewlines).uppercased())=\(role)"
+            }
+            if let object = row as? [String: Any] {
+                let fields = Dictionary(object.map { ($0.key.lowercased(), $0.value) }, uniquingKeysWith: { first, _ in first })
+                guard let id = (fields["id"] ?? fields["sceneid"]) as? String,
+                      let role = (fields["role"] ?? fields["actrole"]) as? String else { return nil }
+                return "\(id.trimmingCharacters(in: .whitespacesAndNewlines).uppercased())=\(role)"
+            }
+            return nil
+        }
+        guard !entries.isEmpty else { return "" }
+        return "Попередній вибір (повторені ID треба замінити, кожен ID використай лише раз): "
             + entries.joined(separator: ", ")
     }
 

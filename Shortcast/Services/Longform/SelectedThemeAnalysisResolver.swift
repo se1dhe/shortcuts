@@ -7,7 +7,7 @@ enum SelectedThemeAnalysisResolver {
     static func matches(_ analysis: ThematicAnalysisResult, selection: ThematicConcept) -> Bool {
         let identities = [analysis.primaryConcept, analysis.plannedConcept].compactMap { $0 }
         return identities.contains {
-            key($0.word) == key(selection.word)
+            ($0.format == selection.format) && key($0.word) == key(selection.word)
                 && key($0.philosophicalPremise) == key(selection.philosophicalPremise)
         }
     }

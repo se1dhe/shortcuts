@@ -32,7 +32,8 @@ struct EssayShortRenderer {
 
     func render(_ short: EssayShort, sourceURL: URL, result: LongformBuildResult,
                 transcript: Transcript, telegramURL: String?, directory: URL,
-                diagnosticsDirectory: URL? = nil) async throws -> EssayShort {
+                diagnosticsDirectory: URL? = nil,
+                report: @escaping (Int, String) -> Void = { _, _ in }) async throws -> EssayShort {
         let output = directory.appendingPathComponent("essay_\(short.id)_\(UUID().uuidString.prefix(6)).mp4")
         let cover = output.deletingPathExtension().appendingPathExtension("jpg")
         var completed = false
@@ -42,6 +43,7 @@ struct EssayShortRenderer {
                 try? FileManager.default.removeItem(at: cover)
             }
         }
+        report(0, "Проверяю видео и украинскую звуковую дорожку")
         FontDownloadService.shared.registerBundledFonts()
         let source = AVURLAsset(url: sourceURL)
         guard let sourceVideo = try await source.loadTracks(withMediaType: .video).first,
@@ -63,12 +65,23 @@ struct EssayShortRenderer {
         videoLayer.isOpaque = true
         root.addSublayer(videoLayer)
         Self.addMatte(to: root)
+        let brand = CALayer(); brand.frame = root.bounds
+        brand.contents = try ShortBrandArtwork.openingCard(result: result)
+        Self.visible(brand, from: 0, until: min(2, short.duration), total: short.duration)
+        root.addSublayer(brand)
+        if let logo = ChannelLogo.makeLayer(frame: CGRect(x: 28, y: 590, width: 112, height: 112),
+            renderSize: Self.size, opacity: ChannelLogoStyle.essay.opacity) { root.addSublayer(logo) }
         let essayCaptions = LongformEditorialSupport.captions(transcript.segments, edits: result.arc.captionEdits)
         let captions = LongformEditorialSupport.captions(essayCaptions, edits: short.captionEdits)
+        if short.showsSubtitles {
+            try TranscriptionService.validateRenderedCaptions(captions, ranges: short.segments, requestedLanguage: "uk")
+        }
+
         var cursor = 0.0
         let total = short.duration
         var cameraDiagnostics: [EssayCameraPath.Segment] = []
-        for range in short.segments {
+        for (sceneIndex, range) in short.segments.enumerated() {
+            report(1, "Кадрирование и склейки · сцена \(sceneIndex + 1) из \(short.segments.count)")
             try Task.checkCancellation()
             let start = CMTime(seconds: cursor, preferredTimescale: 600)
             let duration = CMTime(seconds: range.duration, preferredTimescale: 600)
@@ -118,35 +131,15 @@ struct EssayShortRenderer {
             let phrases = captions.filter { $0.start >= range.start && $0.end <= range.end }.map {
                 TimedSubtitlePhrase(start: cursor + $0.start - range.start, end: cursor + $0.end - range.start, text: $0.text)
             }
-            for phrase in LongformSubtitleRenderer.chunkTimedPhrases(phrases) {
-                let layer = Self.text(phrase.text.uppercased(), frame: CGRect(x: 70, y: 355, width: 940, height: 170),
-                    font: 48, color: Self.gold)
+            for phrase in LongformSubtitleRenderer.chunkTimedPhrases(short.showsSubtitles ? phrases : []) {
+                let layer = Self.text(phrase.text, frame: CGRect(x: 78, y: 368, width: 924, height: 145),
+                    font: 49, color: ShortBrandArtwork.ivory)
                 Self.visible(layer, from: phrase.start, until: phrase.end, total: total)
                 root.addSublayer(layer)
             }
             cursor += range.duration
         }
-        // Trailing empty composition time is not exported by all AVFoundation
-        // presets. A hidden real video span keeps the complete CTA on the clock.
-        if let last = short.segments.last {
-            try video.insertTimeRange(CMTimeRange(
-                start: CMTime(seconds: last.end - 3, preferredTimescale: 600), duration: CMTime(seconds: 3, preferredTimescale: 600)),
-                of: sourceVideo, at: CMTime(seconds: cursor, preferredTimescale: 600))
-        }
-        instruction.setOpacity(0, at: CMTime(seconds: cursor, preferredTimescale: 600))
-        let title = Self.text(result.arc.movieTitle.uppercased(), frame: CGRect(x: 70, y: 1810, width: 940, height: 70), font: 34, color: Self.gold)
-        root.addSublayer(title)
-        root.addSublayer(Self.text(short.hook, frame: CGRect(x: 80, y: 1600, width: 920, height: 200), font: 56, color: .white))
-        root.addSublayer(Self.text("КАДР & СЕНС", frame: CGRect(x: 70, y: 225, width: 940, height: 60), font: 32, color: Self.gold))
-        let handle = telegramURL.flatMap { URL(string: $0)?.lastPathComponent }.map { "\nОбговорення: @" + $0 } ?? ""
-        root.addSublayer(Self.text("Повне есе — на YouTube «Кадр & Сенс»" + handle,
-            frame: CGRect(x: 80, y: 100, width: 920, height: 110), font: 30, color: .white))
-        let endCard = CALayer(); endCard.frame = root.bounds
-        endCard.backgroundColor = NSColor(calibratedWhite: 0.025, alpha: 1).cgColor
-        endCard.addSublayer(Self.text("ПОВНЕ КІНОЕСЕ", frame: CGRect(x: 80, y: 1220, width: 920, height: 100), font: 60, color: Self.gold))
-        endCard.addSublayer(Self.text(result.arc.movieTitle + "\nYouTube: Кадр & Сенс" + handle,
-            frame: CGRect(x: 80, y: 800, width: 920, height: 340), font: 48, color: .white))
-        Self.visible(endCard, from: cursor, until: total, total: total); root.addSublayer(endCard)
+        report(2, "Собираю субтитры, фирменную графику и музыкальную подложку")
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = Self.size
         videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
@@ -156,6 +149,20 @@ struct EssayShortRenderer {
         videoComposition.instructions = [main]
         videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: videoLayer, in: root)
         let audio = AVMutableAudioMix(); audio.inputParameters = [speechMix]
+        if let settings = short.musicSettings {
+            var spoken: [TimeSegment] = []
+            var position = 0.0
+            for scene in short.segments {
+                spoken += captions.filter { $0.end > scene.start && $0.start < scene.end }.map {
+                    TimeSegment(start: position + max(0, $0.start - scene.start),
+                                end: position + min(scene.duration, $0.end - scene.start))
+                }
+                position += scene.duration
+            }
+            if let music = try await MusicBedMixing.add(to: composition, settings: settings, duration: total, speech: spoken) {
+                audio.inputParameters += [music]
+            }
+        }
         if let diagnosticsDirectory {
             try FileManager.default.createDirectory(at: diagnosticsDirectory, withIntermediateDirectories: true)
             let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -165,19 +172,34 @@ struct EssayShortRenderer {
             throw EssayReleaseError.invalid("Не удалось создать экспорт шортса.")
         }
         exporter.videoComposition = videoComposition; exporter.audioMix = audio
-        try await exporter.export(to: output, as: .mp4)
-        try Task.checkCancellation()
-        _ = try await LongformLoudnessService().normalize(videoURL: output, outputURL: output, workingDirectory: directory)
-        let validation = await RenderValidationService().validateShort(outputURL: output, workingDirectory: directory)
-        guard !validation.hasIssues else { throw EssayReleaseError.invalid("Шортс не прошёл проверку: " + validation.issues.map(\.description).joined(separator: ", ")) }
-        let image = AVAssetImageGenerator(asset: AVURLAsset(url: output))
-        image.appliesPreferredTrackTransform = true
-        let frame = try await image.image(at: CMTime(seconds: 1, preferredTimescale: 600)).image
-        guard let data = NSBitmapImageRep(cgImage: frame).representation(using: .jpeg, properties: [.compressionFactor: 0.9]) else {
-            throw EssayReleaseError.invalid("Не удалось сохранить обложку шортса.")
+        report(3, "Кодирую вертикальное видео 1080 × 1920 · 30 кадров/с")
+        let exportProgress = Task { @MainActor in
+            while !Task.isCancelled {
+                report(3, "Экспорт 1080 × 1920 · \(Int(exporter.progress * 100))%")
+                try? await Task.sleep(for: .milliseconds(500))
+            }
         }
-        try data.write(to: cover, options: .atomic)
-        var rendered = short; rendered.outputURL = output; rendered.coverURL = cover
+        do { try await exporter.export(to: output, as: .mp4) }
+        catch { exportProgress.cancel(); throw error }
+        exportProgress.cancel()
+        try Task.checkCancellation()
+        if result.audioSettings?.antiCopyrightEnabled ?? true {
+            let preset = result.audioSettings?.antiCopyrightPreset ?? .cinemaShield
+            if preset != .off {
+                report(4, "Shield · обработка кинокадра и звука с сохранением титров и таймингов")
+                _ = try await AntiCopyrightService(config: preset.config, pictureRegion: Self.pictureBand,
+                    activeDuration: cursor, preserveTimeline: true).process(videoURL: output, outputURL: output, workingDirectory: directory)
+            }
+        }
+        report(5, "Выравниваю громкость и проверяю готовый файл")
+        _ = try await LongformLoudnessService().normalize(videoURL: output, outputURL: output, workingDirectory: directory)
+        let validation = await RenderValidationService().validateShort(outputURL: output, expectedDurationRange: (total - 0.2)...(total + 0.2), workingDirectory: directory)
+        guard !validation.hasIssues else { throw EssayReleaseError.invalid("Шортс не прошёл проверку: " + validation.issues.map(\.description).joined(separator: ", ")) }
+        report(6, "Создаю обложку и сохраняю готовую версию")
+        let candidate = try await ShortBrandArtwork.coverCandidate(source: source, ranges: short.segments)
+        let poster = try ShortBrandArtwork.cover(short: short, result: result, candidate: candidate)
+        _ = try LongformThumbnailExporter().export(image: poster, to: cover)
+        var rendered = short; rendered.outputURL = output; rendered.coverURL = cover; rendered.renderStyleVersion = EssayShort.currentRenderStyle
         completed = true
         return rendered
     }
@@ -185,16 +207,12 @@ struct EssayShortRenderer {
     private static let gold = NSColor(calibratedRed: 0.83, green: 0.69, blue: 0.22, alpha: 1)
     private static func text(_ text: String, frame: CGRect, font: CGFloat, color: NSColor) -> CALayer {
         let layer = CALayer(); layer.frame = frame; layer.contentsScale = 2
+        let fitted = LongformThumbnailComposer.fittedText(text, in: CGRect(origin: .zero, size: frame.size),
+            maxSize: font, minSize: font * 0.65, serif: false)
+        let attributed = NSMutableAttributedString(attributedString: fitted)
         let paragraph = NSMutableParagraphStyle(); paragraph.alignment = .center
-        var pointSize = font
-        var attributed: NSAttributedString
-        repeat {
-            attributed = NSAttributedString(string: text, attributes: [.font: NSFont(name: "AvenirNext-DemiBold", size: pointSize) ?? NSFont.boldSystemFont(ofSize: pointSize),
-                .foregroundColor: color, .paragraphStyle: paragraph])
-            let measured = attributed.boundingRect(with: CGSize(width: frame.width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading])
-            if measured.height <= frame.height || pointSize <= font * 0.65 { break }
-            pointSize -= 2
-        } while true
+        paragraph.lineBreakMode = .byClipping
+        attributed.addAttributes([.foregroundColor: color, .paragraphStyle: paragraph], range: NSRange(location: 0, length: attributed.length))
         // Rasterised AppKit text is reliable in AVCoreAnimationTool; native
         // CATextLayer attributed strings can disappear in an offscreen export.
         let width = max(1, Int(ceil(frame.width * 2))), height = max(1, Int(ceil(frame.height * 2)))
@@ -238,9 +256,7 @@ struct EssayShortRenderer {
             guard let frame = try? await generator.image(at: CMTime(seconds: range.start + probe, preferredTimescale: 600)).image else {
                 centres.append(.init(time: offset, centre: nil)); continue
             }
-            let request = VNDetectFaceRectanglesRequest()
-            try VNImageRequestHandler(cgImage: frame).perform([request])
-            let face = EssayCameraPath.selectFace((request.results ?? []).map(\.boundingBox), previous: previousFace)
+            let face = EssayCameraPath.selectFace(try ShortBrandArtwork.faces(in: frame).map(\.boundingBox), previous: previousFace)
             if let face {
                 previousFace = face
             }
@@ -316,5 +332,165 @@ enum EssayCameraPath {
             result.append(.init(time: time, cropX: next * travel))
         }
         return result
+    }
+}
+
+/// Artwork for the vertical release: one typography and colour system, with
+/// separate compositions for the moving picture, its poster, and the end card.
+@MainActor
+enum ShortBrandArtwork {
+    static let ivory = NSColor(srgbRed: 0.98, green: 0.97, blue: 0.95, alpha: 1)
+    static let gold = NSColor(srgbRed: 0.85, green: 0.71, blue: 0.44, alpha: 1)
+    static let ink = NSColor(srgbRed: 0.035, green: 0.043, blue: 0.052, alpha: 1)
+    private static var cpuDetector = false
+    private static let canvas = CGSize(width: 1080, height: 1920)
+
+    static func faces(in frame: CGImage) throws -> [VNFaceObservation] {
+        let request = VNDetectFaceRectanglesRequest()
+        if cpuDetector { request.revision = VNDetectFaceRectanglesRequestRevision1; request.usesCPUOnly = true }
+        do { try VNImageRequestHandler(cgImage: frame).perform([request]) }
+        catch {
+            // The current GPU detector can be unavailable in offscreen export
+            // hosts. Retry the supported CPU revision before failing a render.
+            cpuDetector = true
+            request.revision = VNDetectFaceRectanglesRequestRevision1; request.usesCPUOnly = true
+            try VNImageRequestHandler(cgImage: frame).perform([request])
+        }
+        return request.results ?? []
+    }
+
+    /// A brief film identity card; the rest of the picture has only the channel logo.
+    static func openingCard(result: LongformBuildResult) throws -> CGImage {
+        try draw { ctx in
+            let panel = CGRect(x: 60, y: 790, width: 960, height: 340)
+            ctx.setFillColor(ink.withAlphaComponent(0.92).cgColor)
+            ctx.fill(panel)
+            line(ctx, x: 108, y: 1060, width: 96)
+            text("КАДР & СЕНС", rect: CGRect(x: 108, y: 990, width: 864, height: 42), size: 24, color: gold)
+            text(result.arc.movieTitle, rect: CGRect(x: 108, y: 838, width: 864, height: 128), size: 62, color: ivory, serif: true)
+        }
+    }
+
+    static func overlay(short: EssayShort, result: LongformBuildResult) throws -> CGImage {
+        try openingCard(result: result)
+    }
+
+    static func endCard(result: LongformBuildResult, telegramURL: String?) throws -> CGImage {
+        try draw { ctx in
+            ctx.setFillColor(ink.cgColor); ctx.fill(CGRect(origin: .zero, size: canvas))
+            brand(in: ctx, y: 1818)
+            text("ЦЕ ЛИШЕ ОДИН ПОГЛЯД", rect: CGRect(x: 72, y: 1650, width: 936, height: 40), size: 24, color: gold)
+            text("Погляньте\nглибше.", rect: CGRect(x: 72, y: 1300, width: 936, height: 310), size: 126, color: ivory, serif: true)
+            line(ctx, x: 72, y: 1250, width: 140)
+            text(result.arc.movieTitle, rect: CGRect(x: 72, y: 1148, width: 936, height: 70), size: 42, color: gold, serif: true)
+            if let url = result.thumbnailURL, let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) {
+                ctx.draw(image, in: CGRect(x: 72, y: 584, width: 936, height: 526.5))
+                corners(in: ctx, rect: CGRect(x: 60, y: 572, width: 960, height: 550), length: 28)
+            }
+            text("ДИВІТЬСЯ ПОВНЕ ЕСЕ", rect: CGRect(x: 72, y: 390, width: 936, height: 58), size: 42, color: ivory)
+            text("YouTube · Кадр & Сенс", rect: CGRect(x: 72, y: 326, width: 936, height: 44), size: 30, color: gold)
+            if let handle = telegramURL.flatMap({ URL(string: $0)?.lastPathComponent }), !handle.isEmpty {
+                text("Обговорення · @" + handle, rect: CGRect(x: 72, y: 196, width: 936, height: 40), size: 24, color: ivory.withAlphaComponent(0.6))
+            }
+            line(ctx, x: 72, y: 130, width: 936, alpha: 0.25)
+        }
+    }
+
+    static func cover(short: EssayShort, result: LongformBuildResult, candidate: ThumbnailCandidateFrame) throws -> CGImage {
+        try draw { ctx in
+            ctx.setFillColor(ink.cgColor); ctx.fill(CGRect(origin: .zero, size: canvas))
+            let image = candidate.image
+            // Preserve the face in a generous upper photo pane. Scaling a
+            // widescreen frame to the full 9:16 height produces a giant face.
+            let pane = CGRect(x: 0, y: 660, width: 1080, height: 1104)
+            let scale = max(pane.width / CGFloat(image.width), pane.height / CGFloat(image.height))
+            let width = CGFloat(image.width) * scale, height = CGFloat(image.height) * scale
+            let face = candidate.faceBox ?? CGRect(x: 0.4, y: 0.3, width: 0.2, height: 0.3)
+            let x = min(pane.minX, max(pane.maxX - width, canvas.width * 0.60 - face.midX * width))
+            let y = min(pane.minY, max(pane.maxY - height, 1320 - face.midY * height))
+            ctx.saveGState(); ctx.clip(to: pane)
+            ctx.draw(image, in: CGRect(x: x, y: y, width: width, height: height))
+            ctx.restoreGState()
+            let space = CGColorSpaceCreateDeviceRGB()
+            if let gradient = CGGradient(colorsSpace: space, colors: [ink.cgColor, ink.withAlphaComponent(0.97).cgColor,
+                ink.withAlphaComponent(0.35).cgColor, ink.withAlphaComponent(0.08).cgColor] as CFArray, locations: [0, 0.26, 0.63, 1]) {
+                ctx.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 0, y: 1920), options: [])
+            }
+            ctx.setFillColor(ink.withAlphaComponent(0.78).cgColor)
+            ctx.fill(CGRect(x: 0, y: 1764, width: 1080, height: 156))
+            brand(in: ctx, y: 1818)
+            let tag = short.id == "short2" ? "02 / СЦЕНА З ФІЛЬМУ" : "01 / СЦЕНА З ФІЛЬМУ"
+            text(tag, rect: CGRect(x: 72, y: 1030, width: 936, height: 42), size: 24, color: gold)
+            text(short.title, rect: CGRect(x: 72, y: 490, width: 872, height: 496), size: 108, color: ivory, serif: true)
+            line(ctx, x: 72, y: 402, width: 140)
+            text(result.arc.movieTitle.uppercased(), rect: CGRect(x: 72, y: 286, width: 872, height: 74), size: 36, color: gold)
+            text("СЦЕНА З ФІЛЬМУ", rect: CGRect(x: 72, y: 148, width: 872, height: 40), size: 22, color: ivory.withAlphaComponent(0.6))
+            corners(in: ctx, rect: CGRect(x: 34, y: 90, width: 1012, height: 1770), length: 32)
+        }
+    }
+
+    static func coverCandidate(source: AVURLAsset, ranges: [TimeSegment]) async throws -> ThumbnailCandidateFrame {
+        let generator = AVAssetImageGenerator(asset: source)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 1920, height: 1080)
+        var best: ThumbnailCandidateFrame?
+        // The opening scene establishes this short's subject. A later,
+        // larger reaction face must not displace its protagonist on the cover.
+        for range in ranges.prefix(1) {
+            for fraction in [0.22, 0.5, 0.78] {
+                try Task.checkCancellation()
+                let time = range.start + range.duration * fraction
+                guard let image = try? await generator.image(at: CMTime(seconds: time, preferredTimescale: 600)).image else { continue }
+                let boxes = try faces(in: image)
+                let face = boxes.max { $0.boundingBox.width * $0.boundingBox.height < $1.boundingBox.width * $1.boundingBox.height }
+                let box = face?.boundingBox
+                let score = (box.map { Double($0.width * $0.height) } ?? 0) + (face == nil ? 0 : 1)
+                let candidate = ThumbnailCandidateFrame(time: time, image: image, faceBox: box, score: score,
+                    averageLuminance: 0.3, faceCount: boxes.count)
+                if best == nil || candidate.score > best!.score { best = candidate }
+            }
+        }
+        guard let best else { throw EssayReleaseError.invalid("Не удалось получить кадр для обложки шортса.") }
+        return best
+    }
+
+    static func draw(_ content: (CGContext) -> Void) throws -> CGImage {
+        guard let ctx = CGContext(data: nil, width: 1080, height: 1920, bitsPerComponent: 8, bytesPerRow: 4320,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            throw EssayReleaseError.invalid("Не удалось подготовить фирменное оформление.")
+        }
+        ctx.interpolationQuality = .high
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        content(ctx)
+        guard let image = ctx.makeImage() else { throw EssayReleaseError.invalid("Не удалось отрисовать оформление.") }
+        return image
+    }
+
+    static func text(_ value: String, rect: CGRect, size: CGFloat, color: NSColor, serif: Bool = false) {
+        let fitted = LongformThumbnailComposer.fittedText(value, in: rect, maxSize: size, minSize: size * 0.5, serif: serif)
+        let text = NSMutableAttributedString(attributedString: fitted)
+        text.addAttribute(.foregroundColor, value: color, range: NSRange(location: 0, length: text.length))
+        let height = ceil(text.boundingRect(with: CGSize(width: rect.width, height: 10_000), options: [.usesLineFragmentOrigin, .usesFontLeading]).height)
+        text.draw(with: CGRect(x: rect.minX, y: rect.maxY - height - 2, width: rect.width, height: height + 2), options: [.usesLineFragmentOrigin, .usesFontLeading])
+    }
+
+    private static func brand(in ctx: CGContext, y: CGFloat) {
+        corners(in: ctx, rect: CGRect(x: 72, y: y + 4, width: 30, height: 30), length: 10)
+        text("КАДР & СЕНС", rect: CGRect(x: 126, y: y - 2, width: 580, height: 46), size: 34, color: ivory, serif: true)
+    }
+    private static func line(_ ctx: CGContext, x: CGFloat, y: CGFloat, width: CGFloat, alpha: CGFloat = 1) {
+        ctx.setFillColor(gold.withAlphaComponent(alpha).cgColor)
+        ctx.fill(CGRect(x: x, y: y, width: width, height: 2))
+    }
+    private static func corners(in ctx: CGContext, rect: CGRect, length: CGFloat) {
+        ctx.setStrokeColor(gold.withAlphaComponent(0.6).cgColor); ctx.setLineWidth(2)
+        for point in [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY), CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.maxY)] {
+            let dx: CGFloat = point.x == rect.minX ? 1 : -1
+            let dy: CGFloat = point.y == rect.minY ? 1 : -1
+            ctx.strokeLineSegments(between: [CGPoint(x: point.x, y: point.y + dy * length), point, point, CGPoint(x: point.x + dx * length, y: point.y)])
+        }
     }
 }

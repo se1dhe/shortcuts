@@ -3,6 +3,11 @@ import Foundation
 /// Материал для режиссёра: реальные непересекающиеся фрагменты диалогов.
 /// Модель выбирает ID и смысловую роль, а не сочиняет таймкоды/цитаты.
 struct EssaySceneCatalogue: Sendable {
+    /// Keep a little of the natural breath around dialogue. The model still
+    /// chooses the utterance block; these handles only extend into transcript
+    /// gaps and never cut or overlap neighboring speech.
+    static let maximumDialogueHandle: Double = 1.25
+
     struct Scene: Sendable {
         let id: String
         let start: Double
@@ -48,7 +53,30 @@ struct EssaySceneCatalogue: Sendable {
             if duration >= 28, endsThought(segment.text) { flush() }
         }
         flush()
-        scenes = result
+
+        // Catalogue timestamps used to equal the first/last ASR speech samples,
+        // so every selected edit began and ended mid-conversation. Extend each
+        // handle only through silence visible between adjacent transcript lines.
+        // Respect the scene cap after padding; balance the available handles if
+        // both ends would otherwise push a 40-second scene over the limit.
+        scenes = result.enumerated().map { index, scene in
+            let previousSpeechEnd = segments.last(where: { $0.end <= scene.start })?.end ?? 0
+            let safeEnd = SentenceBoundaryDetector.safeTailEnd(after: scene.end,
+                desiredEnd: scene.end + Self.maximumDialogueHandle,
+                speech: transcript.segments.map { TimeSegment(start: $0.start, end: $0.end) })
+            let availableBefore = max(0, scene.start - previousSpeechEnd)
+            let availableAfter = transcript.segments.contains(where: { $0.start >= scene.end }) ? max(0, safeEnd - scene.end) : 0
+            var before = min(Self.maximumDialogueHandle, availableBefore)
+            var after = min(Self.maximumDialogueHandle, availableAfter)
+            let excess = max(0, scene.end - scene.start + before + after - 40)
+            if excess > 0 {
+                let removeBefore = min(before, excess / 2)
+                before -= removeBefore
+                after = max(0, after - (excess - removeBefore))
+            }
+            return Scene(id: scene.id, start: scene.start - before, end: scene.end + after,
+                text: scene.text, quote: scene.quote)
+        }
     }
 
     private init(scenes: [Scene]) { self.scenes = scenes }
@@ -101,9 +129,9 @@ struct EssaySceneCatalogue: Sendable {
                     switch key.lowercased() {
                     case "id", "sceneid": canonical = "id"
                     case "role", "actrole": canonical = "role"
-                    case "weight", "dramaticweight": canonical = "weight"
-                    case "featured": canonical = "featured"
-                    case "explanation", "supports", "reason": canonical = "explanation"
+                    case "weight", "dramaticweight", "confidence": canonical = "weight"
+                    case "featured", "is_confirmed", "isconfirmed": canonical = "featured"
+                    case "explanation", "supports", "reason", "reasoning", "text": canonical = "explanation"
                     default: continue
                     }
                     guard fields[canonical] == nil else {
@@ -129,7 +157,7 @@ struct EssaySceneCatalogue: Sendable {
                 throw SelectionError(detail: "Сцена \(id) выбрана повторно. Каждой роли нужен отдельный фрагмент.")
             }
             guard let roleKey = row[1] as? String, let role = LongformActType(promptKey: roleKey),
-                  LongformActType.canonicalAnalyticOrder.contains(role),
+                  LongformActType.allCases.contains(role),
                   let weight = row[2] as? Double, weight.isFinite, (0...1).contains(weight),
                   let featured = row[3] as? Bool,
                   let supports = row[4] as? String, !supports.trimmed.isEmpty else {

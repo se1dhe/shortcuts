@@ -33,7 +33,7 @@ class Studio {
     return {
       progressText: this.time < 12000 ? 'Uploading 5%' : this.time < 16000 ? 'Uploading 98%' : 'Upload complete',
       checksText: this.step === 'checks'
-        ? (this.claim ? 'Copyright-protected content found' : this.time < 22000 ? 'Checking' : 'Checks complete. No issues found')
+        ? (this.claim ? 'Checks complete. Copyright-protected content found' : this.time < 22000 ? 'Checking' : 'Checks complete. No issues found')
         : '',
       errorText: '',
     };

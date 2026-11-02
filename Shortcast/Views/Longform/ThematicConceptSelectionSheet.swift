@@ -15,10 +15,11 @@ struct ThematicConceptSelectionSheet: View {
     let cancelTitle: String
     let onSelect: (ThematicConcept, String, LongformAudioSettings, EssayPlan) -> Void
     let onCancel: () -> Void
-    let onRegenerate: (() -> Void)?
+    let onRegenerate: ((EssayFormat) -> Void)?
 
     @State private var editedMovieTitle: String
     @State private var selectedConceptId: String? = nil
+    @State private var essayFormat: EssayFormat = .analytical
     @State private var customWord: String = ""
     @State private var customTitle: String = ""
     @State private var showCustomInput: Bool = false
@@ -31,36 +32,14 @@ struct ThematicConceptSelectionSheet: View {
     @AppStorage("shortcast.longform.coldOpenEnabled") private var coldOpenEnabled: Bool = true
     @AppStorage("shortcast.longform.ambientMusicEnabled") private var ambientMusicEnabled: Bool = true
     @AppStorage("shortcast.longform.duckingEnabled") private var duckingEnabled: Bool = true
-    @AppStorage("shortcast.longform.selectedPresetIndex") private var selectedPresetIndex: Int = 0
-    @AppStorage("shortcast.longform.customAudioPath") private var customAudioPath: String = ""
+    @AppStorage("shortcast.longform.selectedMusicPath") private var selectedMusicPath = ""
+    @State private var musicLibrary = MusicFolderLibrary.shared
     @AppStorage("shortcast.longform.ambientVolume") private var ambientVolume: Double = 0.18
     @State private var previewController = AudioPreviewController()
 
-    // Антикопирайт и защита от YouTube Content ID (автоматически сохраняются в UserDefaults)
-    @AppStorage("shortcast.longform.antiCopyrightEnabled") private var antiCopyrightEnabled: Bool = true
+    // Optional effects; existing user preferences remain stored in UserDefaults.
+    @AppStorage("shortcast.longform.antiCopyrightEnabled") private var antiCopyrightEnabled: Bool = false
     @AppStorage("shortcast.longform.antiCopyrightPreset") private var antiCopyrightPreset: AntiCopyrightPreset = .cinemaShield
-
-    private var customAudioURL: URL? {
-        get {
-            guard !customAudioPath.isEmpty, FileManager.default.fileExists(atPath: customAudioPath) else { return nil }
-            return URL(fileURLWithPath: customAudioPath)
-        }
-        nonmutating set {
-            customAudioPath = newValue?.path ?? ""
-        }
-    }
-
-    private let musicPresets: [(name: String, fileName: String)] = [
-        ("prrodan: Foggy Night (Главная тема)", "Prrodan_Foggy_Night.m4a"),
-        ("prrodan: Тёмная атмосфера (Dark Atmosphere)", "Prrodan_Dark_Atmosphere.m4a"),
-        ("prrodan: Внутренняя стойкость (Resilience)", "Prrodan_Cinematic_Resilience.m4a"),
-        ("prrodan: Экзистенциальное эхо (Existential Echo)", "Prrodan_Existential_Echo.m4a"),
-        ("prrodan: Опасный разум (Dangerous Mind)", "Prrodan_Dangerous_Mind.m4a"),
-        ("prrodan: Несломленный дух (Unbroken Spirit)", "Prrodan_Unbroken_Spirit.m4a"),
-        ("Тёмный кинематографичный монолог (Monologue)", "Sigma_Monologue_Dark.m4a"),
-        ("Напряжение и саспенс (Suspense)", "Tension_Dark_Suspense.m4a"),
-        ("Драматическая тема (Emotional)", "Dramatic_Emotional_Theme.m4a")
-    ]
 
     init(
         movieTitle: String,
@@ -73,11 +52,12 @@ struct ThematicConceptSelectionSheet: View {
         cancelTitle: String = "Отмена",
         onSelect: @escaping (ThematicConcept, String, LongformAudioSettings, EssayPlan) -> Void,
         onCancel: @escaping () -> Void,
-        onRegenerate: (() -> Void)? = nil
+        onRegenerate: ((EssayFormat) -> Void)? = nil
     ) {
         self.initialMovieTitle = movieTitle
         self._editedMovieTitle = State(initialValue: movieTitle)
         self.concepts = concepts
+        self._essayFormat = State(initialValue: concepts.first?.format ?? .analytical)
         self.aiReasoning = aiReasoning
         self.source = source
         self.initialEssayPlan = essayPlan
@@ -199,44 +179,24 @@ struct ThematicConceptSelectionSheet: View {
     }
 
     private var resolvedMusicURL: URL? {
-        guard ambientMusicEnabled else { return nil }
-        if let customAudioURL {
-            return customAudioURL
-        }
-        guard !musicPresets.isEmpty else { return nil }
-        let safeIndex = min(max(0, selectedPresetIndex), musicPresets.count - 1)
-        let fileName = musicPresets[safeIndex].fileName
-        return resolveMusicFile(fileName: fileName)
+        guard ambientMusicEnabled,
+              let track = musicLibrary.tracks.first(where: { $0.url.path == selectedMusicPath }),
+              FileManager.default.isReadableFile(atPath: track.url.path) else { return nil }
+        return track.url
     }
 
-    private func resolveMusicFile(fileName: String) -> URL? {
-        if let url = Bundle.main.url(forResource: fileName, withExtension: nil, subdirectory: "Music") {
-            return url
+    private func reconcileMusicSelection() {
+        if !musicLibrary.tracks.contains(where: { $0.url.path == selectedMusicPath }) {
+            selectedMusicPath = ""
+            previewController.stop()
         }
-        if let url = Bundle.main.url(forResource: fileName, withExtension: nil) {
-            return url
-        }
-        if let resURL = Bundle.main.resourceURL?.appendingPathComponent(fileName),
-           FileManager.default.fileExists(atPath: resURL.path) {
-            return resURL
-        }
-        if let resMusicURL = Bundle.main.resourceURL?.appendingPathComponent("Music/\(fileName)"),
-           FileManager.default.fileExists(atPath: resMusicURL.path) {
-            return resMusicURL
-        }
-        let fallback = BackgroundMusicService.shared.defaultMusicDirectory().appendingPathComponent(fileName)
-        if FileManager.default.fileExists(atPath: fallback.path) {
-            return fallback
-        }
-        let localPath = URL(fileURLWithPath: "Shortcast/Resources/Music/\(fileName)")
-        if FileManager.default.fileExists(atPath: localPath.path) {
-            return localPath
-        }
-        return nil
     }
 
     var body: some View {
         VStack(spacing: 0) {
+            Picker("Формат выпуска", selection: $essayFormat) {
+                ForEach(EssayFormat.allCases) { format in Text(format.title).tag(format) }
+            }.pickerStyle(.segmented).disabled(isRegenerating).padding(.horizontal, 28).padding(.top, 14)
             // Заголовок и блок названия фильма
             VStack(spacing: 10) {
                 HStack(spacing: 12) {
@@ -248,7 +208,7 @@ struct ThematicConceptSelectionSheet: View {
 
                     if let onRegenerate {
                         Button {
-                            onRegenerate()
+                            onRegenerate(essayFormat)
                         } label: {
                             HStack(spacing: 5) {
                                 if isRegenerating {
@@ -669,7 +629,7 @@ struct ThematicConceptSelectionSheet: View {
                 // 2. Секция фоновой музыки: Cinematic Dark Ambient
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Toggle("Фоновая музыка (Cinematic Dark Ambient)", isOn: $ambientMusicEnabled)
+                        Toggle("Фоновая музыка", isOn: $ambientMusicEnabled)
                             .font(.subheadline.weight(.semibold))
                             .toggleStyle(.switch)
 
@@ -684,44 +644,34 @@ struct ThematicConceptSelectionSheet: View {
                     }
 
                     if ambientMusicEnabled {
+                        if let directory = musicLibrary.directory {
+                            Text("\(directory.path) · треков: \(musicLibrary.tracks.count)")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .lineLimit(1).truncationMode(.middle)
+                        }
+                        if let error = musicLibrary.error {
+                            Text(error).font(.caption).foregroundStyle(StudioTheme.warning)
+                        }
                         HStack(spacing: 12) {
-                            Picker("Саундтрек:", selection: $selectedPresetIndex) {
-                                ForEach(0..<musicPresets.count, id: \.self) { idx in
-                                    Text(musicPresets[idx].name).tag(idx)
+                            Picker("Саундтрек:", selection: Binding(
+                                get: { selectedMusicPath },
+                                set: { path in
+                                    selectedMusicPath = FileManager.default.isReadableFile(atPath: path) ? path : ""
+                                })) {
+                                Text("Без трека").tag("")
+                                ForEach(musicLibrary.tracks) { track in
+                                    Text(track.name).tag(track.url.path)
                                 }
                             }
                             .pickerStyle(.menu)
                             .frame(maxWidth: 320)
-                            .disabled(customAudioURL != nil)
 
-                            Button {
-                                let openPanel = NSOpenPanel()
-                                openPanel.canChooseFiles = true
-                                openPanel.canChooseDirectories = false
-                                openPanel.allowsMultipleSelection = false
-                                openPanel.allowedContentTypes = [.audio, .mp3, .wav]
-                                openPanel.message = "Выберите аудиодорожку (mp3, wav, m4a)"
-                                if openPanel.runModal() == .OK, let url = openPanel.url {
-                                    customAudioURL = url
-                                }
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: customAudioURL != nil ? "checkmark.circle.fill" : "music.note.list")
-                                    Text(customAudioURL != nil ? customAudioURL!.lastPathComponent : "Свой файл…")
-                                }
+                            Button("Папка с музыкой…", systemImage: "folder") {
+                                musicLibrary.chooseFolder()
+                                reconcileMusicSelection()
                             }
                             .buttonStyle(.bordered)
-                            .tint(customAudioURL != nil ? StudioTheme.accent : .secondary)
-
-                            if customAudioURL != nil {
-                                Button {
-                                    customAudioURL = nil
-                                } label: {
-                                    Image(systemName: "xmark.circle")
-                                        .foregroundStyle(.secondary)
-                                }
-                                .buttonStyle(.plain)
-                            }
+                            .help(musicLibrary.directory?.path ?? "Подключить папку с музыкой")
 
                             // Кнопка предпрослушивания саундтрека
                             Button {
@@ -758,10 +708,10 @@ struct ThematicConceptSelectionSheet: View {
                 .padding(.vertical, 8)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.06)))
 
-                // 3. Защита от YouTube Content ID (YouTube Shield)
+                // 3. Optional image and audio effects
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Toggle("Защита YouTube Shield (Anti-Copyright)", isOn: $antiCopyrightEnabled)
+                        Toggle("Обработка изображения и звука", isOn: $antiCopyrightEnabled)
                             .font(.subheadline.weight(.semibold))
                             .toggleStyle(.switch)
 
@@ -779,7 +729,7 @@ struct ThematicConceptSelectionSheet: View {
                     }
 
                     if antiCopyrightEnabled {
-                        Text("3.5% микро-зум, 35мм кинозерно, акустический сдвиг питча (+12¢) и очистка метаданных для защиты от Content ID и страйков.")
+                        Text("Микро-зум, кинозерно и обработка звука. Эти эффекты не гарантируют отсутствие Content ID, претензий или ограничений монетизации.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -810,7 +760,8 @@ struct ThematicConceptSelectionSheet: View {
 
                 Button {
                     previewController.stop()
-                    if let chosen = conceptForConfirmation {
+                    if var chosen = conceptForConfirmation {
+                        chosen.essayFormat = essayFormat
                         let finalTitle = editedMovieTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             ? initialMovieTitle
                             : editedMovieTitle.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -839,7 +790,7 @@ struct ThematicConceptSelectionSheet: View {
                 .buttonStyle(.borderedProminent)
                 .tint(StudioTheme.accent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(activeSelection == nil)
+                .disabled(activeSelection == nil || isRegenerating)
             }
             .padding(.horizontal, 22)
             .padding(.vertical, 12)
@@ -853,14 +804,19 @@ struct ThematicConceptSelectionSheet: View {
                 self.selectedConceptId = primaryConcept?.id
             }
         }
-        .onChange(of: selectedPresetIndex) { _, _ in
-            if previewController.isPlaying, let url = resolvedMusicURL {
-                previewController.play(url: url, volume: Float(ambientVolume))
+        .task {
+                musicLibrary.refresh()
+                reconcileMusicSelection()
+                await musicLibrary.monitor()
             }
-        }
-        .onChange(of: customAudioPath) { _, _ in
-            if previewController.isPlaying, let url = resolvedMusicURL {
-                previewController.play(url: url, volume: Float(ambientVolume))
+        .onChange(of: musicLibrary.tracks) { _, _ in reconcileMusicSelection() }
+        .onChange(of: selectedMusicPath) { _, _ in
+            if previewController.isPlaying {
+                if let url = resolvedMusicURL {
+                    previewController.play(url: url, volume: Float(ambientVolume))
+                } else {
+                    previewController.stop()
+                }
             }
         }
         .onChange(of: ambientVolume) { _, newVolume in

@@ -16,6 +16,13 @@ final class AppSettings {
     var tmdbAPIKey: String { didSet { defaults.set(tmdbAPIKey, forKey: Keys.tmdbApiKey) } }
     var telegramBotToken: String { didSet { defaults.set(telegramBotToken, forKey: Keys.telegramBotToken) } }
     var telegramChannelId: String { didSet { defaults.set(telegramChannelId, forKey: Keys.telegramChannelId) } }
+    var donatelloURL: String { didSet { defaults.set(donatelloURL, forKey: "shortcast.donatelloURL") } }
+    var donorNicknamesText: String { didSet { defaults.set(donorNicknamesText, forKey: "shortcast.donorNicknamesText") } }
+    var donorCreditsEnabled: Bool { didSet { defaults.set(donorCreditsEnabled, forKey: "shortcast.donorCreditsEnabled") } }
+    var essaySupport: EssaySupport {
+        EssaySupport(donatelloURL: donatelloURL, creditsEnabled: donorCreditsEnabled,
+                     nicknames: EssaySupport.names(from: donorNicknamesText))
+    }
     var languageOverride: String { didSet { defaults.set(languageOverride, forKey: Keys.language) } }
     var copywriterModel: CopywriterModel { didSet { defaults.set(copywriterModel.rawValue, forKey: Keys.copywriter) } }
     var channelLogoWatermarkEnabled: Bool { didSet { defaults.set(channelLogoWatermarkEnabled, forKey: Keys.channelLogoWatermark) } }
@@ -89,6 +96,9 @@ final class AppSettings {
         self.tmdbAPIKey = defaults.string(forKey: Keys.tmdbApiKey) ?? ""
         self.telegramBotToken = defaults.string(forKey: Keys.telegramBotToken) ?? ""
         self.telegramChannelId = defaults.string(forKey: Keys.telegramChannelId) ?? "@telonyx_club"
+        self.donatelloURL = defaults.string(forKey: "shortcast.donatelloURL") ?? EssaySupport.defaultURL
+        self.donorNicknamesText = defaults.string(forKey: "shortcast.donorNicknamesText") ?? ""
+        self.donorCreditsEnabled = defaults.bool(forKey: "shortcast.donorCreditsEnabled")
         self.languageOverride = defaults.string(forKey: Keys.language) ?? "uk"
         self.copywriterModel = defaults.string(forKey: Keys.copywriter).flatMap(CopywriterModel.init) ?? .gemma12B
         self.channelLogoWatermarkEnabled = defaults.object(forKey: Keys.channelLogoWatermark) as? Bool ?? true

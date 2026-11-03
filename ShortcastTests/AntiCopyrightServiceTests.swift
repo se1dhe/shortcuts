@@ -9,6 +9,37 @@ final class AntiCopyrightServiceTests: XCTestCase {
 
     // MARK: - Config Tests
 
+    func testEssayProcessingPreservesFrameForEveryPreset() {
+        for preset in AntiCopyrightPreset.allCases {
+            let original = preset.config
+            let config = original.preservingFrame
+            let builder = AntiCopyrightFFmpegBuilder(config: config)
+            let filters = builder.buildVideoFilters(renderSize: CGSize(width: 1920, height: 1080))
+            XCTAssertFalse(filters.contains { $0.contains("crop=") || $0.contains("scale=") || $0 == "hflip" })
+            let geometry = AntiCopyrightGeometryTransformer(config: config)
+            XCTAssertEqual(geometry.transform(renderSize: CGSize(width: 1920, height: 1080)), .identity)
+            XCTAssertEqual(config.audioPitchShiftCents, original.audioPitchShiftCents)
+            XCTAssertEqual(config.contrastDelta, original.contrastDelta)
+        }
+        // Applying the essay policy must not change the independent Shorts preset.
+        XCTAssertGreaterThan(AntiCopyrightConfig.tikTokShield.driftIntensity, 0)
+    }
+
+    func testSourceFrameCadenceKeepsFilmAndBroadcastRates() {
+        for fps: Int32 in [24, 25, 30, 50, 60] {
+            let duration = CMTime(value: 1, timescale: fps)
+            XCTAssertEqual(VideoFrameCadence.sourceFrameDuration(nominalFrameRate: Float(fps), minimumFrameDuration: duration), duration)
+        }
+        for fps: Int32 in [24_000, 30_000, 60_000] {
+            XCTAssertEqual(VideoFrameCadence.sourceFrameDuration(nominalFrameRate: Float(fps) / 1001,
+                minimumFrameDuration: .invalid), CMTime(value: 1001, timescale: fps))
+        }
+        for fps: Float in [0, .nan, .infinity] {
+            XCTAssertEqual(VideoFrameCadence.sourceFrameDuration(nominalFrameRate: fps, minimumFrameDuration: .invalid),
+                CMTime(value: 1, timescale: 30))
+        }
+    }
+
     func testOffConfigIsInactive() {
         let config = AntiCopyrightConfig.off
         XCTAssertFalse(config.isActive)

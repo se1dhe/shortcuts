@@ -330,7 +330,9 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         let renderSize = CGSize(width: 1920, height: 1080)
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = renderSize
-        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+        videoComposition.frameDuration = VideoFrameCadence.sourceFrameDuration(
+            nominalFrameRate: try await sourceVideoTrack.load(.nominalFrameRate),
+            minimumFrameDuration: try await sourceVideoTrack.load(.minFrameDuration))
         videoComposition.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
         videoComposition.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
         videoComposition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
@@ -484,7 +486,8 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         var finalVideoURL = cleanOutputURL
         if isAntiCopyrightActive {
             progressHandler?(0.90, "Обработка изображения и звука...")
-            let antiCopyrightService = AntiCopyrightService(config: audioSettings.antiCopyrightPreset.config, preserveTimeline: true)
+            let antiCopyrightService = AntiCopyrightService(
+                config: audioSettings.antiCopyrightPreset.config.preservingFrame, preserveTimeline: true)
             do {
                 let protectedURL = try await antiCopyrightService.process(
                     videoURL: intermediateURL,

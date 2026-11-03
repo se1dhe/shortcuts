@@ -10090,19 +10090,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Micro-zoom, film grain and audio processing. These effects do not guarantee freedom from Content ID, claims or monetization limits."
+            "value": "Film grain, color and audio processing. Essay framing stays fixed. These effects do not guarantee freedom from Content ID, claims or monetization limits."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Микро-зум, кинозерно и обработка звука. Эти эффекты не гарантируют отсутствие Content ID, претензий или ограничений монетизации."
+            "value": "Кинозерно, цвет и обработка звука. Кадр эссе остаётся неподвижным. Эти эффекты не гарантируют отсутствие Content ID, претензий или ограничений монетизации."
           }
         },
         "uk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Мікрозум, кінозерно й обробка звуку. Ці ефекти не гарантують відсутності Content ID, претензій або обмежень монетизації."
+            "value": "Кінозерно, колір та обробка звуку. Кадр есе залишається нерухомим. Ці ефекти не гарантують відсутності Content ID, претензій або обмежень монетизації."
           }
         }
       }

@@ -5,6 +5,24 @@ import CoreImage
 import os.log
 import Darwin
 
+enum VideoFrameCadence {
+    static func sourceFrameDuration(nominalFrameRate: Float, minimumFrameDuration: CMTime) -> CMTime {
+        let seconds = minimumFrameDuration.seconds
+        if minimumFrameDuration.isValid, seconds.isFinite, seconds >= 1.0 / 240, seconds <= 1 {
+            return minimumFrameDuration
+        }
+        let fps = Double(nominalFrameRate)
+        guard fps.isFinite, fps >= 1, fps <= 240 else { return CMTime(value: 1, timescale: 30) }
+        // AVFoundation reports nominal rates as Float; recover exact NTSC timing.
+        for rate: Int32 in [24_000, 30_000, 60_000, 120_000] {
+            if abs(fps - Double(rate) / 1001) < 0.002 {
+                return CMTime(value: 1001, timescale: rate)
+            }
+        }
+        return CMTime(seconds: 1 / fps, preferredTimescale: 600_000)
+    }
+}
+
 // MARK: - Presets Enum
 
 /// Optional image and sound treatments. Archive raw values remain stable.
@@ -232,6 +250,16 @@ public struct AntiCopyrightConfig: Codable, Sendable, Equatable, Hashable {
     /// Frequency scale ratio derived from cents: `2^(cents / 1200)`.
     public var pitchScaleRatio: Double {
         pow(2.0, audioPitchShiftCents / 1200.0)
+    }
+
+    /// A widescreen essay keeps the director's framing, including its overlays.
+    /// Vertical Shorts have a separate reframing pipeline.
+    public var preservingFrame: AntiCopyrightConfig {
+        var copy = self
+        copy.enableMirror = false
+        copy.zoomScale = 1
+        copy.driftIntensity = 0
+        return copy
     }
 
     /// Returns a clamped, safe copy of this configuration.
@@ -1134,8 +1162,9 @@ public struct AntiCopyrightService: AntiCopyrightTransforming, Sendable {
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = renderSize
         let nominalFPS = try await videoTrack.load(.nominalFrameRate)
-        let fps = nominalFPS > 0 ? Int32(nominalFPS.rounded()) : 30
-        videoComposition.frameDuration = CMTime(value: 1, timescale: fps)
+        videoComposition.frameDuration = VideoFrameCadence.sourceFrameDuration(
+            nominalFrameRate: nominalFPS,
+            minimumFrameDuration: try await videoTrack.load(.minFrameDuration))
 
         let finalDuration = abs(config.audioSpeedMultiplier - 1.0) > 0.0001
             ? calculateScaledDuration(for: duration)

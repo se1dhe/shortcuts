@@ -154,10 +154,25 @@ extension WorkspaceModel {
             }
             let selected = try await EssayShortDirector(model: gateway, visualReview: review)
                 .plan(arc: result.arc, transcript: transcript, progress: progress)
-            let planned = try await EssayShortCopyEditor(model: gateway).edit(selected,
+            // Keep the expensive source selection even if copy review fails.
+            // These are unrendered drafts, never publishable exports.
+            release.shorts = selected
+            try await saveEssayRelease(release, projectID: project.id)
+        }
+        let unrendered = release.shorts.filter { $0.outputURL == nil }
+        if !unrendered.isEmpty {
+            try await modelManager.requireDirector(profile: settings.copywriterModel.directorProfile)
+            let finder = modelManager.momentFinder
+            let profile = settings.copywriterModel.directorProfile
+            let gateway = DirectorChatGateway(readiness: { await finder.isReady }, identifier: { profile.modelID },
+                completion: { instructions, prompt, tokens in
+                    await finder.completeForActTitles(instructions: instructions, prompt: prompt, maxTokens: tokens)
+                })
+            let reviewed = try await EssayShortCopyEditor(model: gateway).edit(unrendered,
                 movie: result.arc.movieTitle, transcript: transcript, progress: progress)
-            // Checkpoint plans before rendering so an interrupted export can resume.
-            release.shorts = planned
+            for short in reviewed {
+                if let index = release.shorts.firstIndex(where: { $0.id == short.id }) { release.shorts[index] = short }
+            }
             try await saveEssayRelease(release, projectID: project.id)
             modelManager.freeDirectorIfMemoryTight()
         }
@@ -300,7 +315,13 @@ struct EssayReleasePublisher {
                     release.receipts[key] = .init(state: .published, url: url, message: message)
                     try await checkpoint(release); received = true
                 case .failure(_, let message), .captchaDetected(_, let message): throw EssayReleaseError.invalid(message)
-                case .finished: break
+                case .finished:
+                    // completed is the terminal protocol event; a browser
+                    // descendant can keep the OS pipe open after that event.
+                    guard received else {
+                        throw EssayReleaseError.invalid("Нет подтверждения публикации. Проверьте площадку перед повтором.")
+                    }
+                    return release
                 }
             }
             guard received else { throw EssayReleaseError.invalid("Нет подтверждения публикации. Проверьте площадку перед повтором.") }

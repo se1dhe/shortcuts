@@ -61,7 +61,11 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         progressHandler: (@Sendable (Double, String) -> Void)? = nil
     ) async throws -> LongformBuildResult {
         let audioSettings = existingArc?.musicSettings ?? audioSettings
-
+        if concept.source == .llm, concept.publicationWord == nil,
+           let issue = await MainActor.run(body: { UkrainianTextReview.themeSpellingIssue(concept.displayWord) }) {
+            throw NSError(domain: "EssayThemeSpelling", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: issue])
+        }
 
         // 1. Построение арки: аналитическая 5-актная или прежняя 4-актная
         var arc: LongformNarrativeArc
@@ -225,6 +229,23 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         let outroPadding = timeline.outroDuration
         let totalDuration = speechFinishTime + outroPadding
         let totalDurationCM = CMTime(seconds: totalDuration, preferredTimescale: 600)
+        // Empty ranges alone are trimmed by the exporter without a music bed.
+        // Carry the CTA tail on silent video samples from the last approved
+        // clip. The video layer is explicitly invisible from speechFinishTime,
+        // so these samples only keep the black CTA canvas alive.
+        if outroPadding > 0, let last = segments.last, last.duration > 0 {
+            var remaining = outroPadding
+            var tailCursor = insertTime
+            while remaining > 0.001 {
+                let chunk = min(last.duration, remaining)
+                let duration = CMTime(seconds: chunk, preferredTimescale: 600)
+                try compVideoTrack.insertTimeRange(CMTimeRange(
+                    start: CMTime(seconds: last.start, preferredTimescale: 600), duration: duration),
+                    of: sourceVideoTrack, at: tailCursor)
+                tailCursor = CMTimeAdd(tailCursor, duration)
+                remaining -= chunk
+            }
+        }
 
         // Формируем интервалы реальной речи из Whisper для сайдчейн-дакинга музыки
         let speechIntervals: [TimeSegment] = timedPhrases.map { TimeSegment(start: $0.start, end: $0.end) }
@@ -368,7 +389,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             progressHandler?(0.72, "Финальная карточка: благодарности \(support.nicknames.count) донатерам…")
             let finalText = LongformEditorialSupport.finalCard(for: arc)
             let card = DonorCreditsRenderer.makeLayer(support: support, ctaText: finalText,
-                theme: concept.word, start: speechFinishTime, duration: outroPadding, canvas: renderSize)
+                theme: concept.displayWord, start: speechFinishTime, duration: outroPadding, canvas: renderSize)
             if channelLogoEnabled, let logo = overlayLayer.sublayers?.last {
                 overlayLayer.insertSublayer(card, below: logo)
             } else {

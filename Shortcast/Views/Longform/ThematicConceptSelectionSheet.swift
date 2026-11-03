@@ -194,9 +194,6 @@ struct ThematicConceptSelectionSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker(L10n.tr("Формат выпуска"), selection: $essayFormat) {
-                ForEach(EssayFormat.allCases) { format in Text(L10n.tr(format.title)).tag(format) }
-            }.pickerStyle(.segmented).disabled(isRegenerating).padding(.horizontal, 28).padding(.top, 14)
             // Заголовок и блок названия фильма
             VStack(spacing: 10) {
                 HStack(spacing: 12) {
@@ -799,9 +796,13 @@ struct ThematicConceptSelectionSheet: View {
         .background(StudioTheme.background)
         .preferredColorScheme(.dark)
         .tint(StudioTheme.accent)
-        .onChange(of: concepts.map(\.id)) { _, ids in
-            if let selectedConceptId, !ids.contains(selectedConceptId) {
+        .onChange(of: concepts) { previous, updated in
+            if selectedConceptId == nil || !updated.contains(where: { $0.id == selectedConceptId }) {
                 self.selectedConceptId = primaryConcept?.id
+            }
+            if previous.isEmpty || previous.first?.format != updated.first?.format,
+               let format = updated.first?.format {
+                essayFormat = format
             }
         }
         .task {

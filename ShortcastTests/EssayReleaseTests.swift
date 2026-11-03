@@ -36,10 +36,12 @@ private final class ReleaseBrowserStub: BrowserPublishingProtocol, Sendable {
     let missingURL: Bool
     let auth: BrowserAuthStatus
     let failComments: Bool
-    init(missingURL: Bool = false, youtube: Bool = true, tiktok: Bool = true, failComments: Bool = false) {
+    let keepPipeOpen: Bool
+    init(missingURL: Bool = false, youtube: Bool = true, tiktok: Bool = true, failComments: Bool = false, keepPipeOpen: Bool = false) {
         self.missingURL = missingURL
         self.auth = .init(tiktok: tiktok, youtube: youtube)
         self.failComments = failComments
+        self.keepPipeOpen = keepPipeOpen
     }
     func checkAuthStatus() async throws -> BrowserAuthStatus { auth }
     func openLoginSession() async throws -> BrowserAuthStatus { try await checkAuthStatus() }
@@ -52,7 +54,9 @@ private final class ReleaseBrowserStub: BrowserPublishingProtocol, Sendable {
             }
             let url = job.action == "youtube-comment" ? (job.targetVideoURL! + "&lc=Comment\(count)")
                 : platform == "youtube" ? "https://www.youtube.com/watch?v=vid\(String(format: "%08d", count))" : "https://www.tiktok.com/@test/video/100\(count)"
-            stream.yield(.success(platform: platform, message: "test", url: missingURL ? nil : url)); stream.finish()
+            stream.yield(.success(platform: platform, message: "test", url: missingURL ? nil : url))
+            stream.yield(.finished(allResults: [platform: "success"]))
+            if !keepPipeOpen { stream.finish() }
         }
     }
 }
@@ -84,6 +88,31 @@ private final class RichPostProtocolStub: URLProtocol, @unchecked Sendable {
 
 @Suite("Essay release", .serialized)
 struct EssayReleaseTests {
+    @Test("An unpublished whole-film pair survives an essay copy edit; external deliveries never rebind")
+    func wholeFilmCheckpointSurvivesEssayCopyEdit() throws {
+        let (result, _) = releaseFixture()
+        var editedArc = result.arc
+        editedArc.concept.publicationWord = "ВИБІР"
+        var release = EssayRelease(essayKey: EssayRelease.key(for: result.arc))
+        release.shorts = (1...2).map { index in
+            EssayShort(id: "short\(index)", angle: "Вибір", hook: "Яка ціна?", title: "Вибір",
+                why: "Конфлікт", payoffQuote: "Це питання особистої свободи.", question: "Хто обирає?",
+                segments: [.init(start: Double(index * 50), end: Double(index * 50 + 35))],
+                selectionVersion: EssayShortDirector.selectionVersion)
+        }
+        let rebound = try #require(release.rebindingUnpublishedPlans(from: result.arc, to: editedArc))
+        #expect(rebound.essayKey == EssayRelease.key(for: editedArc))
+        #expect(rebound.shorts == release.shorts)
+        release.receipts["essay.youtube"] = .init(state: .published,
+            url: "https://www.youtube.com/watch?v=abcdefghijk", message: "Published")
+        #expect(release.rebindingUnpublishedPlans(from: result.arc, to: editedArc) == nil)
+        release.receipts = [:]
+        release.essayYouTubeURL = "https://www.youtube.com/watch?v=abcdefghijk"
+        #expect(release.rebindingUnpublishedPlans(from: result.arc, to: editedArc) == nil)
+        release.essayYouTubeURL = nil
+        release.shorts[0].selectionVersion = nil
+        #expect(release.rebindingUnpublishedPlans(from: result.arc, to: editedArc) == nil)
+    }
     @Test("Publication footer uses the current Telegram channel without changing the approved essay")
     func currentPublicationDestination() {
         let (result, _) = releaseFixture()
@@ -365,8 +394,8 @@ struct EssayReleaseTests {
         #expect(body.contains("-100123"))
     }
 
-    @Test("Publishing resumes without re-uploading confirmed targets")
-    @MainActor func resume() async throws {
+    @Test("Publishing resumes without re-uploading confirmed targets, even if the pipe stays open", arguments: [false, true])
+    @MainActor func resume(keepPipeOpen: Bool) async throws {
         let (result, transcript) = releaseFixture()
         let windows = EssayShortDirector.catalogue(arc: result.arc, transcript: transcript)
         var shorts = try EssayShortDirector.parse(releaseReply([windows.first!.id, windows.last!.id]), catalogue: windows)
@@ -376,7 +405,7 @@ struct EssayReleaseTests {
         var release = EssayRelease(essayKey: EssayRelease.key(for: result.arc), shorts: shorts,
             essayYouTubeURL: "https://www.youtube.com/watch?v=abcdefghijk")
         release.receipts["telegram.announcement"] = .init(state: .published, message: "already posted")
-        let browser = ReleaseBrowserStub()
+        let browser = ReleaseBrowserStub(keepPipeOpen: keepPipeOpen)
         let publisher = EssayReleasePublisher(browser: browser)
         var checkpoint = release
         let updated = try await publisher.publish(release, result: result, botToken: "unused", channelId: "@test_channel",

@@ -453,6 +453,11 @@ final class MomentFinderService {
                 var accepted: [ThematicConcept] = []
                 var seen = Set<String>()
                 for concept in parsed {
+                    if let issue = await MainActor.run(body: { UkrainianTextReview.themeSpellingIssue(concept.word) }) {
+                        rejectionNote = issue
+                        Self.log("stage=candidates: spelling rejected «\(concept.word)»: \(issue)")
+                        continue
+                    }
                     switch DirectorArtifactGate.concept(concept) {
                     case .accepted(let passed), .repaired(let passed, _):
                         if seen.insert(passed.word.lowercased()).inserted { accepted.append(passed) }

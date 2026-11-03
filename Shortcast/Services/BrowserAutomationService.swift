@@ -196,6 +196,12 @@ final class BrowserAutomationService: BrowserPublishingProtocol, Sendable {
                                 if let err = Self.parseLine(line, continuation: continuation) {
                                     lastErrorMessage = err
                                 }
+                                if let data = line.data(using: .utf8),
+                                   let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                                   event["type"] as? String == "completed" {
+                                    buffer.removeAll(keepingCapacity: true)
+                                    break
+                                }
                             }
                             buffer.removeAll(keepingCapacity: true)
                         } else {

@@ -29,13 +29,13 @@ enum LongformMetadataGenerator {
         let title = publicationTitle(essay: essayTitle, film: film)
         let thesis = clean(arc.thesis ?? concept.philosophicalPremise)
         let hook = clean(arc.hookText ?? "")
-        let topicTags = relevantTopicTags(for: [essayTitle, concept.word, thesis, hook].joined(separator: " "))
+        let topicTags = relevantTopicTags(for: [essayTitle, concept.displayWord, thesis, hook].joined(separator: " "))
         let keywords = unique([
             film, "\(film) українською", "кіноесе українською", "кінорозбір",
-            "аналіз фільму", concept.word, "Кадр і Сенс"
+            "аналіз фільму", concept.displayWord, "Кадр і Сенс"
         ] + topicTags)
-        let hashtags = unique([film, concept.word, "Кіноесе", "КадрІСенс"].compactMap(hashtag))
-        let openingTitle = essayTitle.isEmpty ? concept.word : essayTitle
+        let hashtags = unique([film, concept.displayWord, "Кіноесе", "КадрІСенс"].compactMap(hashtag))
+        let openingTitle = essayTitle.isEmpty ? concept.displayWord : essayTitle
         let titleEnding = openingTitle.last.map { "?!…".contains($0) ? "" : "." } ?? "."
         var paragraphs = ["«\(film)» — \(openingTitle)\(titleEnding)"]
         // Keep the viewer question and the essay's core idea. The conclusion
@@ -67,7 +67,7 @@ enum LongformMetadataGenerator {
         if !hook.isEmpty {
             comment = normalized(hook).contains(normalized(film)) ? hook : "«\(film)» — " + hook
         } else {
-            comment = "«\(film)» — \(essayTitle.isEmpty ? concept.word : essayTitle)."
+            comment = "«\(film)» — \(essayTitle.isEmpty ? concept.displayWord : essayTitle)."
         }
         if !cta.isEmpty { comment += "\n\n" + cta }
         var metadata = LongformYouTubeMetadata(title: title, description: description,
@@ -126,7 +126,7 @@ enum LongformMetadataGenerator {
 
     static func buildChapters(acts: [LongformAct], concept: ThematicConcept, timeline: LongformTimeline) -> String {
         var lines: [String] = []
-        if timeline.introDuration > 0 { lines.append("00:00 — Вступ: \(concept.word.capitalized)") }
+        if timeline.introDuration > 0 { lines.append("00:00 — Вступ: \(concept.displayWord.capitalized)") }
         let roman = ["I", "II", "III", "IV", "V", "VI"]
         for (index, act) in acts.enumerated() {
             guard let offset = timeline.start(ofAct: index) else { continue }

@@ -19,6 +19,10 @@ struct ThematicConcept: Codable, Identifiable, Equatable, Hashable, Sendable {
     /// Одно центральное слово крупными буквами: називний відмінок, іменник або
     /// інфінітив. Никакого списка допустимых слов: тему обязано найти модель.
     var word: String
+    /// User-edited spelling for publication; the original model identity stays
+    /// intact for source fingerprints, semantic proof and cached scene plans.
+    var publicationWord: String? = nil
+    var displayWord: String { publicationWord?.trimmed.isEmpty == false ? publicationWord!.trimmed : word }
     
     /// Короткий смысловой слоган, отражающий суть конфликта
     var tagline: String
@@ -80,7 +84,7 @@ struct ThematicConcept: Codable, Identifiable, Equatable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case word, tagline, philosophicalPremise, suggestedTitle, coverText, essayFormat
+        case word, publicationWord, tagline, philosophicalPremise, suggestedTitle, coverText, essayFormat
         case accentColorHex, isPrimaryChoice, aiReasoning, source
     }
 
@@ -89,6 +93,7 @@ struct ThematicConcept: Codable, Identifiable, Equatable, Hashable, Sendable {
         essayFormat = try c.decodeIfPresent(EssayFormat.self, forKey: .essayFormat)
         coverText = try c.decodeIfPresent(String.self, forKey: .coverText)
         word = try c.decode(String.self, forKey: .word)
+        publicationWord = try c.decodeIfPresent(String.self, forKey: .publicationWord)
         tagline = try c.decode(String.self, forKey: .tagline)
         philosophicalPremise = try c.decode(String.self, forKey: .philosophicalPremise)
         suggestedTitle = Self.cleanTitle(try c.decode(String.self, forKey: .suggestedTitle))

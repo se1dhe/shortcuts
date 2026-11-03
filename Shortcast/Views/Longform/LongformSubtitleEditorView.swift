@@ -241,7 +241,7 @@ struct LongformSubtitleEditorView: View {
                     Text(L10n.tr("Редактор субтитров"))
                         .font(.headline)
 
-                    Text("«\(concept.word.uppercased())»")
+                    Text("«\(concept.displayWord.uppercased())»")
                         .font(.caption.weight(.bold))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)

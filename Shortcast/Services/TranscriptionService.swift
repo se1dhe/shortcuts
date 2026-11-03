@@ -718,6 +718,24 @@ final class TranscriptionService {
             .sorted { $0.start < $1.start }
         var suspicious: [TimeSegment] = []
         for index in lines.indices {
+            // A short final sentence can be Russian even when the preceding
+            // Ukrainian dialogue makes every multi-line window look Ukrainian.
+            // Require both an unambiguous Russian marker and high confidence;
+            // shared phrases and isolated names remain inconclusive.
+            let lineText = lines[index].text.lowercased()
+            let words = lineText.split(whereSeparator: { !$0.isLetter }).map(String.init)
+            let markers: Set<String> = ["и", "это", "что", "тебя", "меня", "сейчас", "почему"]
+            if lineText.count >= 12, words.count >= 3,
+               !lineText.contains(where: { "іїєґ".contains($0) }),
+               !markers.isDisjoint(with: words) || lineText.contains(where: { "ыэъё".contains($0) }) {
+                let recognizer = NLLanguageRecognizer(); recognizer.processString(lineText)
+                if (recognizer.languageHypotheses(withMaximum: 3)[.russian] ?? 0) >= 0.95 {
+                    let range = TimeSegment(start: lines[index].start, end: lines[index].end)
+                    if let last = suspicious.last, range.start <= last.end {
+                        suspicious[suspicious.count - 1] = .init(start: last.start, end: max(last.end, range.end))
+                    } else { suspicious.append(range) }
+                }
+            }
             var group: [TranscriptSegment] = []
             for next in index..<min(index + 4, lines.count) {
                 if let previous = group.last, lines[next].start - previous.end > 6 { break }

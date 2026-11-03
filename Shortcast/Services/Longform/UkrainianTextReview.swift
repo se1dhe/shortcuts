@@ -4,6 +4,11 @@ import AppKit
 /// корректными: словарь не имеет права переписывать дубляж автоматически.
 @MainActor
 enum UkrainianTextReview {
+    static func themeSpellingIssue(_ word: String) -> String? {
+        guard let spelling = suspiciousWords(in: word).first else { return nil }
+        return "Перевір українське написання слова теми «\(word)»: словник позначив «\(spelling)». Виправ описку або обери правильно написане слово. Не змінюй зміст теми заради формату відповіді."
+    }
+
     static func suspiciousWords(in text: String) -> [String] {
         guard let language = NSSpellChecker.shared.availableLanguages.first(where: { $0.hasPrefix("uk") }) else { return [] }
         let input = text.lowercased() as NSString

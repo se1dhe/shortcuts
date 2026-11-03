@@ -83,18 +83,20 @@ enum ActTitleSource: String, Codable, Equatable, Sendable {
     case llm
     /// Детерминированный запасной путь: самая сильная реальная реплика Whisper внутри сегментов акта
     case transcriptLine
+    case manual
     /// Самый нижний ярус: у акта нет ни одной реплики (синтетическая арка) — взята формула темы
     case template
     /// Поле отсутствует в архиве: источник названия не зафиксирован и выдумывать его нельзя
     case unknown
 
-    /// Только эти два яруса можно показывать как «название опирается на материал фильма»
-    var isTrustworthy: Bool { self == .llm || self == .transcriptLine }
+    /// Verified dialogue authorship or an explicit title entered by the user.
+    var isTrustworthy: Bool { self == .llm || self == .transcriptLine || self == .manual }
 
     var displayCaption: String {
         switch self {
         case .llm: return "вывела модель по диалогу"
         case .transcriptLine: return "по реплике акта"
+        case .manual: return "изменено вами"
         case .template: return "шаблон"
         case .unknown: return "источник не зафиксирован"
         }

@@ -475,7 +475,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         let t = max(totalDuration, 5.0)
 
         // Кегль 44pt на эталонных 1080 строках + авто-усадка, чтобы слово не лезло за 60% ширины кадра
-        let upperWord = concept.word.uppercased()
+        let upperWord = concept.displayWord.uppercased()
         let maxWordWidth = Self.themeMaxWidth(renderSizeWidth: Double(W))
         let themeSize = Self.resolvedThemePointSize(word: upperWord, k: k, maxWidth: maxWordWidth)
         let attrs = Self.themeAttributes(pointSize: themeSize, k: k)
@@ -956,7 +956,7 @@ final class LongformSubtitleRenderer: LongformSubtitleRenderingProtocol, Sendabl
         let k = Self.scaleFactor(renderSize: renderSize)
 
         // 1. Центральное якорное слово темы (Russo One 44pt·k с авто-усадкой до 60% ширины, офф-вайт, обводка)
-        let upperWord = concept.word.uppercased()
+        let upperWord = concept.displayWord.uppercased()
         let themeSize = Self.resolvedThemePointSize(
             word: upperWord,
             k: k,

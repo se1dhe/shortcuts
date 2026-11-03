@@ -350,8 +350,8 @@ final class LongformThumbnailComposer: Sendable {
         let previous = NSGraphicsContext.current
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
         defer { NSGraphicsContext.current = previous }
-        let cleanedTitle = ThematicConcept.cleanTitle(concept.coverText ?? concept.word)
-        let heading = cleanedTitle.isEmpty ? concept.word : cleanedTitle
+        let cleanedTitle = ThematicConcept.cleanTitle(concept.coverText ?? concept.displayWord)
+        let heading = cleanedTitle.isEmpty ? concept.displayWord : cleanedTitle
         let words = heading.uppercased().split(whereSeparator: \.isWhitespace).map(String.init)
         if words.count == 2 {
             let firstWidth = renderSize.width * 0.42

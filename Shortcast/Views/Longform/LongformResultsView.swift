@@ -44,7 +44,7 @@ struct LongformResultsView: View {
                     HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
-                            Text(result.arc.concept.word.uppercased())
+                            Text(result.arc.concept.displayWord.uppercased())
                                 .font(.caption.weight(.black))
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
@@ -511,7 +511,7 @@ struct LongformResultsView: View {
         .sheet(isPresented: $showSupportEditor, onDismiss: resumeResultsPlayback) {
             EssaySupportEditor(support: result.arc.support ?? EssaySupport(donatelloURL: settings.donatelloURL,
                     creditsEnabled: false, nicknames: settings.essaySupport.nicknames),
-                ctaText: LongformEditorialSupport.finalCard(for: result.arc), theme: result.arc.concept.word) { support in
+                ctaText: LongformEditorialSupport.finalCard(for: result.arc), theme: result.arc.concept.displayWord) { support in
                 try await workspace.saveEssaySupport(support, modelManager: modelManager, settings: settings)
             }
         }
@@ -524,9 +524,10 @@ struct LongformResultsView: View {
         }
         .sheet(isPresented: $showSubtitleEditor, onDismiss: resumeResultsPlayback) {
             if let transcript = workspace.storedTranscript {
+                let editorArc = workspace.stagedArc ?? result.arc
                 LongformSubtitleEditorView(
-                    arc: result.arc,
-                    concept: result.arc.concept,
+                    arc: editorArc,
+                    concept: editorArc.concept,
                     movieTitle: movieTitle,
                     allSegments: transcript.segments,
                     correctionFilmKey: workspace.subtitleCorrectionFilmKey,
@@ -878,6 +879,8 @@ struct LongformResultsView: View {
     /// (это формула темы), и врать про незафиксированность он не имеет права.
     static func titleSourceHelp(for act: LongformAct) -> String {
         switch act.effectiveTitleSource {
+        case .manual:
+            return L10n.tr("изменено вами")
         case .llm, .transcriptLine:
             return act.titleProvenance?.evidence
                 ?? L10n.tr("Реплика-основание не записана: метка есть, доказать её нечем")

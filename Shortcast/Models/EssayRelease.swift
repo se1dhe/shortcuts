@@ -59,6 +59,18 @@ struct EssayRelease: Codable, Sendable, Equatable {
         return SHA256.hash(data: (try? encoder.encode(arc)) ?? Data()).map { String(format: "%02x", $0) }.joined()
     }
 
+    /// Whole-film selections do not depend on an essay's montage or copy.
+    /// Keep an unpublished pair when that same project's essay is re-edited;
+    /// never rebind a release already linked or sent to an external platform.
+    func rebindingUnpublishedPlans(from previous: LongformNarrativeArc, to updated: LongformNarrativeArc) -> Self? {
+        guard essayKey == Self.key(for: previous), usesWholeFilmSelection,
+              essayYouTubeURL == nil, !hasProtectedDeliveries,
+              !receipts.values.contains(where: { $0.state == .published || $0.state == .sending || $0.state == .needsReview }) else { return nil }
+        var copy = self
+        copy.essayKey = Self.key(for: updated)
+        return copy
+    }
+
     static func youtubeURL(_ value: String) -> String? {
         guard let url = URL(string: value.trimmed), url.scheme == "https", let host = url.host?.lowercased() else { return nil }
         let id: String?

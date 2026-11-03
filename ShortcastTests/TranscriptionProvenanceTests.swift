@@ -681,6 +681,25 @@ struct UkrainianTranscriptionLanguageTests {
         }
     }
 
+    @Test("A short Russian ending cannot hide behind the preceding Ukrainian line")
+    func isolatedRussianEnding() throws {
+        let lines = [
+            TranscriptSegment(start: 6976, end: 6979, text: "І коли б я не прийшов, він чекає на мене там."),
+            TranscriptSegment(start: 6982, end: 6985, text: "И я прокинулся.")
+        ]
+        #expect(throws: TranscriptionError.self) {
+            try TranscriptionService.validateRenderedCaptions(lines,
+                ranges: [.init(start: 6970, end: 6987)], requestedLanguage: "uk")
+        }
+        let corrected = [lines[0], TranscriptSegment(start: 6982, end: 6985, text: "І я прокинувся.")]
+        try TranscriptionService.validateRenderedCaptions(corrected,
+            ranges: [.init(start: 6970, end: 6987)], requestedLanguage: "uk")
+        try TranscriptionService.validateRequestedLanguage(segments: [
+            .init(start: 10, end: 12, text: "Я так думаю."),
+            .init(start: 14, end: 17, text: "Мама була вдома.")
+        ], requestedLanguage: "uk")
+    }
+
     @Test("Rendered caption gate checks only selected corrected text, not unused raw ASR")
     func selectedAndCorrectedCaptions() throws {
         let raw = ukrainianTail.map { TranscriptSegment(start: $0.start - 100, end: $0.end - 100, text: $0.text) } + russianTail

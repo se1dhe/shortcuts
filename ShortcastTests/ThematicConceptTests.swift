@@ -6,6 +6,33 @@ import AppKit
 @Suite("ThematicConcept & Analysis Result Tests")
 struct ThematicConceptTests {
 
+    @Test("Model theme spelling is checked before it can become a video title card")
+    @MainActor
+    func themeSpellingGate() {
+        guard NSSpellChecker.shared.availableLanguages.contains(where: { $0.hasPrefix("uk") }) else { return }
+        #expect(UkrainianTextReview.themeSpellingIssue("ПРИЦИНА") != nil)
+        #expect(UkrainianTextReview.themeSpellingIssue("ПРИЧИНА") == nil)
+        #expect(UkrainianTextReview.themeSpellingIssue("ВИБІР") == nil)
+    }
+
+    @Test("Publication spelling is editable without rewriting the model's semantic identity")
+    func publicationSpelling() throws {
+        var concept = ThematicConcept(word: "ПРИЦИНА", tagline: "Ціна вибору",
+            philosophicalPremise: "Вчинок має наслідки", suggestedTitle: "Ціна рішення", source: .llm)
+        concept.publicationWord = "ПРИЧИНА"
+        let restored = try JSONDecoder().decode(ThematicConcept.self, from: JSONEncoder().encode(concept))
+        #expect(restored.word == "ПРИЦИНА")
+        #expect(restored.displayWord == "ПРИЧИНА")
+        #expect(restored.id == concept.word)
+        let arc = LongformNarrativeArc(movieTitle: "Фільм", concept: restored, acts: [], summary: "Тема")
+        let metadata = LongformMetadataGenerator.generate(movieTitle: "Фільм", concept: restored, arc: arc)
+        #expect(metadata.tags.contains("ПРИЧИНА"))
+        #expect(!metadata.tags.contains("ПРИЦИНА"))
+        #expect(metadata.hashtagText.contains("#ПРИЧИНА"))
+        concept.publicationWord = "  "
+        #expect(concept.displayWord == concept.word)
+    }
+
     private func decoded(_ json: String) throws -> ThematicAnalysisResult {
         try JSONDecoder().decode(ThematicAnalysisResult.self, from: Data(json.utf8))
     }

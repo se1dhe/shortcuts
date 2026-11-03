@@ -271,7 +271,13 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         // Плотностный credits guard: анализируем аудио чтобы найти конец драматического тела
         // вместо hardcoded 95%. Это важно для короткометражек где 5% = всего 30 секунд.
         let creditsCutoffRatio: Double
-        if let sourceURL = sourceMovieURL {
+        if !selectedMoments.isEmpty, selectedMoments.allSatisfy({ $0.evidenceQuote != nil }) {
+            // Catalogue selections already end in verified dialogue. Scanning
+            // the entire movie's audio adds minutes before the editor and can
+            // mistake a deliberately quiet scene for the start of the credits.
+            // Keep the model's evidenced ending; validateArc checks its bounds.
+            creditsCutoffRatio = 1
+        } else if let sourceURL = sourceMovieURL {
             let analyzer = AudioDensityAnalyzer()
             let dramaticEnd = await analyzer.findDramaticBodyEnd(
                 videoURL: sourceURL,

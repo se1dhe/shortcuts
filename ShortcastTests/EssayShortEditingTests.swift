@@ -432,6 +432,19 @@ struct EssayShortCopyEditorTests {
         #expect(EssayShortCopyEditor.isApproved("```json\n" + yes + "\n```", expectedID: "short2"))
     }
 
+    @Test("Field-keyed issues observed in a real review remain rejections and provide actionable feedback")
+    func fieldKeyedReviewIssues() throws {
+        let raw = #"{"id":"short2","approved":false,"issues":[{"question":"Вигадане слово: випап"}]}"#
+        let verdict = try #require(EssayShortCopyEditor.verdict(raw, expectedID: "short2"))
+        #expect(!verdict.approved)
+        #expect(verdict.issues == ["question: Вигадане слово: випап"])
+        #expect(!EssayShortCopyEditor.isApproved(raw, expectedID: "short2"))
+        #expect(EssayShortCopyEditor.verdict(raw.replacingOccurrences(of: "question", with: "SOURCE_REFERENCE"),
+            expectedID: "short2") == nil)
+        #expect(EssayShortCopyEditor.verdict(raw.replacingOccurrences(of: "false", with: "true"),
+            expectedID: "short2") == nil)
+    }
+
     private actor Model: LongformActTitleModeling {
         let replies: [String]; var calls = 0
         init(_ replies: [String]) { self.replies = replies }

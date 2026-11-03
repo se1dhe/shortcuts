@@ -451,6 +451,30 @@ struct EssayShortCopyEditor: Sendable {
         let id: String
         let approved: Bool
         let issues: [String]
+
+        private enum CodingKeys: String, CodingKey { case id, approved, issues }
+        private struct Issue: Decodable {
+            let text: String
+            init(from decoder: Decoder) throws {
+                let value = try decoder.singleValueContainer()
+                if let message = try? value.decode(String.self), !message.trimmed.isEmpty {
+                    text = message; return
+                }
+                let fields = try value.decode([String: String].self)
+                let allowed: Set<String> = ["angle", "hook", "title", "why", "question"]
+                guard !fields.isEmpty, Set(fields.keys).isSubset(of: allowed),
+                      fields.values.allSatisfy({ !$0.trimmed.isEmpty }) else {
+                    throw DecodingError.dataCorruptedError(in: value, debugDescription: "Unknown copy-review fields")
+                }
+                text = fields.keys.sorted().map { $0 + ": " + fields[$0]! }.joined(separator: "; ")
+            }
+        }
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            id = try values.decode(String.self, forKey: .id)
+            approved = try values.decode(Bool.self, forKey: .approved)
+            issues = try values.decode([Issue].self, forKey: .issues).map(\.text)
+        }
     }
 
     static func verdict(_ raw: String, expectedID: String) -> Verdict? {
@@ -489,6 +513,8 @@ struct EssayShortCopyEditor: Sendable {
         Якщо в п'яти полях немає конкретної проблеми:
         {"id":"\(id)","approved":true,"issues":[]}
         Якщо є проблема — approved=false і НЕПОРОЖНІЙ issues з назвою поля та конкретною помилкою.
+        Наприклад: {"id":"\(id)","approved":false,"issues":["question: конкретна помилка та потрібна правка"]}
+        issues — масив рядків, не копія п'яти полів і не масив об'єктів.
         approved=false з issues=[] заборонено: це суперечливий вердикт.
         """
     }
@@ -505,7 +531,7 @@ struct EssayShortCopyEditor: Sendable {
             }.map(\.text).joined(separator: " ")
             let sourceCopy = Copy(angle: original.angle, hook: original.hook, title: original.title,
                                   why: original.why, question: original.question)
-            let current = String(decoding: try encoder.encode(sourceCopy), as: UTF8.self)
+            var current = String(decoding: try encoder.encode(sourceCopy), as: UTF8.self)
             let source = "Фільм: \(movie)\nID: \(original.id)\nДОСЛІВНА ЦИТАТА (не редагувати): \(original.payoffQuote)\nРепліки сцени: \(context)"
             var feedback = ""
             var accepted: EssayShort?
@@ -521,6 +547,7 @@ struct EssayShortCopyEditor: Sendable {
                     let editedCopy = Copy(angle: edited.angle, hook: edited.hook, title: edited.title,
                                           why: edited.why, question: edited.question)
                     let copyJSON = String(decoding: try encoder.encode(editedCopy), as: UTF8.self)
+                    current = copyJSON
                     // Independent call assesses the generated copy. A well-formed
                     // JSON alone is not evidence of clear Ukrainian or source fidelity.
                     let reviewPrompt = "SOURCE_REFERENCE (шумний ASR, НЕ вичитувати):\n" + source
@@ -535,6 +562,7 @@ struct EssayShortCopyEditor: Sendable {
                     }
                     guard checked.approved else {
                         feedback = "\nВиправ лише ці підтверджені помилки публікаційного тексту: " + checked.issues.joined(separator: "; ")
+                        DirectorRunLog.write("short copy \(original.id) attempt=\(attempt) rejected: " + checked.issues.joined(separator: "; "))
                         continue
                     }
                     accepted = edited; break

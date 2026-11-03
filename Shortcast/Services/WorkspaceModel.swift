@@ -50,10 +50,11 @@ final class WorkspaceModel {
         guard let analysis = thematicAnalysis,
               let transcript = storedTranscript ?? currentProject?.transcript,
               ThematicAnalysisCache.isReusable(analysis, transcript: transcript) else { return [] }
-        let stems = DirectorArtifactGate.groundingStems(
-            from: LongformThematicService.stratifiedThematicSample(from: transcript))
+        // The reusable-analysis contract already verifies the model's semantic
+        // proof against this film's exact scene quotes. Requiring the theme's
+        // literal word again hid valid analyses and disabled the build button.
         return analysis.allConcepts.filter {
-            if case .rejected = DirectorArtifactGate.concept($0, in: stems) { return false }
+            if case .rejected = DirectorArtifactGate.concept($0) { return false }
             return true
         }
     }
@@ -799,6 +800,11 @@ final class WorkspaceModel {
         }
         project.thematicAnalysis = thematicAnalysis
         project.selectedConcept = selectedConcept
+        if let previous = project.longformResult, let updated = longformResult,
+           let release = project.essayRelease,
+           let rebound = release.rebindingUnpublishedPlans(from: previous.arc, to: updated.arc) {
+            project.essayRelease = rebound
+        }
         project.longformResult = longformResult
         project.pendingLongformArc = stagedArc
         // Сохраняем транскрипт вместе с темой: при reopen проекта Whisper не
@@ -856,7 +862,17 @@ final class WorkspaceModel {
         let effectiveLanguageHint = languageHint ?? settings.languageOverride
         let requestedLanguage = TranscriptionService.languageCode(from: effectiveLanguageHint)
         func reusableTranscript(_ transcript: Transcript) -> Bool {
-            (try? TranscriptionService.validateRequestedLanguage(segments: transcript.segments,
+            // Keep an already corrected release reusable after reopening. Its
+            // raw ASR remains unchanged for fingerprint/provenance checks, but
+            // the language gate must assess the user's saved corrections.
+            let edits = currentProject?.pendingLongformArc?.captionEdits
+                ?? currentProject?.longformResult?.arc.captionEdits
+            let captions = LongformEditorialSupport.captions(transcript.segments, edits: edits)
+            if let arc = currentProject?.pendingLongformArc ?? currentProject?.longformResult?.arc {
+                return (try? TranscriptionService.validateRenderedCaptions(captions,
+                    ranges: arc.segments, requestedLanguage: requestedLanguage)) != nil
+            }
+            return (try? TranscriptionService.validateRequestedLanguage(segments: captions,
                 requestedLanguage: requestedLanguage)) != nil
         }
         self.job = newJob
@@ -1211,7 +1227,10 @@ final class WorkspaceModel {
         modelManager: ModelManager,
         settings: AppSettings
     ) {
-        var editedArc = existingResult.arc
+        // Caption edits belong to the current montage draft, including newly
+        // exposed dialogue at extended scene boundaries, rather than the last
+        // exported cut. Otherwise subtitle review silently discards scene edits.
+        var editedArc = stagedArc ?? existingResult.arc
         if let stored = storedTranscript {
             editedArc.captionEdits = LongformEditorialSupport.captionEdits(
                 original: stored.segments, updated: updatedSegments)
@@ -1263,7 +1282,7 @@ final class WorkspaceModel {
         self.stagedConcept = modifiedArc.concept
         Self.log("rebuildLongformWithModifiedArc: acts=\(modifiedArc.acts.count) duration=\(modifiedArc.totalDuration)")
         startLongformRebuild(
-            concept: existingResult.arc.concept,
+            concept: modifiedArc.concept,
             existingArc: modifiedArc,
             modelManager: modelManager,
             settings: settings,

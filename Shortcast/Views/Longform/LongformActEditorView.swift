@@ -102,6 +102,7 @@ struct LongformActEditorView: View {
     private var isPreviewBusy: Bool { timelinePlayback.isPreparing }
     @State private var previewError: String?
     @State private var publicationTitle = ""
+    @State private var publicationWord = ""
     @State private var coverText = ""
     @State private var viewerPromise = ""
     @State private var hookText = ""
@@ -331,7 +332,7 @@ struct LongformActEditorView: View {
                     Text(L10n.tr("МОНТАЖНЫЙ СТОЛ"))
                         .font(.system(size: 10, weight: .black)).tracking(1.05)
 
-                    Text("«\(concept.word.uppercased())»")
+                    Text("«\(concept.displayWord.uppercased())»")
                         .font(.system(size: 9, weight: .bold))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -686,7 +687,7 @@ struct LongformActEditorView: View {
     private func trimStep(from input: String) -> Double {
         let normalized = input.replacingOccurrences(of: ",", with: ".")
         guard let value = Double(normalized), value.isFinite, value > 0 else { return 0.2 }
-        return min(value, 5)
+        return value
     }
 
     private func dialogueExcerpt(title: String, phrase: TranscriptSegment) -> some View {
@@ -779,12 +780,21 @@ struct LongformActEditorView: View {
     private var publicationTextPanel: some View {
         DisclosureGroup(L10n.tr("Текст выпуска и публикации")) {
             VStack(alignment: .leading, spacing: 8) {
+                TextField(L10n.tr("Тема для публикации"), text: $publicationWord)
                 TextField(L10n.tr("Название YouTube"), text: $publicationTitle)
                 TextField(L10n.tr("Короткий текст обложки"), text: $coverText)
                 TextField(L10n.tr("Что зритель поймёт после просмотра?"), text: $viewerPromise)
                 TextField(L10n.tr("Вступительный вопрос"), text: $hookText)
                 TextField(L10n.tr("Вывод эссе"), text: $conclusionText)
                 TextField(L10n.tr("Призыв к обсуждению"), text: $ctaText)
+                ForEach(editedActs.indices, id: \.self) { index in
+                    TextField(L10n.tr("Название акта") + " \(index + 1)", text: Binding(
+                        get: { editedActs[index].title },
+                        set: { title in
+                            editedActs[index].title = title
+                            editedActs[index].titleProvenance = .init(source: .manual, evidence: nil, modelID: nil)
+                        }))
+                }
                 let suspicious = UkrainianTextReview.suspiciousWords(in: publicationTitle)
                 if !suspicious.isEmpty {
                     Text(L10n.tr("Проверьте написание: ") + suspicious.joined(separator: ", "))
@@ -1447,8 +1457,9 @@ struct LongformActEditorView: View {
     }
 
     private func loadInitialActs() {
+        publicationWord = arc.concept.displayWord
         publicationTitle = arc.publicationTitle ?? arc.concept.suggestedTitle
-        coverText = arc.coverText ?? arc.concept.coverText ?? arc.concept.word
+        coverText = arc.coverText ?? arc.concept.coverText ?? arc.concept.displayWord
         viewerPromise = arc.viewerPromise ?? arc.thesis ?? arc.concept.philosophicalPremise
         hookText = arc.hookText ?? ""
         conclusionText = arc.conclusionText ?? ""
@@ -1572,6 +1583,8 @@ struct LongformActEditorView: View {
         }
         updatedArc.sceneEdits = sceneEdits.isEmpty ? nil : sceneEdits
         updatedArc.publicationTitle = publicationTitle.trimmed
+        updatedArc.concept.publicationWord = publicationWord.trimmed.isEmpty
+            || publicationWord.trimmed == updatedArc.concept.word ? nil : publicationWord.trimmed
         updatedArc.coverText = ThematicConcept.cleanTitle(coverText.trimmed)
         updatedArc.viewerPromise = viewerPromise.trimmed
         updatedArc.hookText = hookText.trimmed
@@ -1656,6 +1669,8 @@ struct LongformActEditorView: View {
     /// записан — просто реплики-доказательства у него нет.
     static func titleSourceHelp(for act: EditableActModel) -> String {
         switch act.effectiveTitleSource {
+        case .manual:
+            return L10n.tr("изменено вами")
         case .llm, .transcriptLine:
             return act.titleProvenance?.evidence
                 ?? L10n.tr("Реплика-основание не записана: метка есть, доказать её нечем")

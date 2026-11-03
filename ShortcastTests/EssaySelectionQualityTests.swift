@@ -1,6 +1,15 @@
 import Foundation
+import AVFoundation
 import Testing
 @testable import Shortcast
+
+private struct SelectionTestCover: LongformThumbnailGeneratingProtocol {
+    let url: URL?
+    func generateThumbnail(sourceAsset: AVURLAsset, segments: [TimeSegment], concept: ThematicConcept,
+                           movieTitle: String, outputURL: URL) async throws -> URL {
+        try #require(url)
+    }
+}
 
 @MainActor
 @Suite("Essay selection quality")
@@ -150,7 +159,8 @@ struct EssaySelectionQualityTests {
         }
         #expect(calls == 1)
         #expect(resolved.primaryConcept.word == fresh.primaryConcept.word)
-        #expect(resolved.plannedConcept == fresh.primaryConcept)
+        #expect(resolved.plannedConcept == fresh.plannedConcept)
+        #expect(SelectedThemeAnalysisResolver.matches(resolved, selection: fresh.primaryConcept))
     }
 
     @Test func verifiedPlanIsReusedAndSurvivesArchiveRoundTrip() async throws {
@@ -183,13 +193,24 @@ struct EssaySelectionQualityTests {
         #expect(calls == 1)
     }
 
-    @Test func plannerCannotSwitchBackToWinnerOrReuseItsHook() async throws {
+    @Test func plannerCannotSwitchManualThemeOrReuseAnotherThemesHook() async throws {
         let (cached, transcript) = fixture()
         let (fresh, _) = fixture(word: "ВІДПОВІДАЛЬНІСТЬ")
+        var manualSelection = fresh.primaryConcept
+        manualSelection.source = .manual
         await #expect(throws: ThematicDiscoveryError.self) {
             try await SelectedThemeAnalysisResolver.resolve(
-                selection: fresh.primaryConcept, cached: cached, transcript: transcript, userPlan: nil
+                selection: manualSelection, cached: cached, transcript: transcript, userPlan: nil
             ) { cached }
+        }
+        // An AI-selected theme may be replaced by a separately evidenced model
+        // decision, but an unreviewed pool cannot override even an AI selection.
+        var unreviewed = cached
+        unreviewed.semanticProof = nil
+        await #expect(throws: ThematicDiscoveryError.self) {
+            try await SelectedThemeAnalysisResolver.resolve(
+                selection: fresh.primaryConcept, cached: nil, transcript: transcript, userPlan: nil
+            ) { unreviewed }
         }
         var oldPlan = try #require(cached.essayPlan)
         oldPlan.selectedHook = .init(text: "Старий хук іншої теми", source: .llm)
@@ -211,7 +232,8 @@ struct EssaySelectionQualityTests {
         #expect(result.primaryConcept.source == .manual)
         #expect(result.primaryConcept.suggestedTitle == selection.suggestedTitle)
         #expect(result.essayPlan?.chosenHookVariant == fresh.essayPlan?.selectedHook)
-        #expect(result.plannedConcept == selection)
+        #expect(result.plannedConcept == fresh.plannedConcept)
+        #expect(SelectedThemeAnalysisResolver.matches(result, selection: selection))
     }
 
     @Test func movingStrongestFinalSceneDoesNotDuplicateIt() {
@@ -362,6 +384,74 @@ struct EssaySelectionQualityTests {
         #expect(workspace.discoveredConcepts.isEmpty)
         #expect(workspace.currentProject?.transcript == transcript)
         #expect(workspace.currentProject?.thematicAnalysis == nil)
+    }
+
+    @Test func semanticallyProvenThemeRemainsSelectableWithoutLiteralDialogueMatch() {
+        let (analysis, transcript) = fixture(word: "СВОБОДА")
+        #expect(!transcript.segments.contains { $0.text.uppercased().contains("СВОБОД") })
+        #expect(ThematicAnalysisCache.isReusable(analysis, transcript: transcript))
+        let project = FilmProject(sourceMovieURL: URL(fileURLWithPath: "/films/semantic.mp4"),
+            movieFileName: "semantic", movieTitle: "Фільм", transcript: transcript,
+            thematicAnalysis: analysis, selectedConcept: analysis.primaryConcept)
+        let workspace = WorkspaceModel()
+        workspace.restoreFilmProjectState(project)
+        #expect(workspace.discoveredConcepts == analysis.allConcepts)
+        #expect(workspace.thematicReasoning == analysis.aiReasoning)
+        #expect(workspace.selectedConcept == analysis.primaryConcept)
+        var unproven = analysis
+        unproven.semanticProof = nil
+        workspace.thematicAnalysis = unproven
+        #expect(workspace.discoveredConcepts.isEmpty)
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["SHORTCAST_SELECTION_PROJECT"] != nil))
+    func savedProjectCanReachTheEditorWithoutRepeatingInference() async throws {
+        let path = try #require(ProcessInfo.processInfo.environment["SHORTCAST_SELECTION_PROJECT"])
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let project = try decoder.decode(FilmProject.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        let transcript = try #require(project.transcript)
+        let analysis = try #require(project.thematicAnalysis)
+        let workspace = WorkspaceModel()
+        workspace.restoreFilmProjectState(project)
+        #expect(workspace.discoveredConcepts.contains(analysis.primaryConcept))
+        if let release = project.longformResult {
+            let edited = LongformEditorialSupport.captions(transcript.segments, edits: release.arc.captionEdits)
+            try TranscriptionService.validateRenderedCaptions(edited, ranges: release.arc.segments,
+                requestedLanguage: "uk")
+        }
+        let arc = try await LongformNarrativeDirector().buildArc(from: transcript,
+            concept: analysis.primaryConcept, selectedMoments: analysis.selectedMoments,
+            movieTitle: project.tmdbMetadata?.title ?? project.movieTitle, essayPlan: analysis.essayPlan,
+            sourceMovieURL: project.sourceMovieURL)
+        #expect(!arc.segments.isEmpty)
+        try EssaySceneEvidence.validateArc(arc, selectedMoments: analysis.selectedMoments, coldOpenEnabled: true)
+        print("SAVED_SELECTION scenes=\(analysis.selectedMoments.count) duration=\(arc.totalDuration)")
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["SHORTCAST_OUTRO_PROJECT"] != nil))
+    func musiclessExportIncludesTheEntireCTATail() async throws {
+        let path = try #require(ProcessInfo.processInfo.environment["SHORTCAST_OUTRO_PROJECT"])
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let project = try decoder.decode(FilmProject.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        let original = try #require(project.longformResult)
+        let transcript = try #require(project.transcript)
+        var arc = original.arc
+        let first = try #require(arc.segments.first)
+        arc.acts = [LongformAct(type: .hook, title: "Перевірка", dramaticBeat: "Діалог",
+            segments: [.init(start: first.start, end: first.start + 60)])]
+        arc.support = nil; arc.musicSettings = nil
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("shortcast-outro-\(UUID().uuidString)")
+        let coordinator = LongformPipelineCoordinator(thumbnailGenerator: SelectionTestCover(url: original.thumbnailURL))
+        let rendered = try await coordinator.buildLongformVideo(sourceURL: project.sourceMovieURL,
+            movieTitle: "Outro regression", transcript: transcript, concept: arc.concept,
+            audioSettings: LongformAudioSettings(backgroundMusicURL: nil, dialogueFocusEnabled: false,
+                antiCopyrightEnabled: false), existingArc: arc, allowUserApprovedScenes: true,
+            workingDirectory: directory, channelLogoEnabled: false)
+        let duration = try await AVURLAsset(url: rendered.outputURL).load(.duration).seconds
+        #expect(abs(duration - rendered.duration) < 0.15)
+        #expect(duration > 60 + 4)
+        print("OUTRO_PROBE expected=\(rendered.duration) actual=\(duration) file=\(rendered.outputURL.path)")
     }
 
     @Test func openingASecondProjectNeverKeepsTheFirstFilmsAnalysis() {

@@ -98,6 +98,13 @@ enum BrowserPublishEvent: Sendable {
     case progress(platform: String?, message: String)
     case captchaDetected(platform: String, message: String)
     case success(platform: String, message: String, url: String?)
-    case failure(platform: String?, message: String)
+    case failure(platform: String?, message: String, uploadStarted: Bool? = nil)
     case finished(allResults: [String: String])
+}
+
+/// An explicit pre-upload failure can return to Ready; unknown results need review.
+struct BrowserUploadFailure: LocalizedError, Sendable {
+    let message: String
+    let uploadStarted: Bool?
+    var errorDescription: String? { message }
 }

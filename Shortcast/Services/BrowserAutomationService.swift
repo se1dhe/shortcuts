@@ -263,7 +263,16 @@ final class BrowserAutomationService: BrowserPublishingProtocol, Sendable {
         let data = try pipe.fileHandleForReading.readToEnd() ?? Data()
         process.waitUntilExit()
 
-        return String(decoding: data, as: UTF8.self)
+        let output = String(decoding: data, as: UTF8.self)
+        guard process.terminationStatus == 0 else {
+            let reported = output.split(separator: "\n").compactMap { line -> String? in
+                guard let event = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                      ["error", "fatal_error"].contains(event["type"] as? String ?? "") else { return nil }
+                return event["message"] as? String
+            }.last
+            throw BrowserAutomationError.processFailed(code: process.terminationStatus, message: reported)
+        }
+        return output
     }
 
     @discardableResult
@@ -305,7 +314,7 @@ final class BrowserAutomationService: BrowserPublishingProtocol, Sendable {
         case "error":
             let platform = json["platform"] as? String ?? ""
             let message = json["message"] as? String ?? "Ошибка публикации"
-            continuation.yield(.failure(platform: platform, message: message))
+            continuation.yield(.failure(platform: platform, message: message, uploadStarted: json["uploadStarted"] as? Bool))
             return message
 
         case "fatal_error":

@@ -72,7 +72,11 @@ async function main() {
       process.exit(1);
     }
 
-    const { context, page } = await launchBrowser({ headless: jobData.headless !== false });
+    const verifyOnly = args.includes('--verify-upload');
+    if (verifyOnly && (jobData.platforms.length !== 1 || jobData.platforms[0] !== 'tiktok' || !jobData.expectedTikTokHandle)) {
+      throw new Error('Проверка загрузки требует единственную площадку TikTok и явно заданный аккаунт.');
+    }
+    const { context, page } = await launchBrowser({ headless: verifyOnly ? false : jobData.headless !== false });
     console.log(JSON.stringify({ type: 'progress', message: 'Лог загрузки: ' + runLog }));
 
     const results = {};
@@ -87,13 +91,19 @@ async function main() {
 
       try {
         if (platform === 'tiktok') {
-          await uploadToTikTok(page, {
+          const outcome = await uploadToTikTok(page, {
             videoPath: jobData.videoPath,
             caption: content.caption,
             hashtags: content.hashtags,
             isDraft: !jobData.isPublic,
             expectedHandle: jobData.expectedTikTokHandle,
-          });
+          }, { prepareOnly: verifyOnly });
+          if (outcome?.prepared) {
+            results.tiktok = { status: 'prepared' };
+            console.log(JSON.stringify({ type: 'progress', platform, message: 'Файл подготовлен без публикации. Проверка закончена; закройте окно Chrome.' }));
+            await waitForBrowserClose(context);
+            break;
+          }
           results.tiktok = { status: 'success' };
         } else if (platform === 'youtube') {
           if (jobData.action === 'youtube-comment') {
@@ -123,6 +133,8 @@ async function main() {
           type: 'error',
           platform,
           message: err.message,
+          uploadStarted: err.uploadStarted,
+          publicationAttempted: err.publicationAttempted,
         }));
         results[platform] = { status: 'error', message: err.message };
         break; // A failed prerequisite must never fall through to another platform.
@@ -136,7 +148,7 @@ async function main() {
       results,
     }));
 
-    process.exit(0);
+    process.exit(Object.values(results).some(result => result.status === 'error') ? 1 : 0);
   }
 
   console.log(JSON.stringify({

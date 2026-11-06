@@ -16,9 +16,11 @@ final class ShortsLibrary {
     let directory: URL
     private var searchPage = 0
     private let service = ShortsDiscoveryService()
+    private let browser: any BrowserPublishingProtocol
     private var manifest: URL { directory.appendingPathComponent("library.json") }
 
-    init(directory: URL? = nil) {
+    init(directory: URL? = nil, browser: any BrowserPublishingProtocol = BrowserAutomationService.shared) {
+        self.browser = browser
         self.directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Shortcast/YouTubeShorts")
         do {
@@ -104,7 +106,8 @@ final class ShortsLibrary {
         tikTokAuth = auth
         if hasTargetTikTok { accountMessage = "Подключён @telonyx_cinema · можно публиковать" }
         else if let handle = auth.tiktokHandle { accountMessage = "Открыт @\(handle). Для публикации войдите в @telonyx_cinema." }
-        else { accountMessage = "Войдите в @telonyx_cinema, затем закройте окно Chrome и проверьте аккаунт." }
+        else if auth.tiktok { accountMessage = "Вход в TikTok сохранён, но аккаунт не подтверждён. Нажмите «Проверить аккаунт». Если проблема остаётся, откройте «Подключить TikTok»." }
+        else { accountMessage = "Войдите в @telonyx_cinema через «Подключить TikTok», затем закройте окно Chrome." }
     }
 
     func connectTikTok() async {
@@ -114,14 +117,14 @@ final class ShortsLibrary {
         do {
             recordAuth(try await BrowserAutomationService.shared.openLoginSession(tikTokOnly: true))
             message = accountMessage
-        } catch { accountMessage = error.localizedDescription; message = accountMessage }
+        } catch { tikTokAuth = nil; accountMessage = error.localizedDescription; message = accountMessage }
     }
 
     func refreshTikTok() async {
         guard !busy else { return }
         busy = true; defer { busy = false }
         accountMessage = "Проверяем сохранённый аккаунт TikTok…"
-        do { recordAuth(try await BrowserAutomationService.shared.checkAuthStatus()) }
+        do { recordAuth(try await browser.checkAuthStatus()) }
         catch { tikTokAuth = nil; accountMessage = error.localizedDescription }
     }
 
@@ -130,9 +133,9 @@ final class ShortsLibrary {
         let queue = selectedReady
         busy = true; defer { busy = false }
         do {
-            recordAuth(try await BrowserAutomationService.shared.checkAuthStatus())
+            recordAuth(try await browser.checkAuthStatus())
             guard hasTargetTikTok else {
-                throw ShortsError.message("Войдите в TikTok @telonyx_cinema через кнопку «Войти». Открыт другой аккаунт или сессия не найдена.")
+                throw ShortsError.message(accountMessage)
             }
             for (offset, card) in queue.enumerated() {
                 guard let path = card.outputPath, FileManager.default.fileExists(atPath: path),
@@ -145,12 +148,12 @@ final class ShortsLibrary {
                 job.expectedTikTokHandle = "telonyx_cinema"
                 var receipt: String?
                 do {
-                    for try await event in BrowserAutomationService.shared.publish(job: job) {
+                    for try await event in browser.publish(job: job) {
                         switch event {
                         case .progress(_, let text), .captchaDetected(_, let text): message = "Ролик \(offset + 1) из \(queue.count): \(text)"
                         case .success(let platform, _, let url):
                             if platform == "tiktok", let url, DiscoveredShort.isTargetPublication(url) { receipt = url }
-                        case .failure(_, let text): throw ShortsError.message(text)
+                        case .failure(_, let text, let started): throw BrowserUploadFailure(message: text, uploadStarted: started)
                         case .finished: break
                         }
                     }
@@ -159,7 +162,8 @@ final class ShortsLibrary {
                     try save()
                     selected.remove(card.id)
                 } catch {
-                    cards[index].status = .needsReview; cards[index].issue = error.localizedDescription
+                    cards[index].status = (error as? BrowserUploadFailure)?.uploadStarted == false ? .ready : .needsReview
+                    cards[index].issue = error.localizedDescription
                     try save()
                     throw error
                 }

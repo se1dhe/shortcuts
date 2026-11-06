@@ -357,7 +357,7 @@ struct EssayReleasePublisher {
                     }
                     release.receipts[key] = .init(state: .published, url: url, message: message)
                     try await checkpoint(release); received = true
-                case .failure(_, let message), .captchaDetected(_, let message): throw EssayReleaseError.invalid(message)
+                case .failure(_, let message, _), .captchaDetected(_, let message): throw EssayReleaseError.invalid(message)
                 case .finished:
                     // completed is the terminal protocol event; a browser
                     // descendant can keep the OS pipe open after that event.

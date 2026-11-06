@@ -1,7 +1,7 @@
 // Each Studio check has its own lifecycle. A usable Post button is not evidence
 // that either check finished; descriptions are never used as status evidence.
 export const MUSIC_HEADING = /^(?:(?:run a |automatic )?(?:sound|music)(?: copyright)? check|(?:run a )?copyright check|проверка (?:авторских прав(?: на (?:музыку|звук))?|музыки)|перевірка (?:авторських прав(?: на (?:музику|звук))?|музики))$/i;
-export const CONTENT_HEADING = /^(?:(?:run a |automatic )?(?:video )?content check|проверка (?:контента|содержимого|видео)|перевірка (?:контенту|вмісту|відео))$/i;
+export const CONTENT_HEADING = /^(?:(?:run a |automatic |quick |fast )?(?:video )?content check|(?:быстрая )?проверка (?:контента|содержимого|видео)|(?:швидка )?перевірка (?:контенту|вмісту|відео))$/i;
 const pending = /\b(?:checking|processing|scanning|in progress|queued|pending|uploading)\b|проверяется|проверяем|выполняется|ид[её]т проверка|загружается|обрабатывается|перевіряється|триває|очікування|завантажується/i;
 const clean = /no (?:copyright )?(?:issues|violations|problems)(?: (?:found|detected))?|check(?:s)? (?:complete|completed|passed)|\bpassed\b|(?:нарушений|проблем) не (?:найдено|обнаружено|выявлено)|проверка (?:завершена|пройдена)|(?:порушень|проблем) не виявлено|перевірку (?:завершено|пройдено)/i;
 const problem = /(?:copyright|content|community guidelines?) (?:issue|violation|problem|infringement)s? (?:found|detected)|(?:issues?|violations?|problems?) (?:found|detected)|\b(?:blocked|failed|restricted)\b|(?:обнаружены|найдены|выявлены) (?:нарушения|проблемы)|заблокирован|не пройдена|виявлено (?:порушення|проблеми)|заблоковано/i;
@@ -74,7 +74,8 @@ export async function waitForTikTokChecks(surface, options = {}) {
   for (;;) {
     const snapshot = await read();
     const music = classifyTikTokCheck(snapshot.musicText), content = classifyTikTokCheck(snapshot.contentText);
-    const message = `Проверка TikTok: музыка — ${music}; контент — ${content}. ${snapshot.musicText || ''} ${snapshot.contentText || ''}`;
+    const labels = { unknown: "ожидаем статус", pending: "проверяется", passed: "пройдена", failed: "обнаружена проблема" };
+    const message = `Проверка TikTok: музыка — ${labels[music]}; контент — ${labels[content]}. ${snapshot.musicText || ''} ${snapshot.contentText || ''}`;
     if (message !== previous || now() - lastReport >= 15000) { progress(message); previous = message; lastReport = now(); }
     if (music === 'failed' || content === 'failed') throw new Error('TikTok сообщил о нарушении: ' + message);
     if (music === 'passed' && content === 'passed') return snapshot;

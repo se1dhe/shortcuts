@@ -50,11 +50,14 @@ test('full upload cannot click Post while content passed but music is still chec
     keyboard: { press: async () => {}, type: async () => {} },
     evaluate: async () => ({ musicText: ++reads < 4 ? 'Checking...' : 'No issues found', contentText: 'No issues found' }),
     waitForSelector: async () => { assert.equal(posted, true); },
-    getByText() { return { first() { return this; }, isVisible: async () => false }; },
+    getByText(pattern) { return {
+      first() { return this; }, isVisible: async () => pattern.source.includes('Who can'),
+      locator() { return { locator() { return { first() { return this; }, count: async () => 1, innerText: async () => 'Everyone' }; } }; }
+    }; },
     locator(selector) { return {
       first() { return this; }, count: async () => selector.includes('Log in') ? 0 : 1,
       isVisible: async () => selector.includes('contenteditable'), waitFor: async () => {},
-      setInputFiles: async () => {}, evaluateAll: async () => [],
+      setInputFiles: async () => {}, evaluateAll: async () => posted ? ["https://www.tiktok.com/@test/video/1234"] : [],
       click: async () => { if (selector.includes('has-text("Post")')) {
         assert.ok(reads >= 5, 'Both checks plus a fresh status must precede Post'); posted = true;
       } },

@@ -134,6 +134,55 @@ struct YouTubeShortsTests {
         #expect(ShortsLibrary(directory: directory).cards[0].canPublish)
     }
 
+    private struct PublicationStub: BrowserPublishingProtocol {
+        var auth = BrowserAuthStatus(tiktok: true, youtube: false, tiktokHandle: "telonyx_cinema")
+        let events: [BrowserPublishEvent]
+        func checkAuthStatus() async throws -> BrowserAuthStatus { auth }
+        func openLoginSession() async throws -> BrowserAuthStatus { auth }
+        func publish(job: BrowserUploadJob) -> AsyncThrowingStream<BrowserPublishEvent, Error> {
+            #expect(job.expectedTikTokHandle == "telonyx_cinema")
+            #expect(job.platforms == ["tiktok"])
+            return AsyncThrowingStream { continuation in
+                events.forEach { continuation.yield($0) }
+                continuation.finish()
+            }
+        }
+    }
+
+    @Test("Publication keeps pre-upload failures retryable, ambiguous outcomes require review")
+    @MainActor func publishingLifecycle() async throws {
+        let receipt = "https://www.tiktok.com/@telonyx_cinema/video/123456789"
+        let scenarios: [([BrowserPublishEvent], DiscoveredShort.Status, String)] = [
+            ([.failure(platform: "tiktok", message: "Wrong account. File not uploaded", uploadStarted: false)], .ready, "telonyx_cinema"),
+            ([.failure(platform: "tiktok", message: "Uploaded, outcome unknown", uploadStarted: true)], .needsReview, "telonyx_cinema"),
+            ([.failure(platform: nil, message: "Unknown process error")], .needsReview, "telonyx_cinema"),
+            ([.success(platform: "tiktok", message: "Done", url: receipt), .finished(allResults: ["tiktok": "success"])], .published, "telonyx_cinema"),
+            ([.success(platform: "tiktok", message: "Done", url: "https://www.tiktok.com/@other/video/123"), .finished(allResults: ["tiktok": "success"])], .needsReview, "telonyx_cinema"),
+            ([.finished(allResults: ["tiktok": "success"])], .needsReview, "telonyx_cinema")
+            ,([.failure(platform: "tiktok", message: "Must never reach upload")], .ready, "other_owner")
+        ]
+        for (events, expected, handle) in scenarios {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let library = ShortsLibrary(directory: directory, browser: PublicationStub(auth: .init(tiktok: true, youtube: false, tiktokHandle: handle), events: events))
+            let file = directory.appendingPathComponent("ready.mp4")
+            try Data([0]).write(to: file)
+            var card = DiscoveredShort(id: "abcdefghijk", title: "Драйв", channel: "Кино", duration: 20, views: 500, film: "Драйв", caption: "Кино", end: 20)
+            card.status = .ready; card.outputPath = file.path; card.watermarkVersion = ShortsWatermark.version
+            library.cards = [card]; library.selected = [card.id]
+            try library.save()
+            await library.publishSelected()
+            #expect(library.cards[0].status == expected)
+            #expect(ShortsLibrary(directory: directory).cards[0].status == expected)
+            if expected == .published {
+                #expect(library.cards[0].publishedURL == receipt)
+                #expect(library.selectedReady.isEmpty)
+                await library.publishSelected()
+                #expect(library.cards[0].status == .published)
+            }
+        }
+    }
+
     @Test("Unreadable manifest is retained and never overwritten")
     @MainActor func corruptLibrary() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
-import { requireTikTokAccount } from './tiktok-account.js';
+import { ensureTikTokPublic } from './tiktok-privacy.js';
+import { requireTikTokAccount, canonicalTikTokVideoURL } from './tiktok-account.js';
 import os from 'node:os';
 import path from 'node:path';
 import { enableTikTokChecks, readTikTokChecks, waitForTikTokChecks, requireTikTokChecksPassed } from './tiktok-waits.js';
@@ -16,11 +17,12 @@ import { enableTikTokChecks, readTikTokChecks, waitForTikTokChecks, requireTikTo
  */
 export async function uploadToTikTok(page, { videoPath, caption, hashtags = [], isDraft = false, expectedHandle }, options = {}) {
   let fileSelected = false;
+  let publicationAttempted = false;
   let surface = page;
   try {
     console.log(JSON.stringify({ type: 'progress', platform: 'tiktok', message: 'Открытие TikTok Creator Center...' }));
 
-    await page.goto('https://www.tiktok.com/creator-center/upload', {
+    await page.goto('https://www.tiktok.com/tiktokstudio/upload', {
       waitUntil: 'domcontentloaded',
       timeout: 60000,
     });
@@ -78,17 +80,13 @@ export async function uploadToTikTok(page, { videoPath, caption, hashtags = [], 
       await page.keyboard.press('Meta+A').catch(() => {});
       await page.keyboard.press('Backspace').catch(() => {});
       await page.keyboard.type(fullText, { delay: 15 });
+      await page.keyboard.press('Escape');
     } else {
       throw new Error('Редактор описания TikTok не найден. Публикация не выполнялась.');
     }
 
-    // Ensure Public privacy is selected if not draft
-    if (!isDraft) {
-      const publicRadio = surface.locator('label:has-text("Public"), label:has-text("Все"), input[value="public"]').first();
-      if (await publicRadio.isVisible().catch(() => false)) {
-        await publicRadio.click().catch(() => {});
-      }
-    }
+    // Public is an explicit requirement, never an unverified default.
+    if (!isDraft) await ensureTikTokPublic(surface);
 
     // Check for any anti-bot captcha challenge
     const captchaLocator = surface.locator('#captcha-verify-image, .captcha-verify-container, iframe[src*="captcha"]');
@@ -117,20 +115,36 @@ export async function uploadToTikTok(page, { videoPath, caption, hashtags = [], 
 
     await postButton.waitFor({ state: 'visible', timeout: 20000 });
     requireTikTokChecksPassed(await readTikTokChecks(surface));
-    const existingLinks = new Set(await page.locator('a[href*="/video/"]').evaluateAll(nodes => nodes.map(node => node.href)));
+    if (!isDraft) await ensureTikTokPublic(surface);
+    const existingLinks = new Set((await page.locator('a[href*="/video/"]').evaluateAll(nodes => nodes.map(node => node.href))).map(link => canonicalTikTokVideoURL(link)).filter(Boolean));
+    if (expectedHandle) await requireTikTokAccount(page, expectedHandle, { uploadStarted: true });
+    if (options.prepareOnly) {
+      console.log(JSON.stringify({ type: 'prepared', platform: 'tiktok', message: 'Проверка загрузки завершена. Кнопка «Опубликовать» не нажималась.' }));
+      return { prepared: true };
+    }
+    publicationAttempted = true; // A click timeout can still follow an accepted server request.
     await postButton.click();
 
     console.log(JSON.stringify({ type: 'progress', platform: 'tiktok', message: 'Отправка публикации...' }));
 
     // Wait for confirmation modal or redirect
     await page.waitForSelector(
-      'text="Your video has been uploaded", text="Your video has been posted", text="Видео опубликовано", text="Відео опубліковано", text="Saved to drafts", text="Сохранено в черновики"',
+      isDraft ? 'text="Saved to drafts", text="Сохранено в черновики"'
+        : 'text="Your video has been uploaded", text="Your video has been posted", text="Видео опубликовано", text="Відео опубліковано"',
       { timeout: 10 * 60 * 1000 }
     ).catch(() => { throw new Error('TikTok не подтвердил результат отправки. Загрузка оставлена открытой; проверьте профиль перед повтором.'); });
 
-    const links = await page.locator('a[href*="/video/"]').evaluateAll(nodes => nodes.map(node => node.href));
-    const candidates = [...new Set(links)].filter(link => !existingLinks.has(link) && /^https:\/\/(www\.)?tiktok\.com\/@[^/]+\/video\/\d+\/?(?:\?.*)?$/.test(link));
-    const postURL = candidates.length === 1 ? candidates[0] : null;
+    let postURL = null;
+    for (let attempt = 0; attempt < (options.receiptAttempts ?? 15); attempt++) {
+      const links = await page.locator('a[href*="/video/"]').evaluateAll(nodes => nodes.map(node => node.href));
+      const candidates = [...new Set(links.map(link => canonicalTikTokVideoURL(link, expectedHandle)).filter(Boolean))]
+        .filter(link => !existingLinks.has(link));
+      if (candidates.length === 1) { postURL = candidates[0]; break; }
+      if (attempt + 1 < (options.receiptAttempts ?? 15)) await page.waitForTimeout(1000);
+    }
+    if (!isDraft && !postURL) {
+      throw new Error('TikTok подтвердил отправку, но не вернул однозначную ссылку на ролик нужного аккаунта. Проверьте профиль перед повтором.');
+    }
 
     console.log(JSON.stringify({
       type: 'success',
@@ -139,6 +153,8 @@ export async function uploadToTikTok(page, { videoPath, caption, hashtags = [], 
       url: postURL,
     }));
   } catch (error) {
+    error.uploadStarted = fileSelected;
+    error.publicationAttempted = publicationAttempted;
     error.keepBrowserOpen = fileSelected && !page.isClosed?.();
     if (fileSelected && options.captureFailure) await options.captureFailure(error).catch(() => {});
     else if (fileSelected) {

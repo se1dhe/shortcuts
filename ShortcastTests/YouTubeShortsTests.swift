@@ -158,8 +158,8 @@ struct YouTubeShortsTests {
             ([.failure(platform: nil, message: "Unknown process error")], .needsReview, "telonyx_cinema"),
             ([.success(platform: "tiktok", message: "Done", url: receipt), .finished(allResults: ["tiktok": "success"])], .published, "telonyx_cinema"),
             ([.success(platform: "tiktok", message: "Done", url: "https://www.tiktok.com/@other/video/123"), .finished(allResults: ["tiktok": "success"])], .needsReview, "telonyx_cinema"),
-            ([.finished(allResults: ["tiktok": "success"])], .needsReview, "telonyx_cinema")
-            ,([.failure(platform: "tiktok", message: "Must never reach upload")], .ready, "other_owner")
+            ([.finished(allResults: ["tiktok": "success"])], .needsReview, "telonyx_cinema"),
+            ([.failure(platform: "tiktok", message: "Must never reach upload")], .ready, "other_owner")
         ]
         for (events, expected, handle) in scenarios {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

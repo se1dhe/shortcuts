@@ -8911,25 +8911,25 @@
         }
       }
     },
-    "Источник этой темы не записан, поэтому сказать, кто её выбрал, невозможно. Ниже тема, на которой стоит собрать 4–8-минутное кино-эссе:": {
+    "Источник этой темы не записан, поэтому сказать, кто её выбрал, невозможно. Ниже тема, на которой стоит собрать кино-эссе:": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The source of this theme was not recorded, so we cannot identify who selected it. Below is the theme for the 4–8-minute essay:"
+            "value": "The source of this theme was not recorded, so we cannot identify who selected it. Below is the theme for the video essay:"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Источник этой темы не записан, поэтому сказать, кто её выбрал, невозможно. Ниже тема, на которой стоит собрать 4–8-минутное кино-эссе:"
+            "value": "Источник этой темы не записан, поэтому сказать, кто её выбрал, невозможно. Ниже тема, на которой стоит собрать кино-эссе:"
           }
         },
         "uk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Джерело цієї теми не записано, тому неможливо сказати, хто її вибрав. Нижче тема для кіноесе на 4–8 хвилин:"
+            "value": "Джерело цієї теми не записано, тому неможливо сказати, хто її вибрав. Нижче тема для кіноесе:"
           }
         }
       }
@@ -11419,25 +11419,25 @@
         }
       }
     },
-    "Нейросеть проанализировала диалоги и выбрала фундаментальную тему для 4–8-минутного кино-эссе:": {
+    "Нейросеть проанализировала диалоги и выбрала фундаментальную тему для кино-эссе:": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The model analyzed the dialogue and selected a central theme for a 4–8-minute video essay:"
+            "value": "The model analyzed the dialogue and selected a central theme for a video essay:"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Нейросеть проанализировала диалоги и выбрала фундаментальную тему для 4–8-минутного кино-эссе:"
+            "value": "Нейросеть проанализировала диалоги и выбрала фундаментальную тему для кино-эссе:"
           }
         },
         "uk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Модель проаналізувала діалоги й вибрала центральну тему для кіноесе на 4–8 хвилин:"
+            "value": "Модель проаналізувала діалоги й вибрала центральну тему для кіноесе:"
           }
         }
       }
@@ -17223,47 +17223,47 @@
         }
       }
     },
-    "Проект просил %1$@ — длина эссе рождается из материала темы и ограничена коридором 4:00–8:00.": {
+    "Проект просил %1$@ — длина эссе рождается из материала темы без верхнего ограничения длительности.": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The project requested %1$@ — essay length follows the theme’s material within a 4:00–8:00 range."
+            "value": "The project requested %1$@ — essay length follows the theme’s material without an upper duration limit."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Проект просил %1$@ — длина эссе рождается из материала темы и ограничена коридором 4:00–8:00."
+            "value": "Проект просил %1$@ — длина эссе рождается из материала темы без верхнего ограничения длительности."
           }
         },
         "uk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Проєкт запитував %1$@ — тривалість есе визначається матеріалом теми в межах 4:00–8:00."
+            "value": "Проєкт запитував %1$@ — тривалість есе визначається матеріалом теми без верхнього обмеження тривалості."
           }
         }
       }
     },
-    "Проект просил %@ — длина эссе рождается из материала темы и ограничена коридором 4:00–8:00.": {
+    "Проект просил %@ — длина эссе рождается из материала темы без верхнего ограничения длительности.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The project requested %@ — essay length follows the theme’s material within a 4:00–8:00 range."
+            "value": "The project requested %@ — essay length follows the theme’s material without an upper duration limit."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Проект просил %@ — длина эссе рождается из материала темы и ограничена коридором 4:00–8:00."
+            "value": "Проект просил %@ — длина эссе рождается из материала темы без верхнего ограничения длительности."
           }
         },
         "uk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Проєкт запитував %@ — тривалість есе визначається матеріалом теми в межах 4:00–8:00."
+            "value": "Проєкт запитував %@ — тривалість есе визначається матеріалом теми без верхнього обмеження тривалості."
           }
         }
       }
@@ -19335,25 +19335,25 @@
         }
       }
     },
-    "Смонтировать кино-эссе (4:00–8:00)": {
+    "Смонтировать кино-эссе": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Build video essay (4:00–8:00)"
+            "value": "Build video essay"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Смонтировать кино-эссе (4:00–8:00)"
+            "value": "Смонтировать кино-эссе"
           }
         },
         "uk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Змонтувати кіноесе (4:00–8:00)"
+            "value": "Змонтувати кіноесе"
           }
         }
       }
@@ -20967,25 +20967,25 @@
         }
       }
     },
-    "Тему выбрали вы, а не модель — это фиксированный лейтмотив для 4–8-минутного кино-эссе:": {
+    "Тему выбрали вы, а не модель — это фиксированный лейтмотив для кино-эссе:": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "You selected this theme, not the model — it is the fixed leitmotif for a 4–8-minute video essay:"
+            "value": "You selected this theme, not the model — it is the fixed leitmotif for a video essay:"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Тему выбрали вы, а не модель — это фиксированный лейтмотив для 4–8-минутного кино-эссе:"
+            "value": "Тему выбрали вы, а не модель — это фиксированный лейтмотив для кино-эссе:"
           }
         },
         "uk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Тему вибрали ви, а не модель — це фіксований лейтмотив для кіноесе на 4–8 хвилин:"
+            "value": "Тему вибрали ви, а не модель — це фіксований лейтмотив для кіноесе:"
           }
         }
       }
@@ -22487,25 +22487,25 @@
         }
       }
     },
-    "Хронометраж не выбирается: он рождается из темы — от 4:00 до 8:00.": {
+    "Хронометраж не выбирается: он рождается из темы — от 4 минут, без верхнего ограничения.": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Duration is not selected: it follows the theme, from 4:00 to 8:00."
+            "value": "Duration is not selected: it follows the theme, at least 4 minutes, with no upper limit."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Хронометраж не выбирается: он рождается из темы — от 4:00 до 8:00."
+            "value": "Хронометраж не выбирается: он рождается из темы — от 4 минут, без верхнего ограничения."
           }
         },
         "uk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Хронометраж не вибирається: він визначається темою — від 4:00 до 8:00."
+            "value": "Хронометраж не вибирається: він визначається темою — від 4 хвилин, без верхнього обмеження."
           }
         }
       }

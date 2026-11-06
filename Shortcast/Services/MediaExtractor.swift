@@ -265,16 +265,15 @@ enum MediaExtractor {
             try Task.checkCancellation()
             _ = try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600))
         }
-        let reader = try AVAssetReader(asset: asset)
-        let output = AVAssetReaderTrackOutput(track: audio[0], outputSettings: [AVFormatIDKey: kAudioFormatLinearPCM])
-        guard reader.canAdd(output) else { throw MediaExtractorError.inputConversionFailed("Не удалось проверить звук MP4.") }
-        reader.add(output)
-        reader.timeRange = CMTimeRange(start: CMTime(seconds: max(0, duration - 1), preferredTimescale: 600),
-                                       duration: CMTime(seconds: min(1, duration), preferredTimescale: 600))
-        guard reader.startReading(), output.copyNextSampleBuffer() != nil else {
-            throw MediaExtractorError.inputConversionFailed("Не удалось прочитать звук MP4.")
+        let chosenTrack = sourceTracks.first { $0.id == selectedAudioStreamIndex }
+            ?? pickRecommendedAudioTrack(from: sourceTracks)
+        if let chosenTrack, let expected = await audioDuration(sourceURL: sourceURL, streamIndex: chosenTrack.id, ffprobe: probe) {
+            let actual = try await audio[0].load(.timeRange).duration.seconds
+            guard actual.isFinite, actual + 2 >= expected else {
+                throw MediaExtractorError.inputConversionFailed("Звуковая дорожка MP4 обрезана относительно выбранной дорожки MKV.")
+            }
         }
-        reader.cancelReading()
+        try await validateAudioSamples(asset: asset, track: audio[0])
         var adopted = project
         adopted.sourceMovieURL = outputURL
         adopted.fileSizeBytes = Int64(try outputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
@@ -301,6 +300,47 @@ enum MediaExtractor {
             }
         }
         return adopted
+    }
+
+    private static func audioDuration(sourceURL: URL, streamIndex: Int, ffprobe: URL) async -> Double? {
+        guard let result = try? await ProcessRunner.shared.run(executableURL: ffprobe,
+            arguments: ["-v", "error", "-select_streams", String(streamIndex), "-show_entries",
+                        "stream=start_time,duration:stream_tags=DURATION", "-of", "json", sourceURL.path]),
+              result.isSuccess, let data = result.standardOutput.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let stream = (json["streams"] as? [[String: Any]])?.first else { return nil }
+        let duration = (stream["duration"] as? String).flatMap(Double.init)
+        let tag = (stream["tags"] as? [String: String])?["DURATION"].flatMap(TranscriptionService.timecode)
+        let value = duration ?? tag.map { $0 - ((stream["start_time"] as? String).flatMap(Double.init) ?? 0) }
+        return value.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+    }
+
+    /// Audio and video can end at different times. Probe the actual audio
+    /// timeline, including its beginning, middle and tail, rather than the video tail.
+    static func validateAudioSamples(asset: AVURLAsset, track: AVAssetTrack) async throws {
+        let range = try await track.load(.timeRange)
+        let start = range.start.seconds
+        let duration = range.duration.seconds
+        guard start.isFinite, duration.isFinite, duration > 0 else {
+            throw MediaExtractorError.inputConversionFailed("Пустая звуковая дорожка MP4.")
+        }
+        for offset in [0.0, duration * 0.5, max(0, duration - 1)] {
+            try Task.checkCancellation()
+            let reader = try AVAssetReader(asset: asset)
+            let output = AVAssetReaderTrackOutput(track: track, outputSettings: [AVFormatIDKey: kAudioFormatLinearPCM])
+            output.alwaysCopiesSampleData = false
+            guard reader.canAdd(output) else { throw MediaExtractorError.inputConversionFailed("Не удалось проверить звук MP4.") }
+            reader.add(output)
+            reader.timeRange = CMTimeRange(start: CMTime(seconds: start + offset, preferredTimescale: 600),
+                duration: CMTime(seconds: min(1, duration - offset), preferredTimescale: 600))
+            guard reader.startReading(), let sample = output.copyNextSampleBuffer(),
+                  CMSampleBufferGetNumSamples(sample) > 0 else {
+                let detail = reader.error?.localizedDescription ?? "нет аудиосэмплов"
+                reader.cancelReading()
+                throw MediaExtractorError.inputConversionFailed("Не удалось прочитать звук MP4 на \(Int(start + offset)) с: \(detail)")
+            }
+            reader.cancelReading()
+        }
     }
 
     private static let copyableAudioCodecs: Set<String> = ["aac", "mp3", "ac3"]
@@ -450,7 +490,9 @@ enum MediaExtractor {
         let asset = AVURLAsset(url: url)
         let vTracks = (try? await asset.loadTracks(withMediaType: .video)) ?? []
         let aTracks = (try? await asset.loadTracks(withMediaType: .audio)) ?? []
-        return !vTracks.isEmpty && !aTracks.isEmpty
+        guard !vTracks.isEmpty, let audio = aTracks.first else { return false }
+        do { try await validateAudioSamples(asset: asset, track: audio); return true }
+        catch { return false }
     }
 
     private static func inspectVideoStream(sourceURL: URL, ffprobe: URL) async -> ProbedVideoStream? {
@@ -515,7 +557,7 @@ enum MediaExtractor {
     /// export (default 35s, a little past Gemma's 30s audio window); pass `nil`
     /// to export the full track (used for transcribing a long video). Returns
     /// `nil` if the video has no audio track.
-    static func extractAudio(from url: URL, maxSeconds: Double? = 35) async throws -> URL? {
+    static func extractAudio(from url: URL, maxSeconds: Double? = 35, range: TimeSegment? = nil) async throws -> URL? {
         let asset = AVURLAsset(url: url)
         let audioTracks = try await asset.loadTracks(withMediaType: .audio)
         guard !audioTracks.isEmpty else { return nil }
@@ -529,7 +571,14 @@ enum MediaExtractor {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("shortcast-audio-\(UUID().uuidString).m4a")
 
-        if let maxSeconds {
+        if let range {
+            let duration = CMTimeGetSeconds(try await asset.load(.duration))
+            let start = max(0, range.start)
+            let end = min(duration, range.end)
+            guard start.isFinite, end.isFinite, end > start else { throw MediaExtractorError.audioExportFailed("invalid audio range") }
+            export.timeRange = CMTimeRange(start: CMTime(seconds: start, preferredTimescale: 600),
+                duration: CMTime(seconds: end - start, preferredTimescale: 600))
+        } else if let maxSeconds {
             let duration = CMTimeGetSeconds(try await asset.load(.duration))
             let cap = CMTime(seconds: min(duration, maxSeconds), preferredTimescale: 600)
             export.timeRange = CMTimeRange(start: .zero, duration: cap)

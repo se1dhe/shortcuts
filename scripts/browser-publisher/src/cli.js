@@ -25,7 +25,7 @@ async function main() {
 
   // Command: --login
   if (args.includes('--login')) {
-    await openInteractiveLogin();
+    await openInteractiveLogin({ tiktokOnly: args.includes('--tiktok-only') });
     process.exit(0);
   }
 
@@ -92,6 +92,7 @@ async function main() {
             caption: content.caption,
             hashtags: content.hashtags,
             isDraft: !jobData.isPublic,
+            expectedHandle: jobData.expectedTikTokHandle,
           });
           results.tiktok = { status: 'success' };
         } else if (platform === 'youtube') {
@@ -114,7 +115,7 @@ async function main() {
           console.log(JSON.stringify({
             type: 'progress', platform,
             message: 'Требуется проверка в браузере: ' + err.message
-              + ' Окно оставлено открытым. Проверьте текущую загрузку в Studio; после проверки закройте это окно Chrome. Повторная загрузка автоматически не начнётся.',
+              + ' Окно оставлено открытым. Проверьте текущую загрузку на платформе; после проверки закройте это окно Chrome. Повторная загрузка автоматически не начнётся.',
           }));
           await waitForBrowserClose(context);
         }

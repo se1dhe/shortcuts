@@ -18,6 +18,19 @@ final class FilmLibrary {
         var progress: String = ""
         var sourceURL: URL { folder.appendingPathComponent(file) }
     }
+    struct DownloadStatus: Equatable {
+        let id: String
+        let state: String
+    }
+    var downloadStatuses: [DownloadStatus] { downloads.map { DownloadStatus(id: $0.id, state: $0.state) } }
+
+    /// Only a download that just completed may trigger an automatic import.
+    /// Starting another torrent must not reopen an older failed MKV import.
+    func newlyCompletedDownload(previous: [DownloadStatus]) -> Download? {
+        downloads.first { task in
+            task.state == "Скачан" && previous.contains { $0.id == task.id && $0.state == "Загрузка" }
+        }
+    }
     var films: [PlannedFilm] = []
     var completed: Set<String> = []
     var downloads: [Download] = []

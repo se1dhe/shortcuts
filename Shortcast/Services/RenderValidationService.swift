@@ -48,7 +48,7 @@ actor RenderValidationService {
     
     private static let logger = Logger(subsystem: "app.shortcast", category: "RenderValidation")
     
-    /// Валидирует готовый рендер эссе (4:00–8:00) по общей цели аудиомастеринга.
+    /// Валидирует готовый рендер эссе (от четырёх минут) по общей цели аудиомастеринга.
     func validateLongform(
         outputURL: URL,
         expectedDurationRange: ClosedRange<Double> = EssayDurationPolicy.rendered,

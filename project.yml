@@ -47,8 +47,6 @@ targets:
     platform: macOS
     sources:
       - path: Shortcast
-      - path: channels_plan/01_cinema_kadr_sens/content_plans/essays_20_films.md
-        buildPhase: resources
     dependencies:
       - package: Gemma4Swift
         product: Gemma4Swift

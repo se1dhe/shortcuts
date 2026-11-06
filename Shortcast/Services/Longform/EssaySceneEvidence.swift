@@ -40,9 +40,13 @@ enum EssaySceneEvidence {
         for (index, moment) in moments.enumerated() {
             let label = "сцена \(index + 1)"
             guard moment.startTime.isFinite, moment.endTime.isFinite,
-                  moment.startTime >= 0, moment.endTime <= filmEnd,
-                  EssayDurationPolicy.sceneLength.contains(moment.endTime - moment.startTime) else {
-                issues.append("\(label): диапазон вне фильма или правила 18–40 с")
+                  moment.startTime >= 0, moment.endTime <= filmEnd else {
+                issues.append("\(label): диапазон вне фильма")
+                continue
+            }
+            let duration = moment.endTime - moment.startTime
+            guard EssayDurationPolicy.sceneLength.contains(duration) else {
+                issues.append("\(label): длительность \(String(format: "%.3f", duration)) с вне правила 18–40 с (\(String(format: "%.3f", moment.startTime))–\(String(format: "%.3f", moment.endTime)) с)")
                 continue
             }
             if !moment.dramaticWeight.isFinite || !(0...1).contains(moment.dramaticWeight) {
@@ -81,8 +85,6 @@ enum EssaySceneEvidence {
             + Double(max(0, ranges.count - actCount)) * LongformTimeline.intraActGap
         if estimate < EssayDurationPolicy.rendered.lowerBound {
             issues.append("план короче 4 минут; модель должна выбрать больше подходящего материала")
-        } else if estimate > EssayDurationPolicy.rendered.upperBound {
-            issues.append("план длиннее 8 минут; модель должна распределить сцены в коридоре")
         }
         guard issues.isEmpty else { throw InvalidSelection(issues: issues) }
     }
@@ -141,7 +143,7 @@ enum EssaySceneEvidence {
             || (!allowUserApprovedScenes && !EssayDurationPolicy.rendered.contains(editorialDuration)) {
             issues.append(allowUserApprovedScenes
                 ? "длительность монтажа некорректна"
-                : "подтверждённый монтаж не укладывается в 4:00–8:00")
+                : "подтверждённый монтаж короче 4 минут")
         }
         guard issues.isEmpty else { throw InvalidSelection(issues: issues) }
     }

@@ -12,6 +12,7 @@ enum EssayReleaseError: LocalizedError {
 struct EssayShortDirector: Sendable {
     let model: any LongformActTitleModeling
     var visualReview: (@Sendable ([Window]) async throws -> [Window])? = nil
+    var performanceFeedback: String? = nil
     static let selectionVersion = 2
     static let promptBudget = 12_000
 
@@ -20,6 +21,18 @@ struct EssayShortDirector: Sendable {
         let segments: [TimeSegment]
         let text: String
         var visualEvidence: EssayShortVisualEvidence? = nil
+        var sourceLines: [String] = []
+        var payoffLines: [String] { sourceLines.filter { (12...240).contains($0.count) } }
+        var selectionPrompt: String {
+            let visual = visualEvidence.map { "Кадри: \($0.score)/5, впевненість \($0.confidence): \($0.observation)" } ?? "Кадри не перевірені"
+            var reference = 0
+            let dialogue = sourceLines.map { line in
+                guard (12...240).contains(line.count) else { return "Контекст: " + line }
+                reference += 1
+                return "Q\(reference): " + line
+            }
+            return "\(id) [\(Int(duration)) с] \(visual)\n" + dialogue.joined(separator: "\n")
+        }
         var duration: Double { segments.reduce(0) { $0 + $1.duration } }
         var prompt: String {
             let visual = visualEvidence.map {
@@ -53,7 +66,8 @@ struct EssayShortDirector: Sendable {
             guard let endIndex else { continue }
             windows.append(Window(id: "S\(windows.count + 1)",
                 segments: [.init(start: first.start, end: lines[endIndex].end)],
-                text: lines[index...endIndex].map(\.text).joined(separator: " ")))
+                text: lines[index...endIndex].map(\.text).joined(separator: " "),
+                sourceLines: lines[index...endIndex].map(\.text)))
             lastStart = first.start
         }
         return windows
@@ -151,7 +165,7 @@ struct EssayShortDirector: Sendable {
             DirectorRunLog.write("short visual review unavailable: selection uses transcript only")
             await progress("Визуальная проверка недоступна: подбор опирается только на диалоги.")
         }
-        let context = "Фільм: \(arc.movieTitle)\n"
+        let context = "Фільм: \(arc.movieTitle)\n" + (performanceFeedback.map { $0 + "\n" } ?? "")
         var selected: [EssayShort] = []
         for slot in 0..<2 {
             await progress("Сравниваем лучшие моменты фильма: шортс \(slot + 1) из 2…")
@@ -164,16 +178,25 @@ struct EssayShortDirector: Sendable {
             }
             guard !allowed.isEmpty else { throw EssayReleaseError.invalid("Второй сильный момент без дублирования первого не найден.") }
             let previous = selected.first.map { "Вже обрано: \($0.title). Обери іншу сильну сцену.\n" } ?? ""
-            let prompt = context + previous + allowed.map(\.prompt).joined(separator: "\n\n")
+            let prompt = context + previous + allowed.map(\.selectionPrompt).joined(separator: "\n\n")
             var feedback = ""
             for attempt in 1...2 {
                 try Task.checkCancellation()
-                guard let raw = await model.complete(instructions: Self.instructions, prompt: prompt + feedback, maxTokens: 1100) else { continue }
+                guard let raw = await model.complete(instructions: """
+                    Обери ОДНУ найсильнішу самостійну сцену для кіновішортса: гострий конфлікт,
+                    виразна реакція, поворот або сильна репліка. Врахуй реальні візуальні проби.
+                    Не підганяй сцену під тему есе. Не обирай лише спокійну експозицію, якщо є сильніша подія.
+                    candidateID — точний S із наданого каталогу. payoffLine — цілий номер Q
+                    репліки, яка завершує або загострює конфлікт САМЕ цієї сцени.
+                    Не переписуй репліки й не пиши рекламні тексти: вони готуються окремо.
+                    Лише JSON: {"candidateID":"S1","payoffLine":1}
+                    """, prompt: prompt + feedback, maxTokens: 160) else { continue }
                 DirectorRunLog.dumpRaw(raw, stage: "essay-short\(slot + 1)", attempt: attempt)
                 do {
-                    var item = try Self.parse(raw, catalogue: allowed, expectedCount: 1)[0]
+                    var item = try Self.parseSelection(raw, catalogue: allowed)
                     item.visualEvidence = allowed.first { $0.id == item.candidateID }?.visualEvidence
-                    guard selected.first?.hook.lowercased() != item.hook.lowercased() else { throw EssayReleaseError.invalid("Хук повторяет первый ролик.") }
+                    // Drafts contain source excerpts only. Distinct authored
+                    // titles/hooks are enforced after the copy-editor pass.
                     item.id = "short\(slot + 1)"; item.selectionModelID = await model.modelID
                     selected.append(item); break
                 } catch {
@@ -230,6 +253,23 @@ struct EssayShortDirector: Sendable {
                 selectionVersion: Self.selectionVersion, selectedSourceSegments: window.segments))
         }
         return results
+    }
+
+    /// Selection transports IDs only. Publication copy is mandatory in the
+    /// subsequent copy-editor pass; these literal excerpts are unrendered drafts.
+    static func parseSelection(_ raw: String, catalogue: [Window]) throws -> EssayShort {
+        struct Choice: Decodable { let candidateID: String; let payoffLine: Int }
+        guard let json = JSONVariantParser.extractJSONObject(from: raw),
+              let choice = try? JSONDecoder().decode(Choice.self, from: Data(json.utf8)),
+              let window = catalogue.first(where: { $0.id == choice.candidateID }),
+              choice.payoffLine > 0, choice.payoffLine <= window.payoffLines.count else {
+            throw EssayReleaseError.invalid("Нужны ID показанной сцены и номер её реплики Q, без переписывания цитат.")
+        }
+        let quote = window.payoffLines[choice.payoffLine - 1]
+        return EssayShort(id: "draft", angle: quote, hook: String(quote.prefix(85)),
+            title: String(quote.prefix(70)), why: quote, payoffQuote: quote, question: quote,
+            segments: window.segments, candidateID: window.id,
+            selectionVersion: Self.selectionVersion, selectedSourceSegments: window.segments)
     }
 }
 
@@ -402,6 +442,15 @@ struct EssayShortVisualReviewer: Sendable {
 struct EssayShortCopyEditor: Sendable {
     let model: any LongformActTitleModeling
 
+    static func requireDistinctCopy(_ short: EssayShort, previous: [EssayShort]) throws {
+        func key(_ value: String) -> String {
+            value.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
+        }
+        guard !previous.contains(where: { key($0.title) == key(short.title) || key($0.hook) == key(short.hook) }) else {
+            throw EssayReleaseError.invalid("Название или хук повторяют другой шортс выпуска. Сформулируй отдельный конфликт выбранной сцены.")
+        }
+    }
+
     private static let instructions = """
     Ти — літературний редактор коротких українських кіновідео. Вичитай angle, hook,
     title, why, question ОДНОГО вже обраного шортса. Усунь вигадані/зіпсовані слова,
@@ -519,20 +568,27 @@ struct EssayShortCopyEditor: Sendable {
         """
     }
 
-    func edit(_ shorts: [EssayShort], movie: String, transcript: Transcript,
+    func edit(_ shorts: [EssayShort], movie: String, transcript: Transcript, previous: [EssayShort] = [],
               progress: @MainActor (String) -> Void) async throws -> [EssayShort] {
         var result: [EssayShort] = []
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         for original in shorts {
             try Task.checkCancellation()
             await progress("Вычитываем украинский текст \(original.id): название, хук и описание сцены…")
-            let context = transcript.segments.filter { line in
+            let dialogue = transcript.segments.filter { line in
                 original.segments.contains { line.start < $0.end && line.end > $0.start }
             }.map(\.text).joined(separator: " ")
+            let context = original.isMontage
+                ? "Це музичний монтаж різних моментів фільму, не діалогова сцена. Цитата не потрібна. Перевірені візуальні проби: "
+                    + (original.montagePlan?.shots.map(\.observation).joined(separator: "; ") ?? "")
+                : dialogue
             let sourceCopy = Copy(angle: original.angle, hook: original.hook, title: original.title,
                                   why: original.why, question: original.question)
             var current = String(decoding: try encoder.encode(sourceCopy), as: UTF8.self)
+            let otherShorts = (previous + result).filter { $0.id != original.id }
+            let previousCopy = otherShorts.map { "Назва: \($0.title); хук: \($0.hook)" }.joined(separator: "\n")
             let source = "Фільм: \(movie)\nID: \(original.id)\nДОСЛІВНА ЦИТАТА (не редагувати): \(original.payoffQuote)\nРепліки сцени: \(context)"
+                + (previousCopy.isEmpty ? "" : "\nВже вичитані інші шортси (не повторюй назви та хуки):\n" + previousCopy)
             var feedback = ""
             var accepted: EssayShort?
             for attempt in 1...2 {
@@ -544,6 +600,7 @@ struct EssayShortCopyEditor: Sendable {
                 DirectorRunLog.dumpRaw(raw, stage: "short-copy-\(original.id)", attempt: attempt)
                 do {
                     let edited = try Self.applying(raw, to: original)
+                    try Self.requireDistinctCopy(edited, previous: otherShorts)
                     let editedCopy = Copy(angle: edited.angle, hook: edited.hook, title: edited.title,
                                           why: edited.why, question: edited.question)
                     let copyJSON = String(decoding: try encoder.encode(editedCopy), as: UTF8.self)

@@ -337,9 +337,8 @@ struct SentenceBoundaryTests {
             targetDuration: 520.0
         )
         let report = try #require(arc.durationReport)
-        // effectiveTarget — чистый контент: из 480 с вычтены склейки,
-        // 9.7 с постоянного padding; внутри актов — прямые стыки без пауз.
-        #expect(abs(report.effectiveTarget - 470.3) < 0.001)
+        // The heuristic keeps its runtime-derived target without an eight-minute cap.
+        #expect(abs(report.effectiveTarget - report.filmDuration * 0.06) < 0.001)
 
         for (act, actType) in zip(arc.acts, LongformActType.allCases) {
             #expect(act.type == actType)
@@ -410,7 +409,7 @@ struct SentenceBoundaryTests {
         let director = LongformNarrativeDirector()
         let cases: [(film: Double, expected: Double)] = [
             (3_600.0, 300.0),   // 6% = 216с -> нижний кламп 300с
-            (9_828.0, 470.3),   // потолок чистого контента с прямыми стыками внутри актов
+            (9_828.0, 520.0),   // потолок чистого контента с прямыми стыками внутри актов
             (1_200.0, 300.0)    // 6% = 72с  -> нижний кламп 300с
         ]
         for item in cases {
@@ -437,7 +436,7 @@ struct SentenceBoundaryTests {
         }
     }
 
-    @Test("A legacy 11-minute ask is reported honestly and its content budget is clamped")
+    @Test("A legacy 11-minute ask preserves its full content budget")
     func testLegacyOverlongAskIsReportedHonestlyAndClamped() async throws {
         let transcript = Transcript(
             segments: [
@@ -455,10 +454,10 @@ struct SentenceBoundaryTests {
         )
         let report = try #require(arc.durationReport)
         #expect(report.ask == 660.0, "старый проект просил 11 минут — отчёт обязан это показать")
-        #expect(abs(report.effectiveTarget - 470.3) < 0.001)
+        #expect(abs(report.effectiveTarget - (9_828 * 0.06)) < 0.001)
         // The isolated helper records the raw request in its report. The
         // production entry point sets archive provenance only after a valid plan.
-        #expect(report.ask > EssayDurationPolicy.rendered.upperBound)
+        #expect(EssayDurationPolicy.rendered.contains(report.ask))
     }
 
     @Test("Incomplete but admissible catharsis run is taken only when no complete run exists")

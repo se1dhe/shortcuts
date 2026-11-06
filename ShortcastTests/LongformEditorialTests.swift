@@ -34,6 +34,20 @@ private func editorialTranscript() -> Transcript {
 
 @Suite("Longform editorial regression")
 struct LongformEditorialTests {
+    @Test("A saved montage from another theme is refused before any media processing")
+    func refusesStaleThemeDraft() async throws {
+        let arc = editorialArc()
+        var selected = arc.concept; selected.word = "БОРГ"
+        do {
+            _ = try await LongformPipelineCoordinator().buildLongformVideo(
+                sourceURL: URL(fileURLWithPath: "/private/tmp/nonexistent-stale-theme.mp4"), movieTitle: arc.movieTitle,
+                transcript: editorialTranscript(), concept: selected, audioSettings: .init(),
+                existingArc: arc, channelLogoEnabled: false)
+            Issue.record("A draft of another theme was accepted")
+        } catch {
+            #expect(error.localizedDescription.contains("другой теме"))
+        }
+    }
     @Test("Chapters use the render timeline including act gaps and disabled intro")
     func exactChapters() {
         let arc = editorialArc()

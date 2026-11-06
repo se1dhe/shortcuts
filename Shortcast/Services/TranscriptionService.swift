@@ -529,13 +529,7 @@ final class TranscriptionService {
 
     // MARK: - WhisperKit path
 
-    private func transcribeOnDevice(_ videoURL: URL, languageHint: String = "", modelCacheDir: URL? = nil, progress: (@Sendable (Double) -> Void)? = nil) async throws -> Transcript {
-        // Full audio (no cap) → temp .m4a.
-        guard let audioURL = try await MediaExtractor.extractAudio(from: videoURL, maxSeconds: nil) else {
-            throw TranscriptionError.noAudio
-        }
-        defer { try? FileManager.default.removeItem(at: audioURL) }
-
+    private func prepareWhisper(modelCacheDir: URL?) async throws {
         if whisper == nil {
             phase = .downloadingModel(fraction: 0)
 
@@ -576,6 +570,88 @@ final class TranscriptionService {
                 computeOptions: compute, load: true, download: false))
             Self.log("model loaded")
         }
+
+    }
+
+    /// Repairs only selected, suspect captions from source audio. Raw ASR and
+    /// scene evidence remain unchanged; the caller saves these as caption edits.
+    func repairUkrainianCaptions(sourceURL: URL, segments: [TranscriptSegment], ranges: [TimeSegment],
+                                modelCacheDir: URL? = nil) async throws -> [TranscriptSegment] {
+        let selected = segments.filter { line in ranges.contains { line.start < $0.end && line.end > $0.start } }
+        guard !Self.ukrainianLanguageDrift(in: selected).isEmpty else { return segments }
+        try await prepareWhisper(modelCacheDir: modelCacheDir)
+        return try await Self.repairCaptionLanguage(segments: segments, ranges: ranges) { range in
+            try await self.decodeUkrainianCaption(sourceURL: sourceURL, range: range)
+        }
+    }
+
+    private func decodeUkrainianCaption(sourceURL: URL, range: TimeSegment) async throws -> [TranscriptSegment] {
+        guard let whisper else { throw TranscriptionError.modelUnavailable }
+        // A little context prevents Whisper from starting in the middle of a word.
+        let window = TimeSegment(start: max(0, range.start - 2), end: range.end + 2)
+        guard let audioURL = try await MediaExtractor.extractAudio(from: sourceURL, maxSeconds: nil, range: window) else {
+            throw TranscriptionError.noAudio
+        }
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+        var options = DecodingOptions()
+        options.task = .transcribe; options.language = "uk"; options.detectLanguage = false; options.wordTimestamps = true
+        phase = .transcribing
+        let results = try await whisper.transcribe(audioPath: audioURL.path, decodeOptions: options)
+        return results.flatMap(\.segments).map { segment in
+            TranscriptSegment(start: window.start + Double(segment.start), end: window.start + Double(segment.end),
+                text: segment.text, words: (segment.words ?? []).map {
+                    WordTimestamp(word: $0.word, start: window.start + Double($0.start), end: window.start + Double($0.end))
+                }, avgLogprob: Double(segment.avgLogprob), noSpeechProb: Double(segment.noSpeechProb))
+        }
+    }
+
+    nonisolated static func repairCaptionLanguage(
+        segments: [TranscriptSegment], ranges: [TimeSegment],
+        retranscribe: @Sendable (TimeSegment) async throws -> [TranscriptSegment]
+    ) async throws -> [TranscriptSegment] {
+        let selected = segments.filter { line in ranges.contains { line.start < $0.end && line.end > $0.start } }
+        let drift = ukrainianLanguageDrift(in: selected)
+        guard !drift.isEmpty else { return segments }
+        guard drift.count <= 3, drift.reduce(0, { $0 + $1.duration }) <= 90,
+              drift.allSatisfy({ $0.duration <= 45 }) else {
+            throw TranscriptionError.languageDrift(drift)
+        }
+        var repaired = segments
+        for index in segments.indices {
+            let original = segments[index]
+            guard selected.contains(original), drift.contains(where: { original.start < $0.end && original.end > $0.start }) else { continue }
+            try Task.checkCancellation()
+            let range = TimeSegment(start: original.start, end: original.end)
+            let decoded = try await retranscribe(range)
+            let usable = TranscriptQualityGate(segments: decoded).filtered(decoded)
+            let words = usable.flatMap(\.words).filter {
+                let midpoint = ($0.start + $0.end) / 2
+                return midpoint >= original.start - 0.35 && midpoint <= original.end + 0.35
+            }.sorted { $0.start < $1.start }
+            let text: String
+            if !words.isEmpty { text = words.map(\.word).joined().trimmed }
+            else {
+                text = usable.filter { $0.start >= original.start - 0.2 && $0.end <= original.end + 0.2 }
+                    .map(\.text).joined(separator: " ").trimmed
+            }
+            guard !text.isEmpty else { throw TranscriptionError.languageDrift([range]) }
+            let replacement = TranscriptSegment(start: original.start, end: original.end, text: text)
+            try validateRequestedLanguage(segments: [replacement], requestedLanguage: "uk")
+            repaired[index] = replacement
+            Self.log("Repaired Ukrainian caption from source audio at \(Int(range.start))–\(Int(range.end))s: \(text)")
+        }
+        try validateRenderedCaptions(repaired, ranges: ranges, requestedLanguage: "uk")
+        return repaired
+    }
+
+    private func transcribeOnDevice(_ videoURL: URL, languageHint: String = "", modelCacheDir: URL? = nil, progress: (@Sendable (Double) -> Void)? = nil) async throws -> Transcript {
+        // Full audio (no cap) → temp .m4a.
+        guard let audioURL = try await MediaExtractor.extractAudio(from: videoURL, maxSeconds: nil) else {
+            throw TranscriptionError.noAudio
+        }
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+
+        try await prepareWhisper(modelCacheDir: modelCacheDir)
 
         guard let whisper else { throw TranscriptionError.modelUnavailable }
 

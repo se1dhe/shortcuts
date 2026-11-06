@@ -1,11 +1,20 @@
 import Foundation
 import CryptoKit
 
-/// One essay, two independent film moments and their publication receipts.
+/// One essay, two film moments and an optional music montage, with receipts.
 /// Kept in the project; restarting the app must not enqueue duplicate uploads.
 struct EssayRelease: Codable, Sendable, Equatable {
     var essayKey: String
     var shorts: [EssayShort] = []
+    /// Nil keeps already saved/published two-short releases compatible.
+    var includesMontage: Bool? = nil
+    var expectedShortCount: Int { includesMontage == true || hasMontage ? 3 : 2 }
+    var hasMontage: Bool { shorts.contains { $0.isMontage } }
+    var hasRequiredShortFormats: Bool {
+        shorts.count == expectedShortCount && Set(shorts.map(\.id)).count == expectedShortCount
+            && shorts.filter({ !$0.isMontage }).count == 2
+            && shorts.filter(\.isMontage).count == (expectedShortCount == 3 ? 1 : 0)
+    }
     var essayYouTubeURL: String?
     var receipts: [String: Receipt] = [:]
     var relatedVideoConfirmed: Set<String> = []
@@ -15,15 +24,21 @@ struct EssayRelease: Codable, Sendable, Equatable {
 
     /// A saved plan alone is not a prepared release: both exports must still exist.
     var hasReadyShorts: Bool {
-        shorts.count == 2 && shorts.allSatisfy {
+        hasRequiredShortFormats && shorts.allSatisfy {
             $0.outputURL.map { FileManager.default.fileExists(atPath: $0.path) } == true
         }
     }
 
-    var hasCurrentShortStyle: Bool { shorts.count == 2 && shorts.allSatisfy { $0.renderStyleVersion == EssayShort.currentRenderStyle } }
+    var hasCurrentShortStyle: Bool { hasRequiredShortFormats && shorts.allSatisfy(\.hasCurrentRenderStyle) }
+
+    var hasWholeFilmStoryPlans: Bool {
+        let stories = shorts.filter { !$0.isMontage }
+        return stories.count == 2 && stories.allSatisfy { $0.selectionVersion == EssayShortDirector.selectionVersion }
+    }
 
     var usesWholeFilmSelection: Bool {
-        shorts.count == 2 && shorts.allSatisfy { $0.selectionVersion == EssayShortDirector.selectionVersion }
+        hasRequiredShortFormats && hasWholeFilmStoryPlans
+            && (!hasMontage || shorts.filter(\.isMontage).allSatisfy { $0.montagePlan != nil })
     }
 
     var hasProtectedDeliveries: Bool {
@@ -32,7 +47,7 @@ struct EssayRelease: Codable, Sendable, Equatable {
 
     /// Optional discussion posts are excluded; the main release and its comments must be confirmed.
     var isPublished: Bool {
-        guard shorts.count == 2 else { return false }
+        guard shorts.count == expectedShortCount else { return false }
         let keys = ["essay.youtube", "essay.youtube.comment", "telegram.announcement"]
             + shorts.flatMap { short in
                 [short.id + ".youtube", short.id + ".youtube.comment"]
@@ -132,6 +147,7 @@ struct EssayShortVisualEvidence: Codable, Sendable, Equatable {
 }
 
 struct EssayShort: Codable, Sendable, Equatable, Identifiable {
+    enum Format: String, Codable, Sendable { case scene, montage }
     var id: String
     var angle: String
     var hook: String
@@ -151,10 +167,18 @@ struct EssayShort: Codable, Sendable, Equatable, Identifiable {
     var selectedSourceSegments: [TimeSegment]? = nil
     var captionEdits: [LongformCaptionEdit]? = nil
     var musicSettings: LongformAudioSettings? = nil
+    var editPlan: EssayShortEditPlan? = nil
+    var format: Format? = nil
+    var montagePlan: FilmMontagePlan? = nil
+    var isMontage: Bool { format == .montage }
     /// Source ranges deliberately added from the film transcript rather than copied from the essay.
     var manuallyAddedSegments: [TimeSegment]? = nil
-    static let currentRenderStyle = 2
+    static let currentRenderStyle = 4
     var renderStyleVersion: Int? = nil
+    var hasCurrentRenderStyle: Bool {
+        renderStyleVersion == Self.currentRenderStyle
+            && (!isMontage || montagePlan?.timingVersion == FilmMontagePlan.currentTimingVersion)
+    }
     var subtitlesEnabled: Bool? = nil
     var showsSubtitles: Bool { subtitlesEnabled ?? false }
     var duration: Double { segments.reduce(0) { $0 + $1.duration } }
@@ -172,8 +196,9 @@ struct EssayShort: Codable, Sendable, Equatable, Identifiable {
                 + (release.essayYouTubeURL.map { "\n" + $0 } ?? "")
         }
         let discussion = telegramURL.map { "\nОбговорення: " + $0 } ?? ""
+        let musicCredit = musicSettings?.musicUsageTerms.map { "\n\nМузика: " + $0 } ?? ""
         return PostVariant(platform: platform, hook: title,
-            summary: "«\(movieTitle)» — \(angle)\n\n\(question)\n\n\(destination)\(discussion)",
+            summary: "«\(movieTitle)» — \(angle)\n\n\(question)\n\n\(destination)\(discussion)\(musicCredit)",
             hashtags: [movieTitle, "Кіноесе", "УкраїнськийДубляж", platform == .youtube ? "Shorts" : "КіноТікТок"]
                 .compactMap { LongformMetadataGenerator.hashtag($0).map { String($0.dropFirst()) } },
             pinnedComment: destination + discussion)

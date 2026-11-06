@@ -105,7 +105,8 @@ enum EssaySemanticSelection {
         - одна сцена hook з номерів [\(numbers(.hook))];
         - одна сцена catharsis з номерів [\(numbers(.catharsis))];
         - ще одна сцена іншої ролі. Усього 3–4 різні номери.
-        Номери — саме SCENE нижче, не ID каталогу і не таймкоди.
+        Номери — саме SCENE нижче, не ID каталогу, не L і не таймкоди.
+        L — лише позначка репліки. У evidence.scene поверни ціле число SCENE; приклад форми: {"scene":1}.
         """
         return header + requirements + "\n" + blocks.joined(separator: "\n\n")
     }
@@ -115,11 +116,11 @@ enum EssaySemanticSelection {
         guard let json = JSONVariantParser.extractJSONObject(from: raw), let data = json.data(using: .utf8),
               let decision = try? JSONDecoder().decode(Decision.self, from: data),
               !decision.reason.trimmed.isEmpty else {
-            throw ThematicDiscoveryError.noGroundedTheme("редактор не вернул полный ответ по теме и хуку")
+            throw EssaySemanticReviewFailure(detail: "Ответ редактора не соответствует JSON-схеме: нужны verdict, reason и ссылки evidence на номера SCENE.")
         }
         guard decision.verdict == "direct" else {
             guard decision.verdict == "strained" else {
-                throw ThematicDiscoveryError.noGroundedTheme("неизвестный вердикт смысловой проверки")
+                throw EssaySemanticReviewFailure(detail: "неизвестный вердикт смысловой проверки")
             }
             let preferred = decision.preferredTheme.flatMap { word in
                 candidates.first { key($0.word) == key(word) && key(word) != key(analysis.primaryConcept.word) }?.word
@@ -129,23 +130,39 @@ enum EssaySemanticSelection {
         guard decision.preferredTheme == nil || key(decision.preferredTheme ?? "") == key(analysis.primaryConcept.word),
               validText(decision.hook, limit: 160), validText(decision.hookReason, limit: 400),
               validText(decision.title, limit: 100), decision.title.split(whereSeparator: \.isWhitespace).count >= 3 else {
-            throw ThematicDiscoveryError.noGroundedTheme("редактор не определил один согласованный хук и название")
+            throw EssaySemanticReviewFailure(detail: "редактор не определил один согласованный хук и название")
         }
         let evidence: [EssaySemanticProof.Evidence] = try decision.evidence.map { entry in
-            guard (1...analysis.selectedMoments.count).contains(entry.scene) else {
-                throw ThematicDiscoveryError.noGroundedTheme("редактор выбрал отсутствующую сцену")
+            let sceneNumber: Int
+            if let lineID = entry.line {
+                guard transcript.segments.indices.contains(lineID),
+                      presentedLineIDs?.contains(lineID) == true else {
+                    throw EssaySemanticReviewFailure(detail: "Ссылка L\(lineID) не была показана редактору. В evidence.scene нужны номера SCENE, а не L.")
+                }
+                let line = transcript.segments[lineID]
+                let matches = analysis.selectedMoments.indices.filter {
+                    line.start < analysis.selectedMoments[$0].endTime && line.end > analysis.selectedMoments[$0].startTime
+                }
+                guard matches.count == 1, let index = matches.first else {
+                    throw EssaySemanticReviewFailure(detail: "Реплика L\(lineID) не задаёт одну выбранную сцену. Укажи номер SCENE.")
+                }
+                sceneNumber = index + 1
+            } else { sceneNumber = entry.scene }
+            guard (1...analysis.selectedMoments.count).contains(sceneNumber) else {
+                throw EssaySemanticReviewFailure(detail: "редактор выбрал отсутствующую сцену")
             }
-            let scene = analysis.selectedMoments[entry.scene - 1]
+            let scene = analysis.selectedMoments[sceneNumber - 1]
             guard let index = transcript.segments.indices.first(where: { index in
                 let line = transcript.segments[index]
-                return line.start < scene.endTime && line.end > scene.startTime
+                return (entry.line == nil || entry.line == index)
+                    && line.start < scene.endTime && line.end > scene.startTime
                     && (presentedLineIDs?.contains(index) ?? true)
                     && normalize(line.text).split(separator: " ").count >= 3
                     && normalize(line.text).count >= 12
             }) else {
-                throw ThematicDiscoveryError.noGroundedTheme("в выбранной сцене нет показанной исходной реплики")
+                throw EssaySemanticReviewFailure(detail: "в выбранной сцене нет показанной исходной реплики")
             }
-            return EssaySemanticProof.Evidence(scene: entry.scene, quote: transcript.segments[index].text, line: index)
+            return EssaySemanticProof.Evidence(scene: sceneNumber, quote: transcript.segments[index].text, line: index)
         }
         let proof = EssaySemanticProof(version: EssaySemanticProof.currentVersion,
             theme: analysis.primaryConcept.word, reason: String(decision.reason.prefix(400)),
@@ -264,16 +281,21 @@ enum EssaySemanticSelection {
         let hookReason: String
         struct Reference: Decodable {
             let scene: Int
+            let line: Int?
             private enum CodingKeys: String, CodingKey { case scene }
             init(from decoder: Decoder) throws {
                 let values = try decoder.container(keyedBy: CodingKeys.self)
-                if let number = try? values.decode(Int.self, forKey: .scene) { scene = number; return }
+                if let number = try? values.decode(Int.self, forKey: .scene) { scene = number; line = nil; return }
                 let raw = try values.decode(String.self, forKey: .scene).trimmed.uppercased()
+                if raw.hasPrefix("L"), let number = Int(raw.dropFirst()), number >= 0 {
+                    scene = 0; line = number; return
+                }
                 let digits = raw.hasPrefix("SCENE ") ? String(raw.dropFirst(6)).trimmed : raw
                 guard !digits.isEmpty, digits.allSatisfy({ $0.isNumber }), let number = Int(digits) else {
                     throw DecodingError.dataCorruptedError(forKey: .scene, in: values, debugDescription: "Unknown scene reference")
                 }
                 scene = number
+                line = nil
             }
         }
         let evidence: [Reference]

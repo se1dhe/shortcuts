@@ -8,13 +8,13 @@ import Foundation
 @Suite("EssayDurationPolicy")
 struct EssayDurationPolicyTests {
 
-    @Test("any request is clamped into the corridor")
+    @Test("requests preserve long durations and respect the minimum")
     func clampsIntoCorridor() {
-        #expect(EssayDurationPolicy.clamp(660) == 480)     // старый проект просил 11 минут
+        #expect(EssayDurationPolicy.clamp(660) == 660)     // длительность старого проекта сохраняется
         #expect(EssayDurationPolicy.clamp(120) == 240)     // меньше четырёх не бывает
         #expect(EssayDurationPolicy.clamp(300) == 300)
         #expect(EssayDurationPolicy.clamp(0) == 240)
-        #expect(EssayDurationPolicy.clamp(100_000) == 480)
+        #expect(EssayDurationPolicy.clamp(100_000) == 100_000)
     }
 
     /// Тема с бедным пулом даёт нижнюю границу, тема с богатым — верхнюю: это и
@@ -45,18 +45,21 @@ struct EssayDurationPolicyTests {
         let budget = EssayDurationPolicy.contentBudget(renderedTarget: 480, scenes: scenes)
         #expect(budget == 480 - EssayDurationPolicy.fixedPadding
                         - Double(scenes - 1) * EssayDurationPolicy.intraActGap)
-        // Цель клампится до чтения: просьба про 11 минут не расширяет бюджет.
+        // Длинная цель сохраняет весь бюджет материала.
         #expect(EssayDurationPolicy.contentBudget(renderedTarget: 660, scenes: scenes)
-                == EssayDurationPolicy.contentBudget(renderedTarget: 480, scenes: scenes))
+                == 660 - EssayDurationPolicy.fixedPadding - Double(scenes - 1) * EssayDurationPolicy.intraActGap)
         #expect(EssayDurationPolicy.contentBudget(renderedTarget: 240, scenes: 1) == 240 - EssayDurationPolicy.fixedPadding)
         // Просьба ниже коридора всё равно читается как коридор: бюджет не обнуляется.
         #expect(EssayDurationPolicy.contentBudget(renderedTarget: 0, scenes: 5)
                 == EssayDurationPolicy.contentBudget(renderedTarget: 240, scenes: 5))
     }
 
-    @Test("the corridor is exactly four to eight minutes")
+    @Test("four-minute minimum has no upper duration limit")
     func corridorIsFourToEight() {
-        #expect(EssayDurationPolicy.rendered == 240...480)
+        #expect(EssayDurationPolicy.rendered.lowerBound == 240)
+        #expect(EssayDurationPolicy.rendered.contains(3_600))
+        #expect(EssayDurationPolicy.corridorViolation(estimate: 3_600) == nil)
+        #expect(EssayDurationPolicy.corridorViolation(estimate: .infinity) != nil)
         #expect(EssayDurationPolicy.sceneLength == 18...40)
         #expect(EssayDurationPolicy.pool == 14...22)
         #expect(EssayDurationPolicy.rendered.contains(EssayDurationPolicy.defaultRenderedTarget))
@@ -79,7 +82,7 @@ struct EssayDurationPolicyTests {
         #expect(stage2.contains("14-22"))
         #expect(stage2.contains("18-40"))
         #expect(stage2.contains("310-590"))
-        #expect(stage2.contains("4-8"))
+        #expect(stage2.contains("без верхньої межі"))
         #expect(stage1.contains("П'ЯТЬ"))
         #expect(DirectorStagedAnalysis.stage1MaxTokens < DirectorStagedAnalysis.stage2MaxTokens)
     }

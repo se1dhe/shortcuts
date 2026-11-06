@@ -128,12 +128,13 @@ final class LongformThumbnailCandidateSelector: Sendable {
         generator.requestedTimeToleranceBefore = CMTime(seconds: 0.3, preferredTimescale: 600)
         generator.requestedTimeToleranceAfter = CMTime(seconds: 0.3, preferredTimescale: 600)
         var candidates: [ThumbnailCandidateFrame] = []
+        var cpuDetector = false
         for time in times {
             try Task.checkCancellation()
             guard let (image, actualTime) = try? await generator.image(at: CMTime(seconds: time, preferredTimescale: 600)) else { continue }
             let luminance = calculateAverageLuminance(of: image)
             guard (0.08...0.88).contains(luminance) else { continue }
-            let (face, count) = detectFaces(in: image)
+            let (face, count) = try detectFaces(in: image, cpuDetector: &cpuDetector)
             guard count == 1, let face, face.width * face.height >= 0.015 else { continue }
             let score = scoreCandidate(time: time, luminance: luminance, bestFaceBox: face,
                                        faceCount: count, candidateTimes: times)
@@ -167,10 +168,17 @@ final class LongformThumbnailCandidateSelector: Sendable {
     }
 
     /// Детекция лиц через Apple Vision Framework
-    private func detectFaces(in cgImage: CGImage) -> (bestFaceBox: CGRect?, faceCount: Int) {
+    private func detectFaces(in cgImage: CGImage, cpuDetector: inout Bool) throws -> (bestFaceBox: CGRect?, faceCount: Int) {
         let request = VNDetectFaceRectanglesRequest()
+        if cpuDetector { request.revision = VNDetectFaceRectanglesRequestRevision1; request.usesCPUOnly = true }
         let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-        try? handler.perform([request])
+        do { try handler.perform([request]) }
+        catch {
+            DirectorRunLog.write("cover GPU face detector unavailable; retrying CPU: " + error.localizedDescription)
+            cpuDetector = true
+            request.revision = VNDetectFaceRectanglesRequestRevision1; request.usesCPUOnly = true
+            try handler.perform([request])
+        }
 
         let faces = request.results ?? []
         guard !faces.isEmpty else { return (nil, 0) }
@@ -338,7 +346,9 @@ final class LongformThumbnailComposer: Sendable {
         context.setFillColor(Self.obsidian.cgColor); context.fill(bounds)
         context.interpolationQuality = .high
         context.draw(candidate.image, in: imageRect)
-        let textOnLeft = (candidate.faceBox?.midX ?? 0.68) >= 0.5
+        let faceCentre = imageRect.minX + (candidate.faceBox?.midX ?? 0.68) * imageRect.width
+        let textOnLeft = faceCentre >= renderSize.width * 0.5
+        let foreground = Self.foregroundSubject(from: candidate.image)
         if let gradient = CGGradient(colorsSpace: space, colors: [Self.obsidian.cgColor,
             Self.obsidian.withAlphaComponent(0.9).cgColor, Self.obsidian.withAlphaComponent(0).cgColor] as CFArray,
             locations: [0, 0.48, 1]) {
@@ -353,7 +363,19 @@ final class LongformThumbnailComposer: Sendable {
         let cleanedTitle = ThematicConcept.cleanTitle(concept.coverText ?? concept.displayWord)
         let heading = cleanedTitle.isEmpty ? concept.displayWord : cleanedTitle
         let words = heading.uppercased().split(whereSeparator: \.isWhitespace).map(String.init)
-        if words.count == 2 {
+        if foreground == nil {
+            // When system segmentation is unavailable, the old depth design
+            // painted its large word straight over the actor's eyes. Keep a
+            // readable compact heading on the opposite side instead.
+            let width = renderSize.width * 0.43
+            let rect = CGRect(x: textOnLeft ? renderSize.width * 0.05 : renderSize.width * 0.95 - width,
+                y: renderSize.height * 0.43, width: width, height: renderSize.height * 0.43)
+            drawFitted(heading.uppercased(), in: rect, maxSize: 148 * k, minSize: 68 * k,
+                color: Self.ivory, serif: false, tracking: 0)
+            drawFitted(movieTitle.uppercased(), in: CGRect(x: rect.minX, y: renderSize.height * 0.30,
+                width: width, height: 64 * k), maxSize: 36 * k, minSize: 22 * k,
+                color: Self.ivory, serif: false, tracking: 1)
+        } else if words.count == 2 {
             let firstWidth = renderSize.width * 0.42
             let firstX = textOnLeft ? renderSize.width * 0.055 : renderSize.width * 0.525
             let firstWordRect = CGRect(x: firstX, y: renderSize.height * 0.68,
@@ -379,7 +401,7 @@ final class LongformThumbnailComposer: Sendable {
         }
         // Draw the aligned foreground last: a selected lower-centered portrait
         // lets the subject overlap only the edge of the slogan for real depth.
-        if let foreground = Self.foregroundSubject(from: candidate.image) {
+        if let foreground {
             context.interpolationQuality = .high
             context.draw(foreground, in: imageRect)
         }
@@ -532,13 +554,16 @@ final class LongformThumbnailGenerator: LongformThumbnailGeneratingProtocol, Sen
     private let composer: LongformThumbnailComposer
     private let exporter: LongformThumbnailExporter
     private let verifier: ThumbnailSubjectVerifier?
+    private let beforeSelection: (@Sendable () async -> Void)?
 
     init(candidateSelector: LongformThumbnailCandidateSelector = LongformThumbnailCandidateSelector(),
          composer: LongformThumbnailComposer = LongformThumbnailComposer(),
          exporter: LongformThumbnailExporter = LongformThumbnailExporter(),
-         verifier: ThumbnailSubjectVerifier? = nil) {
+         verifier: ThumbnailSubjectVerifier? = nil,
+         beforeSelection: (@Sendable () async -> Void)? = nil) {
         self.candidateSelector = candidateSelector; self.composer = composer
         self.exporter = exporter; self.verifier = verifier
+        self.beforeSelection = beforeSelection
     }
 
     func generateThumbnail(sourceAsset: AVURLAsset, segments: [TimeSegment], concept: ThematicConcept,
@@ -562,6 +587,8 @@ final class LongformThumbnailGenerator: LongformThumbnailGeneratingProtocol, Sen
     private func generateReviewedThumbnail(sourceAsset: AVURLAsset, segments: [TimeSegment], concept: ThematicConcept,
         movieTitle: String, outputURL: URL, avoidingTimes: [Double]) async throws -> ReviewedThumbnail {
         guard let verifier else { throw ThumbnailSelectionError.visionUnavailable }
+        await beforeSelection?()
+        try Task.checkCancellation()
         let candidates = try await candidateSelector.rankedCandidates(sourceAsset: sourceAsset, segments: segments)
         var (candidate, evidence) = try await verifier.select(
             from: candidates, movieTitle: movieTitle, avoidingTimes: avoidingTimes)

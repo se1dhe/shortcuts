@@ -13,6 +13,7 @@ final class AppSettings {
         var displayName: String { self == .gemma12B ? "Gemma 4 12B" : "Qwen 3.5 9B" }
         var directorProfile: ChatModelProfile { self == .gemma12B ? .gemma12B : .qwen35_9b }
     }
+    var tiktokTargetHandle: String { didSet { defaults.set(tiktokTargetHandle, forKey: "shortcast.tiktokTargetHandle") } }
     var tmdbAPIKey: String { didSet { defaults.set(tmdbAPIKey, forKey: Keys.tmdbApiKey) } }
     var telegramBotToken: String { didSet { defaults.set(telegramBotToken, forKey: Keys.telegramBotToken) } }
     var telegramChannelId: String { didSet { defaults.set(telegramChannelId, forKey: Keys.telegramChannelId) } }
@@ -93,6 +94,7 @@ final class AppSettings {
     private let defaults: UserDefaults
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        self.tiktokTargetHandle = defaults.string(forKey: "shortcast.tiktokTargetHandle") ?? ""
         self.tmdbAPIKey = defaults.string(forKey: Keys.tmdbApiKey) ?? ""
         self.telegramBotToken = defaults.string(forKey: Keys.telegramBotToken) ?? ""
         self.telegramChannelId = defaults.string(forKey: Keys.telegramChannelId) ?? "@telonyx_club"

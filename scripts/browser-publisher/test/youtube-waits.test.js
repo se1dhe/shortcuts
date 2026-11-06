@@ -225,3 +225,22 @@ test('Studio final progress footer confirms checks with the actual Russian no-im
   assert.equal(status.contentIssue, false);
   assert.equal(classifyYouTubeStatus({ progressText: 'Проверка завершена.', checksText: 'Checking' }).checksComplete, false);
 });
+
+
+test('localized no-violation revenue notices proceed through the final gate', async () => {
+  for (const checksText of [
+    'Авторские права. На контент заявлены права. Это может повлиять на монетизацию. Правила сообщества. Нарушений не найдено.',
+    'Copyright claim. This may affect your revenue. Community Guidelines. No issues found.',
+    'На контент заявлены права. Заявки не влияют на ваше видео. Нарушений не обнаружено.',
+    'Виявлено авторські права. Це може вплинути на ваш дохід. Порушень не виявлено.',
+  ]) {
+    const snapshot = { progressText: 'Upload complete', checksText };
+    const checked = await waitForYouTubePhase({}, 'checks', { ...clock(), read: async () => snapshot });
+    assert.equal(checked.harmlessClaim, true, checksText);
+    assert.doesNotThrow(() => requireReadyToPublish({ uploadComplete: true }, checked, snapshot));
+    assert.throws(() => requireReadyToPublish({ uploadComplete: true }, checked, { checksText: checksText + ' Video is blocked worldwide.' }));
+    assert.throws(() => requireReadyToPublish({ uploadComplete: true }, checked, { checksText: 'Copyright claim. Community Guidelines violations found.' }));
+  }
+  const unknown = classifyYouTubeStatus({ checksText: 'Checks complete. Copyright claim. This may affect your revenue.' });
+  assert.equal(unknown.contentIssue, true);
+});

@@ -41,6 +41,7 @@ struct BrowserUploadJob: Sendable, Codable, Equatable {
     var action: String? = nil
     var targetVideoURL: String? = nil
     var pinnedComment: String? = nil
+    var expectedTikTokHandle: String? = nil
 
     init(
         videoURL: URL,
@@ -79,10 +80,12 @@ struct BrowserUploadJob: Sendable, Codable, Equatable {
 struct BrowserAuthStatus: Sendable, Codable, Equatable {
     var tiktok: Bool
     var youtube: Bool
+    var tiktokHandle: String? = nil
 
-    init(tiktok: Bool = false, youtube: Bool = false) {
+    init(tiktok: Bool = false, youtube: Bool = false, tiktokHandle: String? = nil) {
         self.tiktok = tiktok
         self.youtube = youtube
+        self.tiktokHandle = tiktokHandle
     }
 
     var hasAnyConnected: Bool {

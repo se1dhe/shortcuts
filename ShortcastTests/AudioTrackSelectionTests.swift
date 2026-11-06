@@ -155,6 +155,37 @@ private enum CleanupSaveFailure: Error { case refused }
 
 @Suite("MKV source cleanup")
 struct MKVSourceCleanupTests {
+    @Test("A shorter original audio track does not fail at the video tail, but truncated replacement audio does")
+    func audioTimelineIsIndependentOfVideoTail() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ffmpeg = URL(fileURLWithPath: "/opt/homebrew/bin/ffmpeg")
+        let source = root.appendingPathComponent("source.mkv")
+        let generated = try await ProcessRunner.shared.run(executableURL: ffmpeg, arguments: [
+            "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=12",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=8",
+            "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", source.path])
+        #expect(generated.isSuccess)
+        let output = try await MediaExtractor.normalizeInputIfNeeded(from: source, workingDirectory: root, selectedAudioStreamIndex: 1)
+        let project = FilmProject(sourceMovieURL: source, movieFileName: "source", movieTitle: "Film", durationSeconds: 12)
+        let broken = root.appendingPathComponent("truncated-audio.mp4")
+        let cut = try await ProcessRunner.shared.run(executableURL: ffmpeg, arguments: [
+            "-v", "error", "-i", output.path, "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=2",
+            "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", broken.path])
+        #expect(cut.isSuccess)
+        await #expect(throws: (any Error).self) {
+            try await MediaExtractor.finishMKVImport(project: project, sourceURL: source, originalURL: nil,
+                outputURL: broken, workingDirectory: root, selectedAudioStreamIndex: 1,
+                save: { _ in Issue.record("Truncated audio must never authorize source deletion") })
+        }
+        #expect(FileManager.default.fileExists(atPath: source.path))
+        let adopted = try await MediaExtractor.finishMKVImport(project: project, sourceURL: source, originalURL: nil,
+            outputURL: output, workingDirectory: root, selectedAudioStreamIndex: 1, save: { _ in })
+        #expect(adopted.sourceMovieURL == output)
+        #expect(!FileManager.default.fileExists(atPath: source.path))
+    }
+
     @Test("Only a verified MP4 with a persisted project allows removal of both MKV copies")
     func verifiesCommitsThenDeletes() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

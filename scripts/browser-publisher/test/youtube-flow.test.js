@@ -9,9 +9,9 @@ import { uploadToYouTube } from '../src/youtube.js';
 // are still transferring, just as the real UI can. The uploader must enforce
 // its own gates and must not close or publish after only a preview link.
 class Studio {
-  constructor({ claim = false, neverSaveDescription = false } = {}) {
+  constructor({ claim = false, claimNotice = null, neverSaveDescription = false } = {}) {
     this.step = 'picker'; this.title = 'filename.mp4'; this.description = '';
-    this.time = 0; this.sent = false; this.claim = claim;
+    this.time = 0; this.sent = false; this.claim = claim; this.claimNotice = claimNotice;
     this.neverSaveDescription = neverSaveDescription; this.events = [];
   }
   locator(selector) { return new Element(this, selector); }
@@ -33,7 +33,7 @@ class Studio {
     return {
       progressText: this.time < 12000 ? 'Uploading 5%' : this.time < 16000 ? 'Uploading 98%' : 'Upload complete',
       checksText: this.step === 'checks'
-        ? (this.claim ? 'Checks complete. Copyright-protected content found' : this.time < 22000 ? 'Checking' : 'Checks complete. No issues found')
+        ? (this.claim ? 'Checks complete. Copyright-protected content found' : this.time < 22000 ? 'Checking' : this.claimNotice || 'Checks complete. No issues found')
         : '',
       errorText: '',
     };
@@ -131,6 +131,16 @@ test('Shorts receive their prepared vertical thumbnail and a single Shorts hasht
     assert.equal(studio.thumbnail, job.thumbnailPath);
     assert.equal((studio.title.match(/#Shorts/g) || []).length, 1);
     assert.equal((studio.description.match(/#Shorts/g) || []).length, 1);
+    assert.equal(studio.sent, true);
+  });
+});
+
+
+test('a no-violation monetization notice completes the whole upload pipeline', async () => {
+  await withFiles(async job => {
+    const studio = new Studio({ claimNotice: 'На контент заявлены права. Это может повлиять на монетизацию. Нарушений не найдено.' });
+    await uploadToYouTube(studio, job);
+    assert.deepEqual(studio.events, ['file', 'elements', 'checks', 'visibility', 'publish']);
     assert.equal(studio.sent, true);
   });
 });

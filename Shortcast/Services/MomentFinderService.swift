@@ -402,7 +402,10 @@ final class MomentFinderService {
         params.maxKVSize = s.maxKVSize ?? Self.unboundedKVTokenBudget
         params.kvBits = s.kvBits
 
-        let reviewedOverview = overview + (feedback.map {
+        let history = LongformHistoryService.shared
+        if let projects = try? await FilmProjectService.shared.listRecentProjects() { history.importHistory(from: projects) }
+        let excludedThemes = history.excludedThemes(movieTitle: movieTitle)
+        let reviewedOverview = overview + "\n" + history.discoveryGuidance(movieTitle: movieTitle) + (feedback.map {
             "\nРедактор відхилив попередній набір: " + String($0.prefix(600))
             + "\nЗнайди нові, точніші літературні назви центрального конфлікту."
         } ?? "")
@@ -445,11 +448,22 @@ final class MomentFinderService {
                 // Дамп пишется ДО вердикта полноты: оборванный ответ — это главный
                 // документ для форензики, раньше он терялся вместе с попыткой.
                 DirectorRunLog.dumpRaw(reply.text, stage: "candidates", attempt: attempt)
-                guard reply.completeness.isAcceptable else {
-                    Self.log("stage=candidates attempt \(attempt): обірвана відповідь, не парсим")
+                guard !reply.hitTokenCap, reply.stopReason != "cancelled" else {
+                    rejectionNote = "Відповідь досягла ліміту. Скороти поля tagline, why і title; заверши всі п'ять записів та JSON."
+                    Self.log("stage=candidates attempt \(attempt): генерацію зупинено до завершення, повторюємо коротший список")
                     continue
                 }
                 let parsed = LongformThematicService.parseThemeCandidates(from: reply.text)
+                guard !parsed.isEmpty else {
+                    rejectionNote = "Масив candidates не завершений або не містить повних об'єктів із word, tagline, why, title. Пиши поля всередині одного об'єкта кандидата, закрий масив ] та об'єкт }."
+                    lastError = ThematicDiscoveryError.unparseableOutput("не получены полные записи кандидатов")
+                    Self.log("stage=candidates attempt \(attempt): немає завершених записів кандидатів; повторюємо з конкретною причиною")
+                    continue
+                }
+                lastError = nil
+                if !reply.completeness.isAcceptable {
+                    Self.log("stage=candidates attempt \(attempt): зовнішня обгортка не закрита; з завершеного масиву прочитано \(parsed.count) повних кандидатів")
+                }
                 var accepted: [ThematicConcept] = []
                 var seen = Set<String>()
                 for concept in parsed {
@@ -466,9 +480,15 @@ final class MomentFinderService {
                         Self.log("stage=candidates: «\(concept.word)» відхилено (\(code.rawValue)): \(reason)")
                     }
                 }
-                if !accepted.isEmpty {
-                    Self.log("stage=candidates attempt \(attempt): гейт пропустив \(accepted.count)/\(parsed.count): \(accepted.map(\.word).joined(separator: ", "))")
-                    return accepted
+                let fresh = accepted.filter { !excludedThemes.contains(LongformHistoryService.themeKey($0.word)) }
+                if fresh.count != accepted.count {
+                    let repeats = accepted.filter { excludedThemes.contains(LongformHistoryService.themeKey($0.word)) }.map(\.word)
+                    rejectionNote = "Не повторюй уже запропоновані теми цього фільму: " + repeats.joined(separator: ", ")
+                    Self.log("stage=candidates: omitted previously offered themes: " + repeats.joined(separator: ", "))
+                }
+                if !fresh.isEmpty {
+                    Self.log("stage=candidates attempt \(attempt): гейт пропустив \(fresh.count)/\(parsed.count): \(fresh.map(\.word).joined(separator: ", "))")
+                    return fresh
                 }
                 Self.log("stage=candidates attempt \(attempt): жоден з \(parsed.count) кандидатів не пройшов гейт")
             } catch {
@@ -476,7 +496,7 @@ final class MomentFinderService {
                 Self.log("stage=candidates attempt \(attempt) failed: \(error.localizedDescription)")
             }
         }
-        if let reply = lastReply, reply.completeness == .truncated {
+        if let reply = lastReply, reply.hitTokenCap {
             throw ThematicDiscoveryError.replyTruncated(
                 tokens: reply.generatedTokens, cap: reply.maxTokens)
         }
@@ -559,7 +579,7 @@ final class MomentFinderService {
         for attempt in 1...Self.essayPlanAttempts {
             var prompt = attempt == 1
                 ? userPrompt
-                : userPrompt + (winner.format == .analytical ? DirectorStagedAnalysis.essayRetryNote : "\nВиправ попередню помилку. Повний JSON, 8–22 унікальні ID, рівно один hook, щонайменше одна сцена downfall, struggle, catharsis; 4–8 хвилин. Не додавай ролей аналітичного есе.")
+                : userPrompt + (winner.format == .analytical ? DirectorStagedAnalysis.essayRetryNote : "\nВиправ попередню помилку. Повний JSON, 8–22 унікальні ID, рівно один hook, щонайменше одна сцена downfall, struggle, catharsis; щонайменше 4 хвилини, без верхньої межі. Не додавай ролей аналітичного есе.")
             if attempt > 1, let previousSceneContext {
                 prompt += "\n" + previousSceneContext
             }
@@ -588,14 +608,18 @@ final class MomentFinderService {
                     do {
                         decoded = try LongformThematicService.decodeCatalogueAnalysis(from: raw, catalogue: presentedCatalogue)
                     } catch {
-                        selectionFailure = error.localizedDescription
-                        gateRejection = error.localizedDescription
-                        let rejectedSelection = Self.essaySceneRetryContext(from: raw)
-                        if !rejectedSelection.isEmpty {
-                            previousSceneContext = rejectedSelection
+                        if let repaired = try await repairCatalogueSelection(raw, catalogue: presentedCatalogue, format: winner.format) {
+                            decoded = repaired
+                        } else {
+                            selectionFailure = error.localizedDescription
+                            gateRejection = error.localizedDescription
+                            let rejectedSelection = Self.essaySceneRetryContext(from: raw)
+                            if !rejectedSelection.isEmpty {
+                                previousSceneContext = rejectedSelection
+                            }
+                            Self.log("stage=essay attempt \(attempt): selection rejected — \(error.localizedDescription)")
+                            continue
                         }
-                        Self.log("stage=essay attempt \(attempt): selection rejected — \(error.localizedDescription)")
-                        continue
                     }
                 } else {
                     decoded = LongformThematicService.parseThematicAnalysis(from: raw)
@@ -714,6 +738,49 @@ final class MomentFinderService {
     /// Стримим `streamDetails`, а не `streamResponse(to:)`: только в `Generation`
     /// есть `.info` со счётчиками токенов и причиной остановки. Без них «ответ не
     /// обрезан» было мнением — теперь это число в director.log.
+    func repairCatalogueSelection(_ raw: String, catalogue: EssaySceneCatalogue, format: EssayFormat = .analytical) async throws -> ThematicAnalysisResult? {
+        guard let repair = try catalogue.repairNeeded(from: raw, format: format) else { return nil }
+        let instructions = """
+        Виправ лише помилкові рядки вибору сцен або додай зазначені відсутні рядки.
+        Прийняті рядки, тему, тезу та структуру не змінюй.
+        Обери справжню сцену з ДОСТУПНИХ НЕВИКОРИСТАНИХ СЦЕН за змістом ролі й теми.
+        candidate — ЦІЛИЙ номер C із цього окремого списку. Програма сама підставить точний ID S.
+        Заборонені вигадані суфікси _alt, _2, нові таймкоди та повтор ID.
+        Кожен index — номер рядка від 1 з переліку помилок, role збережи.
+        Лише JSON: {"replacements":[{"index":7,"candidate":1,"role":"psychology",
+        "weight":0.8,"featured":false,"explanation":"що саме доводять репліки цієї сцени"}]}
+        """
+        var feedback = ""
+        for attempt in 1...2 {
+            try Task.checkCancellation()
+            let prompt = repair.prompt + feedback
+            let budget = profile.sampling.maxKVSize ?? Self.unboundedKVTokenBudget
+            guard Self.estimatedTokens(of: instructions + prompt) + 1536 <= budget else {
+                Self.log("scene repair skipped: source catalogue exceeds context budget")
+                return nil
+            }
+            var parameters = GenerateParameters(maxTokens: 1536, temperature: 0.25,
+                topP: profile.sampling.topP, topK: profile.sampling.topK,
+                repetitionPenalty: profile.sampling.repetitionPenalty)
+            parameters.maxKVSize = budget; parameters.kvBits = profile.sampling.kvBits
+            Self.log("Исправляю \(repair.indices.count) ошибочных строк сцен; остальные сцены сохранены.")
+            let reply = try await streamReply(instructions: instructions, prompt: prompt, parameters: parameters,
+                stage: "scene-repair", attempt: attempt)
+            DirectorRunLog.dumpRaw(reply.text, stage: "scene-repair", attempt: attempt)
+            guard reply.completeness.isAcceptable else { continue }
+            do {
+                let patched = try catalogue.applyingRepair(reply.text, to: repair)
+                let result = try LongformThematicService.decodeCatalogueAnalysis(from: patched, catalogue: catalogue)
+                Self.log("Точечное исправление сцен принято: заменено \(repair.indices.count) строк; исходные ID и роли проверены.")
+                return result
+            } catch {
+                feedback = "\nВиправ лише цей недолік replacements: " + error.localizedDescription
+                Self.log("scene repair rejected: " + error.localizedDescription)
+            }
+        }
+        return nil
+    }
+
     private func streamReply(
         instructions: String,
         prompt: String,
@@ -733,6 +800,11 @@ final class MomentFinderService {
             if let chunk = piece.chunk { text += chunk }
             if let received = piece.info { info = received }
         }
+        // The stream can finish before ChatSession releases its cache update.
+        // Drain that producer and GPU work before the next editorial pass
+        // creates another cache on the same loaded model.
+        await session.synchronize()
+        Stream().synchronize()
         let reply = DirectorReply(text: text, info: info, maxTokens: parameters.maxTokens)
         Self.log("stage=\(stage) attempt=\(attempt) chars=\(reply.text.count) \(reply.logLine)")
         return reply
@@ -788,8 +860,8 @@ final class MomentFinderService {
                     detail = reason
                 } else { detail = error.localizedDescription }
                 feedback = "\nВиправ лише формат або некоректне поле попередньої відповіді: "
-                    + String(detail.prefix(220))
-                    + ". Не відхиляй тему через помилку формату. Поверни повний JSON."
+                    + String(detail.prefix(400))
+                    + ". Не відхиляй тему через помилку формату. evidence.scene — лише цілі номери SCENE, ніколи L. Додай hook, catharsis та інший акт з обов’язкових номерів у запиті. Поверни повний JSON."
                 Self.log("Смысловая проверка · попытка \(attempt)/2: \(detail)" + (attempt < 2 ? " Предупреждение: уточняю ответ редактора; сцены сохраняются." : " Проверка остановлена; эссе не принято."))
             }
         }
@@ -826,33 +898,31 @@ final class MomentFinderService {
 
     /// Сырой ответ модели на произвольный промпт — для второго прохода по материалу актов,
     /// где парсер и повторы живёт в вызывающем сервисе. Возвращает `nil`, когда модель не
-    /// загружена или поток не дал ни одного куска: вызывающий трактует это как «нет LLM».
+    /// загружена, генерация не завершилась или ответ не содержит JSON-объекта.
+    /// Конкретная причина и сырой ответ сохраняются до возврата nil.
     func completeForActTitles(instructions: String, prompt: String, maxTokens: Int) async -> String? {
         guard let container else {
             Self.log("completeForActTitles: no model loaded — falling back to transcript-line titles")
             return nil
         }
-        let session = ChatSession(
-            container,
-            instructions: instructions,
-            generateParameters: GenerateParameters(
-                maxTokens: maxTokens,
-                temperature: 0.35,
-                topP: profile.sampling.topP,
-                topK: profile.sampling.topK,
-                minP: profile.sampling.minP,
-                repetitionPenalty: profile.sampling.repetitionPenalty),
-            additionalContext: ["enable_thinking": false])
-        var raw = ""
+        var parameters = GenerateParameters(maxTokens: maxTokens, temperature: 0.35,
+            topP: profile.sampling.topP, topK: profile.sampling.topK, minP: profile.sampling.minP,
+            repetitionPenalty: profile.sampling.repetitionPenalty)
+        parameters.maxKVSize = profile.sampling.maxKVSize ?? Self.unboundedKVTokenBudget
+        parameters.kvBits = profile.sampling.kvBits
         do {
-            for try await chunk in session.streamResponse(to: prompt) {
-                raw += chunk
+            let reply = try await streamReply(instructions: instructions, prompt: prompt, parameters: parameters,
+                stage: "editorial", attempt: 1)
+            DirectorRunLog.dumpRaw(reply.text, stage: "editorial-completion", attempt: 1)
+            if let reason = reply.rejectionReason {
+                Self.log("Редактор \(profile.displayName): \(reason). Ответ не принят; это не смысловой отказ. \(reply.logLine)")
+                return nil
             }
+            return reply.text
         } catch {
             Self.log("completeForActTitles stream failed: \(error.localizedDescription)")
-            return raw.trimmed.isEmpty ? nil : raw
+            return nil
         }
-        return raw.trimmed.isEmpty ? nil : raw
     }
 
     /// Той самий ключ порівняння тем, що й у гейта: trim + нижній регістр. Одна

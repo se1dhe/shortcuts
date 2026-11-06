@@ -134,7 +134,7 @@ struct EssayPostingView: View {
                         ForEach(release.shorts) { short in
                             if let url = release.receipts["\(short.id).youtube"]?.url {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Text(L10n.tr("%1$@: привязать полное эссе как «Связанное видео» в YouTube Studio", String(describing: short.id == "short1" ? L10n.tr("Шортс 1") : L10n.tr("Шортс 2")))).font(.caption.bold())
+                                    Text(L10n.tr("%1$@: привязать полное эссе как «Связанное видео» в YouTube Studio", String(describing: short.isMontage ? L10n.tr("Эдит 3") : (short.id == "short1" ? L10n.tr("Шортс 1") : L10n.tr("Шортс 2"))))).font(.caption.bold())
                                     Text(L10n.tr("Эта настройка требует расширенных функций канала. Приложение не отмечает её выполненной по одному факту загрузки.")).font(.caption).foregroundStyle(.secondary)
                                     if let address = URL(string: url) { Link(L10n.tr("Открыть опубликованный Short"), destination: address).foregroundStyle(StudioTheme.accent) }
                                     Toggle(L10n.tr("Связанное видео проверено в Studio"), isOn: Binding(get: {
@@ -215,7 +215,7 @@ struct EssayPostingView: View {
                     manualTikTokCard(short, index: index, release: release)
                 }
             } else {
-                Label(L10n.tr("Сначала подготовьте два шортса на шаге «Шортсы»."), systemImage: "film.stack")
+                Label(L10n.tr("Сначала подготовьте шортсы на шаге «Шортсы»."), systemImage: "film.stack")
                     .foregroundStyle(StudioTheme.muted).studioPanel()
             }
         }
@@ -408,7 +408,7 @@ struct EssayPostingView: View {
                 Text(L10n.tr("Один проект. Все материалы выпуска.")).font(.system(size: 17, weight: .semibold))
                 HStack(spacing: 18) {
                     Label(L10n.tr("Эссе 16:9"), systemImage: "checkmark.circle")
-                    Label(L10n.tr("Два шортса 9:16"), systemImage: release?.hasReadyShorts == true ? "checkmark.circle" : "clock")
+                    Label(L10n.tr(release?.includesMontage == true ? "Два шортса и музыкальный эдит 9:16" : "Два шортса 9:16"), systemImage: release?.hasReadyShorts == true ? "checkmark.circle" : "clock")
                     Label(L10n.tr("Обложки и тексты"), systemImage: "photo.on.rectangle")
                 }.font(.system(size: 12)).foregroundStyle(StudioTheme.accent)
                 Text(L10n.tr("YouTube → Telegram → Shorts. Ссылка на полное эссе добавится в публикации автоматически."))
@@ -500,12 +500,12 @@ struct EssayPostingView: View {
 
     private func targetTitle(_ key: String) -> String {
         if key.hasSuffix(".comment") {
-            return key.hasPrefix("essay.") ? L10n.tr("Эссе · Закреплённый комментарий") : L10n.tr("Шортс %1$@ · Закреплённый комментарий", String(describing: key.hasPrefix("short1.") ? "1" : "2"))
+            return key.hasPrefix("essay.") ? L10n.tr("Эссе · Закреплённый комментарий") : L10n.tr("Шортс %1$@ · Закреплённый комментарий", String(describing: key.hasPrefix("short1.") ? "1" : (key.hasPrefix("short3.") ? "3" : "2")))
         }
         if key == "essay.youtube" { return L10n.tr("Эссе · YouTube") }
         if key == "telegram.announcement" { return L10n.tr("Telegram · Анонс") }
         if key == "telegram.discussion" { return L10n.tr("Telegram · Обсуждение") }
-        let number = key.hasPrefix("short1.") ? "1" : "2"
+        let number = key.hasPrefix("short1.") ? "1" : (key.hasPrefix("short3.") ? "3" : "2")
         return L10n.tr("Шортс %1$@ · ", String(describing: number)) + (key.hasSuffix(".youtube") ? "YouTube Shorts" : "TikTok")
     }
 

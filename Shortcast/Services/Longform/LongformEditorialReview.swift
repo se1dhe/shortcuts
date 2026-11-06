@@ -306,7 +306,7 @@ struct LongformEditorialReview: Sendable {
         if let applied = apply(raw, to: arc, transcript: transcript, coldOpenEnabled: coldOpenEnabled) {
             return "Границы прошли техническую проверку, но замечания остаются: \((applied.editorialNotes ?? []).joined(separator: " | ")). Предложи другие допустимые варианты, чтобы устранить их."
         }
-        return "Выбранные диапазоны конфликтуют: не допускаются пересечения сцен и итоговая длительность эссе должна быть 4–8 минут. Пересчитай комбинацию вариантов; доступные варианты для каждой сцены перечислены в исходном запросе."
+        return "Выбранные диапазоны конфликтуют: не допускаются пересечения сцен и итоговая длительность эссе должна быть не менее 4 минут, без верхнего предела. Пересчитай комбинацию вариантов; доступные варианты для каждой сцены перечислены в исходном запросе."
     }
 
     private static func repairDirective(issue: String, raw: String, arc: LongformNarrativeArc,
@@ -510,7 +510,7 @@ struct LongformEditorialReview: Sendable {
 
     /// Диалоговый ASR не видит немые действия. В развязке оставляем до 6 с
     /// реального кадра после последней реплики, не заходя в следующую реплику,
-    /// другую выбранную сцену или за пределы 40 с / 8 минут.
+    /// другую выбранную сцену или за пределы 40 с на сцену.
     static func protectingActionTails(in arc: LongformNarrativeArc, transcript: Transcript,
                                       coldOpenEnabled: Bool) -> LongformNarrativeArc {
         var result = arc

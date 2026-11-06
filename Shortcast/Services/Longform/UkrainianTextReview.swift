@@ -11,12 +11,17 @@ enum UkrainianTextReview {
 
     static func suspiciousWords(in text: String) -> [String] {
         guard let language = NSSpellChecker.shared.availableLanguages.first(where: { $0.hasPrefix("uk") }) else { return [] }
+        // Document 0 is shared with the UI and can retain its automatic language
+        // selection. An isolated document prevents correct Ukrainian words from
+        // being checked against another editor's dictionary.
+        let document = NSSpellChecker.uniqueSpellDocumentTag()
+        defer { NSSpellChecker.shared.closeSpellDocument(withTag: document) }
         let input = text.lowercased() as NSString
         var cursor = 0
         var words: [String] = []
         while cursor < input.length && words.count < 6 {
             let range = NSSpellChecker.shared.checkSpelling(of: input as String, startingAt: cursor,
-                language: language, wrap: false, inSpellDocumentWithTag: 0, wordCount: nil)
+                language: language, wrap: false, inSpellDocumentWithTag: document, wordCount: nil)
             guard range.location != NSNotFound, range.length > 0 else { break }
             let word = input.substring(with: range)
             if !words.contains(word) { words.append(word) }

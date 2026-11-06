@@ -121,25 +121,25 @@ actor MovieMetadataService {
         if hasValidFileTitle {
             // Attempt 1: Search primary title with year
             if let candidates = try? await tmdbService.searchMovies(by: query.title, year: query.year, limit: 5),
-               let best = candidates.first {
+               let best = Self.matchingMovie(in: candidates, year: query.year) {
                 return await enrichMovieIdentity(movie: best)
             }
             // Attempt 2: Search original/alternate title with year
             if let orig = query.originalTitle, !orig.isEmpty, orig != query.title {
                 if let candidates = try? await tmdbService.searchMovies(by: orig, year: query.year, limit: 5),
-                   let best = candidates.first {
+                   let best = Self.matchingMovie(in: candidates, year: query.year) {
                     return await enrichMovieIdentity(movie: best)
                 }
             }
             // Attempt 3: Search primary title without year
             if query.year != nil {
                 if let candidates = try? await tmdbService.searchMovies(by: query.title, year: nil, limit: 5),
-                   let best = candidates.first {
+                   let best = Self.matchingMovie(in: candidates, year: query.year) {
                     return await enrichMovieIdentity(movie: best)
                 }
                 if let orig = query.originalTitle, !orig.isEmpty, orig != query.title {
                     if let candidates = try? await tmdbService.searchMovies(by: orig, year: nil, limit: 5),
-                       let best = candidates.first {
+                       let best = Self.matchingMovie(in: candidates, year: query.year) {
                         return await enrichMovieIdentity(movie: best)
                     }
                 }
@@ -188,6 +188,16 @@ actor MovieMetadataService {
         }
 
         return nil
+    }
+
+    nonisolated static func matchingMovie(in candidates: [TMDBMovie], year: String?) -> TMDBMovie? {
+        guard let year, !year.isEmpty else { return candidates.first }
+        return candidates.first { $0.year == year }
+    }
+
+    nonisolated static func conflictsWithFileYear(_ movie: MovieIdentity, filename: String) -> Bool {
+        guard let year = parseCandidate(filename).year else { return false }
+        return movie.year != year
     }
 
     // MARK: - Ratings Enrichment
@@ -286,7 +296,9 @@ actor MovieMetadataService {
         if let st = sourceTitle, !st.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let res = Self.parseCandidate(st)
             if !res.title.isEmpty && !Self.isGarbageTitle(res.title) {
-                return res
+                var query = res
+                if query.year == nil { query.year = Self.parseCandidate(filename).year }
+                return query
             }
         }
 
@@ -302,7 +314,10 @@ actor MovieMetadataService {
     }
 
     nonisolated static func parseCandidate(_ raw: String) -> ExtractedMovieQuery {
-        let noExt = (raw as NSString).deletingPathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+        // NFC keeps regex UTF-16 ranges consistent for decomposed names such as Léon.
+        let canonical = raw.precomposedStringWithCanonicalMapping
+            .replacingOccurrences(of: #"^shortcast-normalized-"#, with: "", options: .regularExpression)
+        let noExt = (canonical as NSString).deletingPathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
         if noExt.isEmpty { return ExtractedMovieQuery(title: "") }
 
         var detectedYear: String? = nil
@@ -317,12 +332,12 @@ actor MovieMetadataService {
 
             let startOfMatch = match.range.location
             if startOfMatch > 0 {
-                let preCharIndex = noExt.index(noExt.startIndex, offsetBy: max(0, startOfMatch - 1))
+                let preCharIndex = noExt.index(before: yearRange.lowerBound)
                 let preChar = noExt[preCharIndex]
                 if preChar == "(" || preChar == "[" {
                     workingString = String(noExt[..<preCharIndex])
                 } else {
-                    let cutIndex = noExt.index(noExt.startIndex, offsetBy: startOfMatch)
+                    let cutIndex = yearRange.lowerBound
                     workingString = String(noExt[..<cutIndex])
                 }
             }
@@ -330,8 +345,9 @@ actor MovieMetadataService {
             // Cut before rip tags if year wasn't present
             let ripPattern = #"(?i)\b(\d{3,4}[xX*]\d{3,4}|2160p|1080p|1080i|720p|576p|480p|4k|uhd|bdrip|bluray|blu-ray|webrip|web-dl|webdl|dvdrip|hdtv|remux|x264|x265|hevc|avc|imax|rusengsubschpt|subschpt)\b"#
             if let regex = try? NSRegularExpression(pattern: ripPattern),
-               let match = regex.firstMatch(in: workingString, range: NSRange(workingString.startIndex..., in: workingString)) {
-                let cutIndex = workingString.index(workingString.startIndex, offsetBy: match.range.location)
+               let match = regex.firstMatch(in: workingString, range: NSRange(workingString.startIndex..., in: workingString)),
+               let range = Range(match.range, in: workingString) {
+                let cutIndex = range.lowerBound
                 workingString = String(workingString[..<cutIndex])
             }
         }

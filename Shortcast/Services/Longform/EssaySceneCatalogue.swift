@@ -47,6 +47,8 @@ struct EssaySceneCatalogue: Sendable {
             // Один слишком длинный ASR-сегмент не превращается в «цельную
             // сцену» искусственным кропом посередине неизвестной реплики.
             guard segment.end - segment.start <= 40 else { continue }
+            // A flush must not hide an ASR overlap with the preceding scene.
+            if let previous = result.last, segment.start < previous.end { continue }
             if let previous = run.last, segment.start < previous.end { continue }
             run.append(segment)
             let duration = segment.end - (run.first?.start ?? segment.start)
@@ -66,16 +68,33 @@ struct EssaySceneCatalogue: Sendable {
                 speech: transcript.segments.map { TimeSegment(start: $0.start, end: $0.end) })
             let availableBefore = max(0, scene.start - previousSpeechEnd)
             let availableAfter = transcript.segments.contains(where: { $0.start >= scene.end }) ? max(0, safeEnd - scene.end) : 0
-            var before = min(Self.maximumDialogueHandle, availableBefore)
-            var after = min(Self.maximumDialogueHandle, availableAfter)
+            // Adjacent scenes share the same silence. Give each at most half
+            // of that gap so independently padded IDs remain non-overlapping.
+            let sharedBefore = index > 0 ? max(0, (scene.start - result[index - 1].end) / 2) : availableBefore
+            let sharedAfter = index + 1 < result.count ? max(0, (result[index + 1].start - scene.end) / 2) : availableAfter
+            var before = min(Self.maximumDialogueHandle, availableBefore, sharedBefore)
+            var after = min(Self.maximumDialogueHandle, availableAfter, sharedAfter)
             let excess = max(0, scene.end - scene.start + before + after - 40)
             if excess > 0 {
-                let removeBefore = min(before, excess / 2)
+                // Either handle can be shorter than half the excess. Remove
+                // whatever remains from the other handle, never from dialogue.
+                let removeAfter = min(after, excess / 2)
+                let removeBefore = min(before, excess - removeAfter)
                 before -= removeBefore
-                after = max(0, after - (excess - removeBefore))
+                after -= min(after, excess - removeBefore)
             }
-            return Scene(id: scene.id, start: scene.start - before, end: scene.end + after,
-                text: scene.text, quote: scene.quote)
+            // Reuse the same midpoint expression on both sides to avoid
+            // sub-frame overlaps from floating-point rounding.
+            let startBoundary = index > 0
+                ? result[index - 1].end + (scene.start - result[index - 1].end) / 2 : 0
+            let endBoundary = index + 1 < result.count
+                ? scene.end + (result[index + 1].start - scene.end) / 2 : scene.end + after
+            let start = max(scene.start - before, startBoundary)
+            var end = min(scene.end + after, endBoundary, start + EssayDurationPolicy.sceneLength.upperBound)
+            // Adding/subtracting timestamps can differ by an ulp. Keep the
+            // catalogue inside the same strict bound used by the evidence gate.
+            if end - start > EssayDurationPolicy.sceneLength.upperBound { end = end.nextDown }
+            return Scene(id: scene.id, start: start, end: end, text: scene.text, quote: scene.quote)
         }
     }
 
@@ -104,6 +123,109 @@ struct EssaySceneCatalogue: Sendable {
     struct SelectionError: LocalizedError {
         let detail: String
         var errorDescription: String? { detail }
+    }
+
+    struct Repair: Sendable {
+        let original: String
+        let indices: [Int]
+        let problems: [String]
+        let roles: [Int: String]
+        let available: EssaySceneCatalogue
+
+        var prompt: String {
+            let slots = indices.map { index in
+                "index=\(index + 1), role=\(roles[index] ?? "збережи роль оригіналу")"
+            }.joined(separator: "\n")
+            return "ВИПРАВ ЛИШЕ ЦІ РЯДКИ selection (index від 1):\n\(slots)\nПОМИЛКИ:\n"
+                + problems.joined(separator: "\n") + "\nОРИГІНАЛЬНИЙ ПЛАН (решту не змінюй):\n"
+                + original + "\nДОСТУПНІ НЕВИКОРИСТАНІ СЦЕНИ (candidate — номер C):\n"
+                + available.scenes.enumerated().map { "C\($0.offset + 1) [\($0.element.id)]: \($0.element.text)" }.joined(separator: "\n")
+        }
+    }
+
+    /// Keep sound rows immutable. An invented suffix is never interpreted as
+    /// an alias: only the model can select a different, available source ID.
+    func repairNeeded(from raw: String, format: EssayFormat = .analytical) throws -> Repair? {
+        guard let json = JSONVariantParser.extractJSONObject(from: raw),
+              let root = JSONVariantParser.deserializeTolerant(json) as? [String: Any],
+              let rows = root["selection"] as? [Any], !rows.isEmpty, rows.count <= 50 else { return nil }
+        var seen = Set<String>(), indices: [Int] = [], problems: [String] = [], roles: [Int: String] = [:]
+        for (index, row) in rows.enumerated() {
+            if let object = row as? [String: Any] {
+                roles[index] = object.first { ["role", "actrole"].contains($0.key.lowercased()) }?.value as? String
+            } else if let tuple = row as? [Any], tuple.count > 1 { roles[index] = tuple[1] as? String }
+            do {
+                let moment = try decodeMoments(from: [row])[0]
+                guard let scene = scenes.first(where: { $0.start == moment.startTime && $0.end == moment.endTime }) else { continue }
+                guard seen.insert(scene.id).inserted else {
+                    throw SelectionError(detail: "ID \(scene.id) уже используется другой сценой. Нужен другой ID, а не суффикс _alt.")
+                }
+            } catch {
+                indices.append(index); problems.append("Рядок \(index + 1): " + error.localizedDescription)
+            }
+        }
+        // Replacing a bad ID can expose an underfilled act. Request only the
+        // missing slots as additions; keep every sound existing row intact.
+        var next = rows.count
+        for role in format.roles {
+            let count = roles.values.filter { LongformActType(promptKey: $0) == role }.count
+            let minimum = role == .hook ? 1 : format.minimumScenes(role)
+            for _ in 0..<max(0, minimum - count) {
+                indices.append(next); roles[next] = role.promptKey
+                problems.append("Рядок \(next + 1): додай відсутню сцену акту \(role.promptKey), не змінюючи прийняті рядки.")
+                next += 1
+            }
+        }
+        guard next <= format.sceneCount.upperBound else { return nil }
+        guard !indices.isEmpty else { return nil }
+        return Repair(original: json, indices: indices, problems: problems, roles: roles,
+                      available: EssaySceneCatalogue(scenes: scenes.filter { !seen.contains($0.id) }))
+    }
+
+    func applyingRepair(_ raw: String, to repair: Repair) throws -> String {
+        guard let json = JSONVariantParser.extractJSONObject(from: raw),
+              let response = JSONVariantParser.deserializeTolerant(json) as? [String: Any],
+              let replacements = response["replacements"] as? [[String: Any]],
+              replacements.count == repair.indices.count,
+              var root = JSONVariantParser.deserializeTolerant(repair.original) as? [String: Any],
+              var rows = root["selection"] as? [Any] else {
+            throw SelectionError(detail: "Исправление должно содержать только replacements для ошибочных строк.")
+        }
+        let additions = repair.indices.filter { $0 >= rows.count }.count
+        rows += [Any](repeating: NSNull(), count: additions)
+        var changed = Set<Int>()
+        for replacement in replacements {
+            guard let value = replacement["index"] as? NSNumber,
+                  CFGetTypeID(value) != CFBooleanGetTypeID(), value.doubleValue.isFinite,
+                  value.doubleValue.rounded() == value.doubleValue, value.doubleValue >= 1,
+                  value.doubleValue <= Double(rows.count) else {
+                throw SelectionError(detail: "Некорректный индекс исправляемой строки.")
+            }
+            let index = value.intValue - 1
+            guard repair.indices.contains(index), changed.insert(index).inserted else {
+                throw SelectionError(detail: "Модель попыталась изменить уже принятую сцену или повторила индекс.")
+            }
+            var row = replacement; row.removeValue(forKey: "index")
+            if let candidate = row.removeValue(forKey: "candidate") {
+                guard let number = candidate as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                      number.doubleValue.isFinite, number.doubleValue.rounded() == number.doubleValue,
+                      number.doubleValue >= 1, number.doubleValue <= Double(repair.available.scenes.count) else {
+                    throw SelectionError(detail: "candidate должен быть номером показанной свободной сцены C.")
+                }
+                guard row.keys.allSatisfy({ !["id", "sceneid"].contains($0.lowercased()) }) else {
+                    throw SelectionError(detail: "Используйте один номер candidate вместо нескольких полей ID.")
+                }
+                row["id"] = repair.available.scenes[number.intValue - 1].id
+            }
+            let moment = try repair.available.decodeMoments(from: [row])[0]
+            if let role = repair.roles[index], let originalRole = LongformActType(promptKey: role), moment.actRole != originalRole {
+                throw SelectionError(detail: "Исправление не должно менять смысловую роль сцены.")
+            }
+            rows[index] = row
+        }
+        _ = try decodeMoments(from: rows)
+        root["selection"] = rows
+        return String(decoding: try JSONSerialization.data(withJSONObject: root), as: UTF8.self)
     }
 
     func moments(from rows: Any?) -> [SelectedMoment]? {

@@ -58,7 +58,7 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
         Кожен момент — ЦІЛІСНА СЦЕНА тривалістю 18-40 с, а не окрема репліка: початок і кінець
         мають збігатися з межами думки, щоб глядач почув закінчену розмову.
         Сумарна тривалість усього пулу — 310-590 с. Це РАНЖОВАНИЙ запас матеріалу, а не мета:
-        монтаж візьме з нього рівно стільки, скільки вмістить есе на 4-8 хвилин, тому
+        монтаж візьме з нього рівно стільки, скільки потрібно для завершеного есе тривалістю щонайменше 4 хвилини, без верхньої межі, тому
         порядок сцен у пулі (від найсильнішої до найслабшої) важливіший за їхню кількість.
         Разом 14-22 сцени (прагни 18): одна на hook, решта — на чотири аналітичні акти,
         щонайменше по 3 в кожному; у кожному аналітичному акті — 3-6 сцен.
@@ -301,15 +301,13 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
     /// Разбирает этап 1: темы-кандидаты. Провенанс `.llm` здесь честен ровно
     /// потому, что сырой ответ этого прохода уже лежит в director-raw-дампе.
     static func parseThemeCandidates(from raw: String) -> [ThematicConcept] {
-        guard let jsonString = JSONVariantParser.extractJSONObject(from: raw),
-              let root = JSONVariantParser.deserializeTolerant(jsonString) as? [String: Any],
-              let entries = root["candidates"] as? [Any] else { return [] }
-        return entries.compactMap { entry -> ThematicConcept? in
-            guard let dict = entry as? [String: Any],
-                  let word = nonEmptyString(dict["word"]),
+        guard let entries = JSONVariantParser.completeObjects(inClosedArray: "candidates", from: raw) else { return [] }
+        return entries.compactMap { dict -> ThematicConcept? in
+            guard let word = nonEmptyString(dict["word"]),
                   let tagline = nonEmptyString(dict["tagline"]),
                   let why = nonEmptyString(dict["why"]),
-                  let title = nonEmptyString(dict["title"]) else { return nil }
+                  let title = nonEmptyString(dict["title"]),
+                  ![word, tagline, why, title].contains(where: { $0.contains("<") || $0.contains(">") }) else { return nil }
             let concept = ThematicConcept(
                 word: filterNonCyrillic(word).trimmingCharacters(in: .whitespacesAndNewlines),
                 tagline: filterNonCyrillic(tagline),
@@ -575,7 +573,7 @@ final class LongformThematicService: ThematicConceptDiscovering, Sendable {
     private static func nonEmptyString(_ value: Any?) -> String? {
         guard let text = value as? String else { return nil }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        return ThematicConcept.isUsableIdentity(trimmed) ? trimmed : nil
     }
 
     private static func tolerantArray(from raw: String) -> [[String: Any]]? {

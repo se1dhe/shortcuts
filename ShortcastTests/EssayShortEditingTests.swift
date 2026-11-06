@@ -372,6 +372,18 @@ struct EssayShortVisualEvidenceTests {
 
 @Suite("Short copy editor")
 struct EssayShortCopyEditorTests {
+    @Test("Final copy cannot repeat another short's title despite different scenes and punctuation")
+    func distinctFinalCopy() throws {
+        let first = fixture()
+        var second = first
+        second.title = "Хто тут в’язень!"
+        second.hook = "Інша репліка"
+        #expect(throws: EssayReleaseError.self) { try EssayShortCopyEditor.requireDistinctCopy(second, previous: [first]) }
+        second.title = "Рішення Трумена"
+        try EssayShortCopyEditor.requireDistinctCopy(second, previous: [first])
+        second.hook = first.hook.uppercased()
+        #expect(throws: EssayReleaseError.self) { try EssayShortCopyEditor.requireDistinctCopy(second, previous: [first]) }
+    }
     private func fixture() -> EssayShort {
         var short = EssayShort(id: "short2", angle: "Свобода", hook: "Вибачте за цей виспівук", title: "Хто тут в'язень?",
             why: "Конфлікт", payoffQuote: "Він не актор, він в'язень.", question: "Яка ціна свободи?", segments: [.init(start: 10, end: 50)])

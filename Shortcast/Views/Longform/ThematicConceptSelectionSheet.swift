@@ -56,7 +56,9 @@ struct ThematicConceptSelectionSheet: View {
     ) {
         self.initialMovieTitle = movieTitle
         self._editedMovieTitle = State(initialValue: movieTitle)
-        self.concepts = concepts
+        let primary = concepts.first(where: { $0.isPrimaryChoice }) ?? concepts.first
+        let usable = primary?.hasUsableIdentity == false ? [] : concepts.filter(\.hasUsableIdentity)
+        self.concepts = usable
         self._essayFormat = State(initialValue: concepts.first?.format ?? .analytical)
         self.aiReasoning = aiReasoning
         self.source = source
@@ -68,7 +70,7 @@ struct ThematicConceptSelectionSheet: View {
         self.onCancel = onCancel
         self.onRegenerate = onRegenerate
 
-        let primaryId = concepts.first(where: { $0.isPrimaryChoice })?.id ?? concepts.first?.id
+        let primaryId = usable.first(where: { $0.isPrimaryChoice })?.id ?? usable.first?.id
         self._selectedConceptId = State(initialValue: primaryId)
 
 
@@ -85,7 +87,7 @@ struct ThematicConceptSelectionSheet: View {
         switch effectiveProvenance {
         case .llm:
             return (
-                L10n.tr("Нейросеть проанализировала диалоги и выбрала фундаментальную тему для 4–8-минутного кино-эссе:"),
+                L10n.tr("Нейросеть проанализировала диалоги и выбрала фундаментальную тему для кино-эссе:"),
                 L10n.tr("ВЫБОР ИИ • ГЛАВНАЯ ТЕМА ЭССЕ"),
                 "sparkles",
                 L10n.tr("Почему модель выбрала именно эту тему:"),
@@ -94,7 +96,7 @@ struct ThematicConceptSelectionSheet: View {
             )
         case .manual:
             return (
-                L10n.tr("Тему выбрали вы, а не модель — это фиксированный лейтмотив для 4–8-минутного кино-эссе:"),
+                L10n.tr("Тему выбрали вы, а не модель — это фиксированный лейтмотив для кино-эссе:"),
                 L10n.tr("ВЫБРАНО ВАМИ • ГЛАВНАЯ ТЕМА ЭССЕ"),
                 "hand.tap.fill",
                 L10n.tr("Почему вы выбрали эту тему:"),
@@ -104,7 +106,7 @@ struct ThematicConceptSelectionSheet: View {
         case .unknown:
             let base = L10n.tr("Провенанс темы не записан: она могла прийти из проекта, сохранённого до учёта источников, поэтому мы не утверждаем, что её выбрала модель.")
             return (
-                L10n.tr("Источник этой темы не записан, поэтому сказать, кто её выбрал, невозможно. Ниже тема, на которой стоит собрать 4–8-минутное кино-эссе:"),
+                L10n.tr("Источник этой темы не записан, поэтому сказать, кто её выбрал, невозможно. Ниже тема, на которой стоит собрать кино-эссе:"),
                 L10n.tr("ИСТОЧНИК НЕ ЗАПИСАН • ГЛАВНАЯ ТЕМА ЭССЕ"),
                 "questionmark.circle",
                 L10n.tr("Обоснование темы (кто её выбрал — не записано):"),
@@ -549,7 +551,7 @@ struct ThematicConceptSelectionSheet: View {
             .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.05)))
 
             // Хронометраж эссе не выбирается: он растёт из выбранной темы
-            Text(L10n.tr("Хронометраж не выбирается: он рождается из темы — от 4:00 до 8:00."))
+            Text(L10n.tr("Хронометраж не выбирается: он рождается из темы — от 4 минут, без верхнего ограничения."))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
@@ -778,7 +780,7 @@ struct ThematicConceptSelectionSheet: View {
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "wand.and.stars")
-                        Text(L10n.tr("Смонтировать кино-эссе (4:00–8:00)"))
+                        Text(L10n.tr("Смонтировать кино-эссе"))
                     }
                     .font(.headline)
                     .padding(.horizontal, 16)

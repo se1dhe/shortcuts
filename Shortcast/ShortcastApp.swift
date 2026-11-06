@@ -32,6 +32,7 @@ struct ShortcastApp: App {
                 .task {
                     await FontDownloadService.shared.ensureFontsInstalled()
                 }
+                .task { await workspace.monitorChannelPerformance() }
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)

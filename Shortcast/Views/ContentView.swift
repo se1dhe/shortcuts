@@ -9,15 +9,28 @@ struct ContentView: View {
     @State private var showFirstLaunch = false
     @State private var showSettings = false
 
+    @State private var shortsLibrary = ShortsLibrary()
+    @State private var showYouTubeShorts = false
+
     @State private var selectedStage: StudioStage = .film
 
     var body: some View {
         @Bindable var workspace = workspace
         VStack(spacing: 0) {
             studioHeader
-            stageNavigation
+            HStack {
+                Button("Монтажная эссе", systemImage: "film") { showYouTubeShorts = false }
+                    .tint(showYouTubeShorts ? StudioTheme.muted : StudioTheme.accent)
+                Button("Шортсы · YouTube", systemImage: "play.rectangle.on.rectangle") { showYouTubeShorts = true }
+                    .tint(showYouTubeShorts ? StudioTheme.accent : StudioTheme.muted)
+                Spacer()
+            }.buttonStyle(.bordered).padding(.horizontal, 28).padding(.bottom, 16)
+            if !showYouTubeShorts { stageNavigation }
             Rectangle().fill(StudioTheme.line).frame(height: 1)
-            stageContent.frame(maxWidth: .infinity, maxHeight: .infinity)
+            Group {
+                if showYouTubeShorts { YouTubeShortsView(library: shortsLibrary) }
+                else { stageContent }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
             OperationLogPanel(isActive: workspace.isBusy || workspace.isRegeneratingConcepts)
         }
         .background(StudioTheme.background)

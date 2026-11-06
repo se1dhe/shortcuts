@@ -1,13 +1,11 @@
 import Foundation
 
-/// Политика длительности эссе: коридор 4:00–8:00, в котором длина не выбирается
-/// пользователем, а рождается из темы. Модель отдаёт ранжованный пул сцен,
-/// детерминированный монтаж набивает им окно — поэтому тема с бедным пулом даёт
-/// 4:58, а тема того же фильма с богатым пулом даёт 7:43.
+/// Длительность определяется материалом темы: минимум четыре минуты,
+/// без верхнего ограничения и сокращения плана ради хронометража.
 enum EssayDurationPolicy {
 
-    /// Готовый рендер вне этого коридора — ошибка, а не предупреждение.
-    static let rendered: ClosedRange<Double> = 240...480
+    /// Бесконечная верхняя граница сохраняет общий API проверок диапазона.
+    static let rendered: ClosedRange<Double> = 240...Double.infinity
 
     /// Одна цельная сцена из диалогов фильма, а не отдельная реплика.
     static let sceneLength: ClosedRange<Double> = 18...40
@@ -24,7 +22,7 @@ enum EssayDurationPolicy {
     /// Граница внутри акта (между сценой и сценой одного акта).
     static let intraActGap: Double = LongformTimeline.intraActGap
 
-    /// Середина коридора — цель для проекта без записанной длительности.
+    /// Запасная цель для проекта без записанной длительности.
     static let defaultRenderedTarget: Double = 360
 
     /// Сколько «чистого» материала остаётся под выбранное окно. Единственная
@@ -35,11 +33,8 @@ enum EssayDurationPolicy {
         return max(0, clamp(renderedTarget) - fixedPadding - gaps)
     }
 
-    /// Контент, при котором оценка рендера ещё влезает в 8:00: жёсткий потолок
-    /// обрезки. Потолок растёт, когда сцен стало меньше, — минус одна пауза.
-    static func contentCeiling(scenes: Int) -> Double {
-        contentBudget(renderedTarget: rendered.upperBound, scenes: scenes)
-    }
+    /// Материал не обрезается ради верхней границы длительности.
+    static func contentCeiling(scenes: Int) -> Double { .infinity }
 
     /// Контент, ниже которого рендер не доходит и до 4:00. Недобор материала —
     /// это свойство темы, а не настройка: доливать его выдумкой нельзя.
@@ -48,8 +43,7 @@ enum EssayDurationPolicy {
     }
 
     /// Длина эссе выводится из материала, а не из просьбы: пул сцен модели
-    /// плюс склейки, зажатые в коридор. Бедный пул ⇒ нижняя граница, богатый
-    /// ⇒ верхняя; между ними и лежит «рождённая из темы» длительность.
+    /// плюс склейки, с минимумом четыре минуты и без верхнего предела.
     /// Без числа сцен эта оценка не видит пауз между сценами и потому занижена —
     /// рабочий путь монтажа обязан звать вариант `renderedTarget(poolSeconds:scenes:)`.
     static func renderedTarget(poolSeconds: Double) -> Double {
@@ -86,11 +80,9 @@ enum EssayDurationPolicy {
     /// nil — оценка внутри коридора. Иначе — готовая строка для `degradationReason`
     /// и для дорендерного гейта: вне коридора это ошибка, а не предупреждение.
     static func corridorViolation(estimate: Double) -> String? {
+        guard estimate.isFinite else { return "некорректная длительность эссе" }
         if estimate < rendered.lowerBound {
             return "материал темы собирается на \(format(estimate)) — меньше \(format(rendered.lowerBound)), чем требует коридор"
-        }
-        if estimate > rendered.upperBound {
-            return "эссе собирается на \(format(estimate)) — больше \(format(rendered.upperBound)) коридора"
         }
         return nil
     }
@@ -106,10 +98,9 @@ enum EssayDurationPolicy {
         return "модель отдала \(count) сцен вместо \(pool.lowerBound)–\(pool.upperBound)"
     }
 
-    /// Любую просьбу о хронометраже клампим в коридор: старые проекты просили
-    /// 11 минут, и читать такое значение как рабочее нельзя.
+    /// Сохраняем длительность длинных проектов; проверяем минимум и конечность.
     static func clamp(_ seconds: Double) -> Double {
-        min(max(seconds, rendered.lowerBound), rendered.upperBound)
+        seconds.isFinite ? max(seconds, rendered.lowerBound) : defaultRenderedTarget
     }
 
     /// «7:43» для честной строки в UI.

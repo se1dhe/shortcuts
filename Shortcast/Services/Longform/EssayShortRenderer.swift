@@ -12,7 +12,7 @@ struct EssayShortRenderer {
     /// Cover the compositor's unused pixels independently of video opacity.
     /// AVCoreAnimationTool can expose green YUV padding during opacity ramps;
     /// an opaque matte above the video must stay in place for every frame.
-    static func addMatte(to root: CALayer) {
+    static func addMatte(to root: CALayer, pictureBand: CGRect = Self.pictureBand) {
         let black = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
         root.backgroundColor = black
         root.isOpaque = true
@@ -34,6 +34,7 @@ struct EssayShortRenderer {
                 transcript: Transcript, telegramURL: String?, directory: URL,
                 diagnosticsDirectory: URL? = nil,
                 report: @escaping (Int, String) -> Void = { _, _ in }) async throws -> EssayShort {
+        let pictureBand = short.isMontage ? CGRect(origin: .zero, size: Self.size) : Self.pictureBand
         let output = directory.appendingPathComponent("essay_\(short.id)_\(UUID().uuidString.prefix(6)).mp4")
         let cover = output.deletingPathExtension().appendingPathExtension("jpg")
         var completed = false
@@ -64,10 +65,13 @@ struct EssayShortRenderer {
         videoLayer.backgroundColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
         videoLayer.isOpaque = true
         root.addSublayer(videoLayer)
-        Self.addMatte(to: root)
+        Self.addMatte(to: root, pictureBand: pictureBand)
         let brand = CALayer(); brand.frame = root.bounds
-        brand.contents = try ShortBrandArtwork.openingCard(result: result)
-        Self.visible(brand, from: 0, until: min(2, short.duration), total: short.duration)
+        if short.isMontage {
+            let title = Self.text(short.hook, frame: CGRect(x: 64, y: 220, width: 952, height: 180), font: 64, color: ShortBrandArtwork.ivory)
+            brand.addSublayer(title)
+        } else { brand.contents = try ShortBrandArtwork.hookHeader(short: short, result: result) }
+        Self.visible(brand, from: 0, until: min(short.isMontage ? 2 : 4, short.duration), total: short.duration)
         root.addSublayer(brand)
         if let logo = ChannelLogo.makeLayer(frame: CGRect(x: 28, y: 590, width: 112, height: 112),
             renderSize: Self.size, opacity: ChannelLogoStyle.essay.opacity) { root.addSublayer(logo) }
@@ -90,11 +94,12 @@ struct EssayShortRenderer {
             try speech.insertTimeRange(sourceRange, of: sourceAudio, at: start)
             // A large square picture band within the vertical canvas; preserve
             // the speaker with Vision framing rather than a blind centre crop.
-            let scale = max(Self.pictureBand.width / sourceSize.width, Self.pictureBand.height / sourceSize.height)
+            let scale = max(pictureBand.width / sourceSize.width, pictureBand.height / sourceSize.height)
             let width = sourceSize.width * scale
-            func transform(_ point: EssayCameraPath.Keyframe) -> CGAffineTransform {
-                preferred.concatenating(CGAffineTransform(scaleX: scale, y: scale))
-                    .concatenating(CGAffineTransform(translationX: -point.cropX, y: Self.pictureBand.minY))
+            func transform(_ point: EssayCameraPath.Keyframe, zoom: Double = 1) -> CGAffineTransform {
+                preferred.concatenating(CGAffineTransform(scaleX: scale * zoom, y: scale * zoom))
+                    .concatenating(CGAffineTransform(translationX: -point.cropX * zoom - pictureBand.width * (zoom - 1) / 2,
+                        y: pictureBand.minY - pictureBand.height * (zoom - 1) / 2))
             }
             // Reset at both editorial cuts and strong source shot changes.
             // Detect them at export cadence, not from the face's displacement:
@@ -102,30 +107,67 @@ struct EssayShortRenderer {
             let scenes = try await SceneDetectionService.detectScenes(in: sourceURL, threshold: 0.65,
                 sampleRate: 30, range: range, spatialThreshold: 0.10)
             let shots = scenes.isEmpty ? [range] : scenes.map { TimeSegment(start: $0.start, end: $0.end) }
+            // Accents follow real shot boundaries, rather than flashing at a
+            // fixed interval during an uninterrupted performance.
+            for (index, shot) in shots.enumerated() where index > 0 {
+                let cut = cursor + shot.start - range.start
+                guard cut > 0.1, cut < total - 0.1 else { continue }
+                let accent = min(0.06, shots[index - 1].duration / 4, shot.duration / 4)
+                switch short.editPlan?.transition ?? .cut {
+                case .cut: break
+                case .dip:
+                    instruction.setOpacityRamp(fromStartOpacity: 1, toEndOpacity: 0.35,
+                        timeRange: CMTimeRange(start: CMTime(seconds: cut - accent, preferredTimescale: 600), duration: CMTime(seconds: accent, preferredTimescale: 600)))
+                    instruction.setOpacityRamp(fromStartOpacity: 0.35, toEndOpacity: 1,
+                        timeRange: CMTimeRange(start: CMTime(seconds: cut, preferredTimescale: 600), duration: CMTime(seconds: accent, preferredTimescale: 600)))
+                case .softFlash:
+                    let flash = CALayer()
+                    flash.frame = CGRect(x: pictureBand.minX, y: Self.size.height - pictureBand.maxY,
+                        width: pictureBand.width, height: pictureBand.height)
+                    flash.backgroundColor = NSColor.white.withAlphaComponent(0.16).cgColor
+                    Self.visible(flash, from: cut, until: min(total, cut + 0.08), total: total)
+                    root.addSublayer(flash)
+                }
+            }
             for shot in shots {
                 let samples = try await faceCentres(source: source, range: shot)
                 let path = EssayCameraPath.make(samples: samples, duration: shot.duration,
-                    scaledWidth: width, viewportWidth: Self.pictureBand.width)
+                    scaledWidth: width, viewportWidth: pictureBand.width)
                 cameraDiagnostics.append(.init(source: shot, samples: samples, path: path))
                 let offset = cursor + shot.start - range.start
                 if let first = path.first {
                     instruction.setTransform(transform(first), at: CMTime(seconds: offset, preferredTimescale: 600))
                 }
                 for (from, to) in zip(path, path.dropFirst()) {
-                    instruction.setTransformRamp(fromStart: transform(from), toEnd: transform(to),
+                    let z1 = short.isMontage ? 1 + 0.045 * from.time / max(0.1, shot.duration) : 1
+                    let z2 = short.isMontage ? 1 + 0.045 * to.time / max(0.1, shot.duration) : 1
+                    instruction.setTransformRamp(fromStart: transform(from, zoom: z1), toEnd: transform(to, zoom: z2),
                         timeRange: CMTimeRange(start: CMTime(seconds: offset + from.time, preferredTimescale: 600),
                             end: CMTime(seconds: offset + to.time, preferredTimescale: 600)))
                 }
             }
             let fade = min(0.12, range.duration / 4)
+            if !short.isMontage {
             instruction.setOpacityRamp(fromStartOpacity: 0, toEndOpacity: 1,
                 timeRange: CMTimeRange(start: start, duration: CMTime(seconds: fade, preferredTimescale: 600)))
             instruction.setOpacityRamp(fromStartOpacity: 1, toEndOpacity: 0,
                 timeRange: CMTimeRange(start: CMTime(seconds: cursor + range.duration - fade, preferredTimescale: 600),
                     duration: CMTime(seconds: fade, preferredTimescale: 600)))
-            speechMix.setVolumeRamp(fromStartVolume: 0, toEndVolume: 1,
+            } else {
+                instruction.setOpacity(1, at: start)
+                if sceneIndex > 0, sceneIndex % 4 == 0, short.editPlan?.transition == .softFlash {
+                    let flash = CALayer(); flash.frame = root.bounds
+                    flash.backgroundColor = NSColor.white.withAlphaComponent(0.16).cgColor
+                    Self.visible(flash, from: cursor, until: min(total, cursor + 0.09), total: total)
+                    root.addSublayer(flash)
+                } else if sceneIndex > 0, sceneIndex % 4 == 0, short.editPlan?.transition == .dip {
+                    instruction.setOpacityRamp(fromStartOpacity: 0.35, toEndOpacity: 1,
+                        timeRange: CMTimeRange(start: start, duration: CMTime(seconds: 0.09, preferredTimescale: 600)))
+                }
+            }
+            speechMix.setVolumeRamp(fromStartVolume: 0, toEndVolume: short.isMontage ? 0 : 1,
                 timeRange: CMTimeRange(start: start, duration: CMTime(seconds: 0.035, preferredTimescale: 600)))
-            speechMix.setVolumeRamp(fromStartVolume: 1, toEndVolume: 0,
+            speechMix.setVolumeRamp(fromStartVolume: short.isMontage ? 0 : 1, toEndVolume: 0,
                 timeRange: CMTimeRange(start: CMTime(seconds: cursor + range.duration - 0.035, preferredTimescale: 600),
                     duration: CMTime(seconds: 0.035, preferredTimescale: 600)))
             let phrases = captions.filter { $0.start >= range.start && $0.end <= range.end }.map {
@@ -183,11 +225,15 @@ struct EssayShortRenderer {
         catch { exportProgress.cancel(); throw error }
         exportProgress.cancel()
         try Task.checkCancellation()
+        if let plan = short.editPlan {
+            report(4, "Цветокоррекция · " + plan.grade.rawValue)
+            try await EssayShortLook.apply(plan.grade, to: output, directory: directory, pictureBand: pictureBand)
+        }
         if result.audioSettings?.antiCopyrightEnabled ?? true {
             let preset = result.audioSettings?.antiCopyrightPreset ?? .cinemaShield
             if preset != .off {
                 report(4, "Shield · обработка кинокадра и звука с сохранением титров и таймингов")
-                _ = try await AntiCopyrightService(config: preset.config, pictureRegion: Self.pictureBand,
+                _ = try await AntiCopyrightService(config: preset.config, pictureRegion: pictureBand,
                     activeDuration: cursor, preserveTimeline: true).process(videoURL: output, outputURL: output, workingDirectory: directory)
             }
         }
@@ -372,7 +418,16 @@ enum ShortBrandArtwork {
     }
 
     static func overlay(short: EssayShort, result: LongformBuildResult) throws -> CGImage {
-        try openingCard(result: result)
+        try hookHeader(short: short, result: result)
+    }
+
+    /// The hook occupies the upper matte; the scene and faces remain visible from frame zero.
+    static func hookHeader(short: EssayShort, result: LongformBuildResult) throws -> CGImage {
+        try draw { ctx in
+            brand(in: ctx, y: 1818)
+            text(short.hook, rect: CGRect(x: 72, y: 1630, width: 936, height: 160), size: 52, color: ivory, serif: true)
+            text(result.arc.movieTitle, rect: CGRect(x: 72, y: 1570, width: 936, height: 44), size: 30, color: gold)
+        }
     }
 
     static func endCard(result: LongformBuildResult, telegramURL: String?) throws -> CGImage {

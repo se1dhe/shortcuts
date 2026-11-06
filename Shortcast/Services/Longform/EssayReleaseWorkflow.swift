@@ -16,12 +16,12 @@ extension WorkspaceModel {
     func prepareEssayRelease(modelManager: ModelManager, settings: AppSettings,
                              progress: @escaping @MainActor (String) -> Void) async throws {
         if let release = currentEssayRelease, release.hasReadyShorts,
-           (release.usesWholeFilmSelection && release.hasCurrentShortStyle) || release.hasProtectedDeliveries || job == nil {
+           (release.hasMontage && release.usesWholeFilmSelection && release.hasCurrentShortStyle) || release.hasProtectedDeliveries || job == nil {
             if !release.hasCurrentShortStyle && job == nil {
                 OperationJournal.shared.append("Доступна сохранённая версия шортсов. Для нового оформления укажите исходный фильм.", level: .warning)
             }
             essayShortPreparationPhase = .ready
-            progress("Выпуск готов: эссе, два шортса, обложки и тексты")
+            progress("Выпуск готов: эссе, шортсы, обложки и тексты")
             return
         }
         try await generateEssayRelease(modelManager: modelManager, settings: settings, reuseExistingPlans: true, progress: progress)
@@ -35,6 +35,9 @@ extension WorkspaceModel {
         project.essayRelease = release
         try await filmProjectService.saveProject(project)
         currentProject = project
+        if release.receipts.values.contains(where: { $0.state == .published }) {
+            Task { await self.refreshChannelPerformance() }
+        }
     }
 
     func resetEssayPublicationState() async throws {
@@ -118,7 +121,7 @@ extension WorkspaceModel {
             throw EssayReleaseError.invalid("Для этого выпуска нужна транскрипция украинской озвучки. Проверьте выбранную аудиодорожку.")
         }
         var release = currentEssayRelease ?? EssayRelease(essayKey: EssayRelease.key(for: result.arc))
-        if !release.usesWholeFilmSelection || (!reuseExistingPlans && (
+        if !release.hasWholeFilmStoryPlans || (!reuseExistingPlans && (
             release.shorts.allSatisfy({ $0.outputURL != nil }) || release.shorts.contains(where: { $0.visualEvidence == nil })
         )) {
             essayShortPreparationPhase = .loadingModel
@@ -126,7 +129,7 @@ extension WorkspaceModel {
             try await modelManager.requireDirector(profile: settings.copywriterModel.directorProfile)
             let finder = modelManager.momentFinder
             let profile = settings.copywriterModel.directorProfile
-            let gateway = DirectorChatGateway(readiness: { await finder.isReady }, identifier: { profile.modelID },
+            let gateway = DirectorChatGateway(readiness: { await finder.isReady }, identifier: { await finder.profile.modelID },
                 completion: { instructions, prompt, tokens in
                     await finder.completeForActTitles(instructions: instructions, prompt: prompt, maxTokens: tokens)
                 })
@@ -152,28 +155,67 @@ extension WorkspaceModel {
                     throw error
                 }
             }
-            let selected = try await EssayShortDirector(model: gateway, visualReview: review)
+            let selected = try await EssayShortDirector(model: gateway, visualReview: review,
+                performanceFeedback: ChannelPerformance.feedback(channelPerformance))
                 .plan(arc: result.arc, transcript: transcript, progress: progress)
             // Keep the expensive source selection even if copy review fails.
             // These are unrendered drafts, never publishable exports.
             release.shorts = selected
             try await saveEssayRelease(release, projectID: project.id)
         }
-        let unrendered = release.shorts.filter { $0.outputURL == nil }
+        release.includesMontage = true
+        if !release.hasMontage {
+            essayShortPreparationPhase = .planning
+            let montage = try await FilmMontageDirector.prepare(source: source, movie: result.arc.movieTitle,
+                transcript: transcript, manager: modelManager, profile: settings.copywriterModel.directorProfile,
+                directory: result.outputURL.deletingLastPathComponent().appendingPathComponent("montage-analysis", isDirectory: true),
+                progress: progress)
+            release.shorts.append(montage)
+            try await saveEssayRelease(release, projectID: project.id)
+        }
+        let unrendered = release.shorts.filter {
+            $0.outputURL == nil || (!$0.hasCurrentRenderStyle && EssayShortEditing.canEdit($0, in: release))
+        }
         if !unrendered.isEmpty {
             try await modelManager.requireDirector(profile: settings.copywriterModel.directorProfile)
             let finder = modelManager.momentFinder
-            let profile = settings.copywriterModel.directorProfile
-            let gateway = DirectorChatGateway(readiness: { await finder.isReady }, identifier: { profile.modelID },
+            let gateway = DirectorChatGateway(readiness: { await finder.isReady }, identifier: { await finder.profile.modelID },
                 completion: { instructions, prompt, tokens in
                     await finder.completeForActTitles(instructions: instructions, prompt: prompt, maxTokens: tokens)
                 })
-            let reviewed = try await EssayShortCopyEditor(model: gateway).edit(unrendered,
-                movie: result.arc.movieTitle, transcript: transcript, progress: progress)
+            let siblings = release.shorts.filter { previous in !unrendered.contains(where: { $0.id == previous.id }) }
+            let reviewed: [EssayShort]
+            do {
+                reviewed = try await EssayShortCopyEditor(model: gateway).edit(unrendered,
+                    movie: result.arc.movieTitle, transcript: transcript, previous: siblings, progress: progress)
+            } catch is CancellationError { throw CancellationError() }
+            catch {
+                guard settings.copywriterModel.directorProfile.modelID == ChatModelProfile.gemma12B.modelID else { throw error }
+                OperationJournal.shared.append("Тексты Gemma не прошли проверку: \(error.localizedDescription). Сцены сохранены; проверяю их с локальной Qwen.", level: .warning)
+                try await modelManager.requireDirector(profile: .qwen35_9b)
+                reviewed = try await EssayShortCopyEditor(model: gateway).edit(unrendered,
+                    movie: result.arc.movieTitle, transcript: transcript, previous: siblings, progress: progress)
+            }
             for short in reviewed {
                 if let index = release.shorts.firstIndex(where: { $0.id == short.id }) { release.shorts[index] = short }
             }
             try await saveEssayRelease(release, projectID: project.id)
+            let musicDirectory = result.outputURL.deletingLastPathComponent().appendingPathComponent("music-library", isDirectory: true)
+            for index in release.shorts.indices where release.shorts[index].editPlan == nil
+                && EssayShortEditing.canEdit(release.shorts[index], in: release) {
+                progress("Подбираем монтаж, трек и музыкальный вход для шортса \(index + 1)…")
+                release.shorts[index] = try await EssayShortEditService(model: gateway).prepare(release.shorts[index],
+                    movie: result.arc.movieTitle, transcript: transcript, directory: musicDirectory)
+                if release.shorts[index].isMontage {
+                    release.shorts[index] = try await FilmMontageDirector.alignToMusic(release.shorts[index])
+                }
+                try await saveEssayRelease(release, projectID: project.id)
+            }
+            for index in release.shorts.indices where release.shorts[index].isMontage
+                && release.shorts[index].montagePlan?.timingVersion != FilmMontagePlan.currentTimingVersion {
+                release.shorts[index] = try await FilmMontageDirector.alignToMusic(release.shorts[index])
+                try await saveEssayRelease(release, projectID: project.id)
+            }
             modelManager.freeDirectorIfMemoryTight()
         }
         let film = result.outputURL.deletingLastPathComponent()
@@ -181,15 +223,16 @@ extension WorkspaceModel {
         let telegram = LongformEditorialSupport.telegramURL(channelID: settings.telegramChannelId)
         for index in release.shorts.indices {
             if let output = release.shorts[index].outputURL, FileManager.default.fileExists(atPath: output.path),
-               release.shorts[index].renderStyleVersion == EssayShort.currentRenderStyle || !EssayShortEditing.canEdit(release.shorts[index], in: release) { continue }
+               release.shorts[index].hasCurrentRenderStyle || !EssayShortEditing.canEdit(release.shorts[index], in: release) { continue }
             essayShortPreparationPhase = .rendering(index + 1)
-            progress("Монтаж вертикального шортса \(index + 1) из 2…")
+            progress("Монтаж вертикального шортса \(index + 1) из \(release.expectedShortCount)…")
             release.shorts[index] = try await EssayShortRenderer().render(release.shorts[index], sourceURL: source,
-                result: result, transcript: transcript, telegramURL: telegram, directory: directory)
+                result: result, transcript: transcript, telegramURL: telegram, directory: directory,
+                report: { stage, detail in self.shortRenderStage = stage; self.shortRenderDetail = detail })
             try await saveEssayRelease(release, projectID: project.id)
         }
         essayShortPreparationPhase = .ready
-        progress("Два шортса и тексты выпуска готовы")
+        progress("Два сюжетных шортса, музыкальный эдит и тексты выпуска готовы")
     }
 }
 
@@ -203,7 +246,7 @@ struct EssayReleasePublisher {
 
     func publish(_ original: EssayRelease, result: LongformBuildResult, botToken: String, channelId: String,
                  progress: (String) -> Void, checkpoint: (EssayRelease) async throws -> Void) async throws -> EssayRelease {
-        guard original.essayKey == EssayRelease.key(for: result.arc), original.shorts.count == 2,
+        guard original.essayKey == EssayRelease.key(for: result.arc), original.shorts.count == original.expectedShortCount,
               original.shorts.allSatisfy({ $0.outputURL.map { FileManager.default.fileExists(atPath: $0.path) } == true }) else {
             throw EssayReleaseError.invalid("Сначала дождитесь готовности обоих шортсов.")
         }

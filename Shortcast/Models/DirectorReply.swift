@@ -44,13 +44,21 @@ struct DirectorReply: Sendable {
 
     var hitTokenCap: Bool { stopReason == "length" }
 
+    /// Explain transport/format failures without presenting them as a model's
+    /// editorial verdict. In particular, a literal JSON null is not truncation.
+    var rejectionReason: String? {
+        if stopReason == "cancelled" { return "генерация отменена" }
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "модель вернула пустой ответ" }
+        if hitTokenCap { return "достигнут лимит ответа (\(generatedTokens)/\(maxTokens ?? generatedTokens) токенов)" }
+        if text.trimmingCharacters(in: .whitespacesAndNewlines) == "null" { return "модель вернула JSON null вместо объекта" }
+        if JSONVariantParser.extractJSONObject(from: text) == nil { return "ответ не содержит завершённого объекта JSON" }
+        return nil
+    }
+
     /// Закрыт ли верхний уровень объекта — спрашиваем у парсера, а не считаем
     /// скобки здесь: определение «закрытого» должно быть одним и тем же.
     var completeness: ReplyCompleteness {
-        guard !hitTokenCap, JSONVariantParser.extractJSONObject(from: text) != nil else {
-            return .truncated
-        }
-        return .complete
+        rejectionReason == nil ? .complete : .truncated
     }
 
     /// Одна строка в director.log вместо мнения: «не обрезано» = число.

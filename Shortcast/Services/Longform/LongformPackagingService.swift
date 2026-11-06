@@ -20,7 +20,8 @@ struct LongformPackagingService: Sendable {
             await modelManager.freeDirectorIfMemoryTight()
             return try await session.complete(image: image, prompt: prompt)
         }
-        return LongformThumbnailGenerator(verifier: ThumbnailSubjectVerifier(model: gateway, leadingCast: cast))
+        return LongformThumbnailGenerator(verifier: ThumbnailSubjectVerifier(model: gateway, leadingCast: cast),
+            beforeSelection: { await modelManager.freeDirectorIfMemoryTight() })
     }
 
     static func updatingText(_ result: LongformBuildResult, transcript: Transcript? = nil) -> LongformBuildResult {
@@ -105,6 +106,8 @@ actor CoverVisionSession {
             try Task.checkCancellation()
             reply += chunk
         }
+        await session.synchronize()
+        Stream().synchronize()
         return reply
     }
 }

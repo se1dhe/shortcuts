@@ -181,4 +181,102 @@ struct SemanticThemeSelectionTests {
         let legacy = try #require(LongformThematicService.parseEssayPlan(["hookVariants": ["Перший", "Другий"]]))
         #expect(legacy.selectedHook == nil)
     }
+    @Test("Transcript line references resolve only through visible, unambiguous selected scenes")
+    func lineReferencesResolveToScenes() throws {
+        let (analysis, transcript) = material()
+        let raw = acceptedReply.replacingOccurrences(of: #""scene":1,"line":0"#, with: #""scene":"L0""#)
+            .replacingOccurrences(of: #""scene":2,"line":1"#, with: #""scene":"L1""#)
+            .replacingOccurrences(of: #""scene":5,"line":4"#, with: #""scene":"L4""#)
+        let reviewed = try EssaySemanticSelection.apply(raw, to: analysis, candidates: [analysis.primaryConcept],
+            transcript: transcript, modelID: "test-model", presentedLineIDs: [0, 1, 4])
+        #expect(reviewed.semanticProof?.evidence.map(\.scene) == [1, 2, 5])
+        #expect(reviewed.semanticProof?.evidence.map(\.line) == [0, 1, 4])
+        #expect(throws: EssaySemanticReviewFailure.self) {
+            try EssaySemanticSelection.apply(raw, to: analysis, candidates: [analysis.primaryConcept],
+                transcript: transcript, modelID: "test-model", presentedLineIDs: [0, 1])
+        }
+        var ambiguous = analysis
+        ambiguous.selectedMoments.append(analysis.selectedMoments[0])
+        #expect(throws: EssaySemanticReviewFailure.self) {
+            try EssaySemanticSelection.apply(raw, to: ambiguous, candidates: [analysis.primaryConcept],
+                transcript: transcript, modelID: "test-model", presentedLineIDs: [0, 1, 4])
+        }
+        let missingHook = raw.replacingOccurrences(of: "L0", with: "L2")
+        #expect(throws: EssaySemanticReviewFailure.self) {
+            try EssaySemanticSelection.apply(missingHook, to: analysis, candidates: [analysis.primaryConcept],
+                transcript: transcript, modelID: "test-model", presentedLineIDs: [1, 2, 4])
+        }
+    }
+
+    @Test("Replay a saved local scene plan and semantic review without inference")
+    func savedLocalSemanticReview() throws {
+        guard let path = ProcessInfo.processInfo.environment["SHORTCAST_SEMANTIC_PROJECT"],
+              let planPath = ProcessInfo.processInfo.environment["SHORTCAST_SEMANTIC_PLAN"],
+              let reviewPath = ProcessInfo.processInfo.environment["SHORTCAST_SEMANTIC_REPLY"] else { return }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let project = try decoder.decode(FilmProject.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        let transcript = try #require(project.transcript)
+        let catalogue = EssaySceneCatalogue(transcript: transcript)
+        let digest = MomentFinderService.downsampleChronologically(catalogue.digest, to: 17_294).text
+        let presented = catalogue.presented(in: digest).denselyNumbered()
+        let raw = try String(contentsOfFile: planPath, encoding: .utf8)
+        let analysis = try LongformThematicService.decodeCatalogueAnalysis(from: raw, catalogue: presented)
+        let prompt = EssaySemanticSelection.prompt(analysis: analysis, candidates: [analysis.primaryConcept],
+            transcript: transcript, materialChars: 10_000)
+        let reply = try String(contentsOfFile: reviewPath, encoding: .utf8)
+        let result = try EssaySemanticSelection.apply(reply, to: analysis, candidates: [analysis.primaryConcept],
+            transcript: transcript, modelID: "saved-gemma", presentedLineIDs: EssaySemanticSelection.presentedLineIDs(in: prompt))
+        #expect(result.semanticProof != nil)
+        print("Saved semantic replay accepted: " + (result.semanticProof?.evidence.map { "scene=\($0.scene) line=\($0.line ?? -1)" }.joined(separator: ", ") ?? "missing proof"))
+    }
+
+    @Test("Actual Leon editor responses accept line-label syntax while retaining evidence gates", arguments: [1, 2])
+    func leonEditorResponses(attempt: Int) throws {
+        let (analysis, source) = material(word: "СПРАВЕДЛИВІСТЬ")
+        var lines = (0...1345).map { index in
+            TranscriptSegment(start: 10_000 + Double(index * 40), end: 10_030 + Double(index * 40),
+                text: "Інший матеріал поза вибраними сценами.")
+        }
+        for (lineID, sourceID) in [(1102, 0), (1301, 1), (1345, 4)] { lines[lineID] = source.segments[sourceID] }
+        let transcript = Transcript(segments: lines, language: "uk")
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/leon-semantic-attempt\(attempt).txt")
+        let raw = try String(contentsOf: url, encoding: .utf8)
+        let reviewed = try EssaySemanticSelection.apply(raw, to: analysis, candidates: [analysis.primaryConcept],
+            transcript: transcript, modelID: "test-model", presentedLineIDs: [1102, 1301, 1345])
+        #expect(reviewed.semanticProof?.evidence.map(\.scene) == [1, 2, 5])
+    }
+
+}
+
+
+@Suite("Movie filename identity")
+struct MovieFilenameIdentityTests {
+    @Test("Normalized and decomposed Leon filenames retain title and release year", arguments: [
+        "Léon (1994).mkv", "shortcast-normalized-Léon__1994_-10675304308_a1.mp4"
+    ])
+    func leonFilename(filename: String) {
+        let query = MovieMetadataService.parseCandidate(filename)
+        #expect(query.title == "Léon")
+        #expect(query.year == "1994")
+    }
+
+    @Test func sourceTitleDoesNotLoseFileYear() async {
+        let service = MovieMetadataService()
+        let query = await service.extractSearchQuery(filename: "Léon (1994).mkv", sourceTitle: "Леон")
+        #expect(query.title == "Леон")
+        #expect(query.year == "1994")
+    }
+
+    @Test func automaticMatchCannotIgnoreKnownReleaseYear() {
+        let wrong = TMDBMovie(tmdbID: 1, title: "Леон Дрей", year: "1915", genres: [], overview: "", cast: [])
+        let correct = TMDBMovie(tmdbID: 2, title: "Леон", year: "1994", genres: [], overview: "", cast: [])
+        #expect(MovieMetadataService.matchingMovie(in: [wrong, correct], year: "1994") == correct)
+        #expect(MovieMetadataService.matchingMovie(in: [wrong], year: "1994") == nil)
+        #expect(MovieMetadataService.matchingMovie(in: [wrong], year: nil) == wrong)
+        let identity = MovieIdentity(id: "tmdb-1", title: wrong.title, year: wrong.year, overview: "", characters: [])
+        #expect(MovieMetadataService.conflictsWithFileYear(identity,
+            filename: "shortcast-normalized-Léon__1994_-10675304308_a1.mp4"))
+    }
 }

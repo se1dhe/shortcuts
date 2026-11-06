@@ -150,7 +150,7 @@ enum DirectorArtifactGate {
             ("tagline", concept.tagline),
             ("suggestedTitle", concept.suggestedTitle),
         ] {
-            guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            guard ThematicConcept.isUsableIdentity(value) else {
                 return .rejected(reason: "у темы нет \(field): модель не дала текст", code: .missingProse)
             }
         }

@@ -1,4 +1,5 @@
 import { launchBrowser } from './browser.js';
+import { readTikTokStudioAccount } from './tiktok-account.js';
 
 /**
  * Checks authentication status for TikTok and YouTube based on cookies.
@@ -18,28 +19,36 @@ export async function checkAuthStatus(context) {
            (c.name === 'SID' || c.name === 'SAPISID' || c.name === 'LOGIN_INFO')
   );
 
-  return { tiktok, youtube };
+  let tiktokHandle = null;
+  if (tiktok) {
+    try { tiktokHandle = await readTikTokStudioAccount(context); } catch {}
+  }
+  return { tiktok, youtube, tiktokHandle };
 }
 
 /**
  * Opens a visible browser window with tabs for TikTok and YouTube Studio
  * allowing the user to log in naturally. Waits until the user closes the window.
  */
-export async function openInteractiveLogin() {
+export async function openInteractiveLogin({ tiktokOnly = false } = {}) {
   const { context, page } = await launchBrowser({ headless: false });
 
   console.log(JSON.stringify({
     type: 'status',
-    message: 'Окно Chrome открыто. Войдите в ваши аккаунты TikTok и YouTube Studio. Закройте браузер после завершения.',
+    message: tiktokOnly
+      ? 'Войдите в TikTok @telonyx_cinema в открывшемся Chrome, затем закройте это окно Chrome, чтобы сохранить вход.'
+      : 'Окно Chrome открыто. Войдите в ваши аккаунты TikTok и YouTube Studio. Закройте браузер после завершения.',
   }));
 
   // Tab 1: TikTok Creator Center
-  await page.goto('https://www.tiktok.com/creator-center/upload', { waitUntil: 'domcontentloaded' }).catch(() => {});
+  await page.goto('https://www.tiktok.com/tiktokstudio', { waitUntil: 'domcontentloaded' }).catch(() => {});
 
 
   // Tab 2: YouTube Studio
-  const ytPage = await context.newPage();
-  await ytPage.goto('https://studio.youtube.com', { waitUntil: 'domcontentloaded' }).catch(() => {});
+  if (!tiktokOnly) {
+    const ytPage = await context.newPage();
+    await ytPage.goto('https://studio.youtube.com', { waitUntil: 'domcontentloaded' }).catch(() => {});
+  }
 
   // Keep alive until all pages/context are closed by user
   await new Promise((resolve) => {

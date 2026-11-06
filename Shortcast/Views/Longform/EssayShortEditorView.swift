@@ -48,6 +48,14 @@ struct EssayShortEditorView: View {
         var result = draft
         result.musicSettings = musicSettings
         result.segments = scenes.map { TimeSegment(start: $0.start, end: $0.end) }
+        if result.isMontage, result.segments != draft.segments {
+            var cursor = 0.0
+            let cuts = result.segments.map { range -> Double in cursor += range.duration; return cursor }
+            result.montagePlan?.cutTimes = Array(cuts.dropLast())
+            // A manual trim is not proof that the old beat grid still aligns.
+            result.montagePlan?.beatSeconds = nil
+            result.montagePlan?.musicPhase = nil
+        }
         let manual = scenes.filter(\.isAdded).map { TimeSegment(start: $0.start, end: $0.end) }
         result.manuallyAddedSegments = manual.isEmpty ? nil : manual
         result.captionEdits = draft.captionEdits?.filter { edit in
@@ -148,8 +156,15 @@ struct EssayShortEditorView: View {
                         }
                         GroupBox(L10n.tr("Музыка и сведение")) {
                             HStack {
-                                Label(musicSettings.backgroundMusicURL?.deletingPathExtension().lastPathComponent ?? L10n.tr("Без музыки"), systemImage: "music.note")
-                                    .font(.callout).lineLimit(2)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Label((draft.musicSettings?.backgroundMusicURL == musicSettings.backgroundMusicURL ? draft.editPlan?.trackTitle : nil)
+                                        ?? musicSettings.backgroundMusicURL?.deletingPathExtension().lastPathComponent ?? L10n.tr("Без музыки"), systemImage: "music.note")
+                                        .font(.callout).lineLimit(2)
+                                    if let plan = draft.editPlan {
+                                        Text(L10n.tr("Вход музыки: %1$@ с · %2$@", String(format: "%.1f", musicSettings.musicOffsetSeconds ?? 0), L10n.tr(plan.grade.label)))
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
                                 Spacer()
                                 Button(L10n.tr("Настроить"), systemImage: "waveform") {
                                     timelinePlayback.pause()
@@ -206,12 +221,12 @@ struct EssayShortEditorView: View {
                 },
                 onTrimStart: { id, value in
                     guard let index = scenes.firstIndex(where: { $0.id == id }) else { return }
-                    scenes[index].start = min(max(0, value), scenes[index].end - EssayShortEditing.minimumSceneDuration)
+                    scenes[index].start = min(max(0, value), scenes[index].end - EssayShortEditing.minimumDuration(for: draft))
                     selectedSceneID = id
                 },
                 onTrimEnd: { id, value in
                     guard let index = scenes.firstIndex(where: { $0.id == id }) else { return }
-                    scenes[index].end = max(scenes[index].start + EssayShortEditing.minimumSceneDuration,
+                    scenes[index].end = max(scenes[index].start + EssayShortEditing.minimumDuration(for: draft),
                                             min(sourceDuration, value))
                     selectedSceneID = id
                 },
@@ -380,7 +395,7 @@ struct EssayShortEditorView: View {
 
     private func adjustShortBoundary(_ id: UUID, isStart: Bool, delta: Double) {
         guard let index = scenes.firstIndex(where: { $0.id == id }) else { return }
-        let minimum = EssayShortEditing.minimumSceneDuration
+        let minimum = EssayShortEditing.minimumDuration(for: draft)
         if isStart {
             scenes[index].start = min(scenes[index].end - minimum,
                                       max(0, scenes[index].start + delta))

@@ -17,7 +17,30 @@ struct PackagingExperimentsView: View {
                 Button(busy ? L10n.tr("Готовлю…") : L10n.tr("Создать три варианта")) { run { try await workspace.generatePackagingExperiments(modelManager: modelManager) } }.disabled(busy)
                 Button(L10n.tr("Закрыть")) { dismiss() }.disabled(busy)
             }
-            Text(L10n.tr("Название, обложка и тема хранятся отдельно. Замеры вносятся вручную из Studio; автоматический A/B-тест на YouTube здесь не запускается.")).font(.callout).foregroundStyle(.secondary)
+            Text(L10n.tr("Просмотры YouTube и TikTok обновляются автоматически при запуске и каждые 6 часов, пока приложение открыто. Показы, CTR и удержание вносятся из Studio. Автоматический A/B-тест здесь не запускается.")).font(.callout).foregroundStyle(.secondary)
+            DisclosureGroup(L10n.tr("Статистика опубликованных роликов")) {
+                HStack {
+                    Text(L10n.tr("Сравнивайте ролики одного формата и возраста. Просмотры не объясняют причину успеха или провала.")).font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button(L10n.tr("Обновить счётчики")) { Task { await workspace.refreshChannelPerformance(force: true) } }
+                        .disabled(workspace.isRefreshingChannelPerformance)
+                    if workspace.isRefreshingChannelPerformance { ProgressView().controlSize(.small) }
+                }
+                if let issue = workspace.channelPerformanceIssue { Text(L10n.tr(issue)).font(.caption).foregroundStyle(.yellow) }
+                if workspace.channelPerformance.isEmpty { Text(L10n.tr("После публикации здесь появятся реальные замеры. Отсутствующие данные не считаются нулём.")).font(.caption) }
+                ScrollView {
+                    ForEach(workspace.channelPerformance.sorted { ($0.latest?.date ?? .distantPast) > ($1.latest?.date ?? .distantPast) }) { report in
+                        HStack {
+                            Text(report.target.platform.capitalized + " · " + (report.target.format == "essay" ? L10n.tr("Эссе") : "Shorts")).frame(width: 120, alignment: .leading)
+                            Link(report.target.title, destination: report.target.url).lineLimit(1)
+                            Spacer()
+                            Text(report.latest.map { String($0.views) } ?? "—").monospacedDigit()
+                            Text(report.latest?.date.formatted(date: .abbreviated, time: .shortened) ?? "—").foregroundStyle(.secondary)
+                            if let issue = report.issue { Image(systemName: "exclamationmark.triangle").foregroundStyle(.yellow).help(L10n.tr(issue)) }
+                        }.font(.caption).padding(.vertical, 3)
+                    }
+                }.frame(maxHeight: 160)
+            }
             if busy { ProgressView() }
             if let error { Text(L10n.tr(error)).foregroundStyle(.red).textSelection(.enabled) }
             ScrollView {

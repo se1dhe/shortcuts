@@ -3,6 +3,7 @@ import Foundation
 /// A short owns its edits; rebuilding it must not modify the essay or its sibling.
 enum EssayShortEditing {
     static let minimumSceneDuration: Double = 3
+    static func minimumDuration(for short: EssayShort) -> Double { short.isMontage ? 0.35 : minimumSceneDuration }
     static func canEdit(_ short: EssayShort, in release: EssayRelease) -> Bool {
         !release.receipts.contains { $0.key.hasPrefix(short.id + ".") && $0.value.state != .failed }
     }
@@ -23,7 +24,7 @@ enum EssayShortEditing {
         guard !short.segments.isEmpty, sourceDuration.isFinite, sourceDuration > 0,
               short.segments.allSatisfy({ range in
                   range.start.isFinite && range.end.isFinite && range.start >= 0 &&
-                  range.end <= sourceDuration && range.duration >= minimumSceneDuration
+                  range.end <= sourceDuration && range.duration >= minimumDuration(for: short)
               }) else {
             throw EssayReleaseError.invalid("Каждая сцена должна длиться от 3 секунд и находиться в пределах исходного фильма.")
         }

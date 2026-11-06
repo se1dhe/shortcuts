@@ -56,6 +56,10 @@ struct LongformResultsView: View {
                         }
 
                         Text(L10n.tr(result.arc.concept.format.title)).font(.caption).foregroundStyle(.secondary)
+                        if result.arc.audienceEditorial?.approvalSource == "assistant-editorial-review" {
+                            Label(L10n.tr("Редакторский пилот: авторский текст проверен вручную"), systemImage: "text.badge.checkmark")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         if let job = workspace.job, !FileManager.default.fileExists(atPath: job.url.path) {
                             Label(L10n.tr("Исходник удалён. Сохранённый монтаж доступен; для предпросмотра и рендера нужен видеофайл."), systemImage: "externaldrive.badge.exclamationmark")
                                 .font(.caption).foregroundStyle(StudioTheme.warning)
@@ -114,7 +118,7 @@ struct LongformResultsView: View {
                                         .disabled(!EssayShortEditing.canEdit(short, in: release))
                                 }
                             } else {
-                                Button(L10n.tr("Подготовить два шортса")) { onOpenShorts() }
+                                Button(L10n.tr("Подготовить шортсы и музыкальный эдит")) { onOpenShorts() }
                             }
                         }
                         .disabled(workspace.isWorkingOnEssayRelease)
@@ -216,7 +220,7 @@ struct LongformResultsView: View {
                     .padding(.horizontal, 20)
                 }
 
-                // Честный след хронометража: коридор 4:00–8:00 не обсуждается, но
+                // Честный след хронометража: верхнего ограничения нет, но
                 // молча подрезать заказ из сохранённого плана нельзя.
                 if let legacyAsk = result.arc.legacyAskSeconds {
                     HStack(spacing: 10) {
@@ -228,7 +232,7 @@ struct LongformResultsView: View {
                             Text(L10n.tr("Хронометраж скорректирован"))
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.primary)
-                            Text(L10n.tr("Проект просил %1$@ — длина эссе рождается из материала темы и ограничена коридором 4:00–8:00.", String(describing: EssayDurationPolicy.format(legacyAsk))))
+                            Text(L10n.tr("Проект просил %1$@ — длина эссе рождается из материала темы без верхнего ограничения длительности.", String(describing: EssayDurationPolicy.format(legacyAsk))))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -338,7 +342,7 @@ struct LongformResultsView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(StudioTheme.accent)
                     .disabled(workspace.isBusy)
-                    Text(L10n.tr("Следом: два шортса → постинг выпуска"))
+                    Text(L10n.tr("Следом: два шортса и эдит → постинг выпуска"))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 .padding(10)

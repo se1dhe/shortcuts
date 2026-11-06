@@ -1,0 +1,44 @@
+[
+  {
+    "file": "moneyball-NA.mp4",
+    "integrated_lufs": "-19.46",
+    "true_peak_dbtp": "-0.21",
+    "lra_lu": "6.10"
+  },
+  {
+    "file": "2ulk8QxTbv0-0.mp4",
+    "integrated_lufs": "-12.48",
+    "true_peak_dbtp": "0.19",
+    "lra_lu": "3.00"
+  },
+  {
+    "file": "xb28Bqsv6Ns-0.mp4",
+    "integrated_lufs": "-18.60",
+    "true_peak_dbtp": "-0.97",
+    "lra_lu": "7.50"
+  },
+  {
+    "file": "tgOfGiG3IWI-0.mp4",
+    "integrated_lufs": "-15.48",
+    "true_peak_dbtp": "-3.57",
+    "lra_lu": "4.70"
+  },
+  {
+    "file": "wfZCSfmKLhc-0.mp4",
+    "integrated_lufs": "-20.50",
+    "true_peak_dbtp": "-3.20",
+    "lra_lu": "5.50"
+  },
+  {
+    "file": "EOxCXk7HExs-0.mp4",
+    "integrated_lufs": "-19.48",
+    "true_peak_dbtp": "-4.02",
+    "lra_lu": "10.20"
+  },
+  {
+    "file": "tqUGeaEYBs0-0.mp4",
+    "integrated_lufs": "-20.02",
+    "true_peak_dbtp": "-0.69",
+    "lra_lu": "7.60"
+  }
+]

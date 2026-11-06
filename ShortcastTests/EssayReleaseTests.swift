@@ -277,7 +277,7 @@ struct EssayReleaseTests {
                 let rows = Array(Set([first, last])).sorted().map { ["candidateID": $0, "why": "Сильний конфлікт у діалозі"] }
                 return String(data: try! JSONSerialization.data(withJSONObject: ["candidates": rows]), encoding: .utf8)
             }
-            return try? releaseReply([first]).replacingOccurrences(of: "Хто обирає твоє життя?", with: "Хто обирає? \(first)")
+            return "{\"candidateID\":\"\(first)\",\"payoffLine\":1}"
         })
         let selected = try await EssayShortDirector(model: gateway).plan(arc: arc, transcript: transcript)
         let prompts = requests.withLock { $0 }
@@ -348,11 +348,10 @@ struct EssayReleaseTests {
         let (result, transcript) = releaseFixture()
         let prompts = OSAllocatedUnfairLock(initialState: [String]())
         let gateway = DirectorChatGateway(readiness: { true }, identifier: { "fixture-model" }, completion: { _, prompt, _ in
-            let number = prompts.withLock { $0.append(prompt); return $0.count }
+            prompts.withLock { $0.append(prompt) }
             guard let line = prompt.components(separatedBy: "\n").first(where: { $0.hasPrefix("S") }),
                   let id = line.split(separator: " ").first else { return nil }
-            let raw = try? releaseReply([String(id)])
-            return number == 1 ? raw : raw?.replacingOccurrences(of: "Хто обирає твоє життя?", with: "Чим ти платиш за свободу?")
+            return "{\"candidateID\":\"\(id)\",\"payoffLine\":1}"
         })
         let selected = try await EssayShortDirector(model: gateway).plan(arc: result.arc, transcript: transcript)
         #expect(selected.count == 2)

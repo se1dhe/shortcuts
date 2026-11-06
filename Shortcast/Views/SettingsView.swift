@@ -55,6 +55,9 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
+                    TextField("TikTok: @username або посилання на профіль", text: $settings.tiktokTargetHandle)
+                    Text("Перед завантаженням перевіряємо, що відкритий саме цей акаунт TikTok. Для зміни акаунта скористайтеся входом у браузері.")
+                        .font(.caption).foregroundStyle(.secondary)
                     HStack(spacing: 12) {
                         Button {
                             openBrowserLogin()
@@ -77,7 +80,7 @@ struct SettingsView: View {
 
                     if let status = browserAuthStatus {
                         HStack(spacing: 16) {
-                            browserPlatformBadge("TikTok", ok: status.tiktok)
+                            browserPlatformBadge(status.tiktokHandle.map { "TikTok @" + $0 } ?? "TikTok (акаунт не визначено)", ok: status.tiktok && status.tiktokHandle != nil)
                             browserPlatformBadge("YouTube", ok: status.youtube)
                         }
                         .padding(.vertical, 4)

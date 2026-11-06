@@ -180,7 +180,7 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         if let violation = EssayDurationPolicy.corridorViolation(estimate: estimate) {
             notes.append(violation)
             Self.logger.warning(
-                "Essay duration \(String(format: "%.1f", estimate))s outside corridor \(EssayDurationPolicy.format(EssayDurationPolicy.rendered.lowerBound))–\(EssayDurationPolicy.format(EssayDurationPolicy.rendered.upperBound)): \(violation, privacy: .public)"
+                "Essay duration \(String(format: "%.1f", estimate))s fails duration validation: \(violation, privacy: .public)"
             )
         }
         for note in notes {
@@ -188,26 +188,6 @@ final class LongformNarrativeDirector: LongformNarrativeDirecting, Sendable {
         }
         arc.legacyAskSeconds = legacyAsk
         return arc
-    }
-
-    /// Потолок коридора снимается целыми сценами с хвоста самого длинного акта:
-    /// акт не имеет права опустеть, а мысль — оборваться на середине.
-    private func fitArcToCorridor(
-        _ arc: inout LongformNarrativeArc,
-        notes: inout [String]
-    ) {
-        var removed = 0
-        while EssayDurationPolicy.estimatedRendered(of: arc) > EssayDurationPolicy.rendered.upperBound {
-            guard let index = arc.acts.indices.max(by: {
-                (arc.acts[$0].segments.count, arc.acts[$0].duration)
-                    < (arc.acts[$1].segments.count, arc.acts[$1].duration)
-            }), arc.acts[index].segments.count > 1 else { break }
-            arc.acts[index].segments.removeLast()
-            removed += 1
-        }
-        if removed > 0 {
-            notes.append("эссе не влезало в \(EssayDurationPolicy.format(EssayDurationPolicy.rendered.upperBound)) — снято целых сцен: \(removed)")
-        }
     }
 
     /// Причина деградации складывается из всех честных пометок без дублей: UI

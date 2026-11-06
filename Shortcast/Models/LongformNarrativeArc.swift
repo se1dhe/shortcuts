@@ -193,6 +193,8 @@ struct LongformNarrativeArc: Codable, Identifiable, Equatable, Sendable {
     var publicationTitle: String? = nil
     var coverText: String? = nil
     var viewerPromise: String? = nil
+    var audienceEditorial: AudienceEditorialPlan? = nil
+    var audienceEditorialRequired: Bool? = nil
     var sourceAttributions: [String]? = nil
     var conclusionText: String? = nil
     var captionSuggestions: [LongformCaptionSuggestion]? = nil
@@ -205,7 +207,7 @@ struct LongformNarrativeArc: Codable, Identifiable, Equatable, Sendable {
     var degradationReason: String? = nil
 
     /// Хронометраж, который просил сохранённый план, если он лежал вне коридора
-    /// 4:00–8:00. Длина эссе больше не запрашивается, но молча подрезать чужой
+    /// от четырёх минут. Длина эссе больше не запрашивается, но молча подрезать чужой
     /// заказ нельзя: UI обязан показать, сколько в файле лежало.
     var legacyAskSeconds: Double? = nil
 

@@ -25,7 +25,7 @@ struct LongformTimeline: Sendable {
     let supportExtraDuration: Double
 
     init(arc: LongformNarrativeArc, coldOpenEnabled: Bool = true) {
-        introDuration = coldOpenEnabled ? Self.intro : 0
+        introDuration = coldOpenEnabled && arc.audienceEditorial == nil ? Self.intro : 0
         var cursor = introDuration
         var result: [Placement] = []
         for (ai, act) in arc.acts.enumerated() {
@@ -61,7 +61,7 @@ enum LongformTransitionPlan {
         let end: Double
     }
 
-    static func ramps(intro: Double, speechEnd: Double, cuts: [LongformCutTransition]) -> [Ramp] {
+    static func ramps(intro: Double, speechEnd: Double, cuts: [LongformCutTransition], immediateOpening: Bool = false) -> [Ramp] {
         guard speechEnd.isFinite, speechEnd > 0 else { return [] }
         var result: [Ramp] = []
         func append(_ from: Float, _ to: Float, _ start: Double, _ end: Double) {
@@ -71,7 +71,7 @@ enum LongformTransitionPlan {
             guard upper - lower >= 0.02 else { return }
             result.append(Ramp(from: from, to: to, start: lower, end: upper))
         }
-        append(0, 1, intro, intro + (intro > 0 ? 1.5 : 1.2))
+        if !immediateOpening { append(0, 1, intro, intro + (intro > 0 ? 1.5 : 1.2)) }
         for cut in cuts.sorted(by: { $0.sceneEndTime < $1.sceneEndTime }) {
             guard cut.sceneEndTime.isFinite, cut.nextSceneStartTime.isFinite,
                   cut.nextSceneStartTime >= cut.sceneEndTime else { continue }

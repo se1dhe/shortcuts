@@ -5,6 +5,89 @@ import Foundation
 /// the first balanced object, and accepts a few key spellings.
 enum JSONVariantParser {
 
+    /// Stage 1 consists of independent candidate records. Preserve strictly
+    /// complete objects in a closed array even if another record is malformed
+    /// or the outer wrapper lacks its last brace. Never complete a record or
+    /// accept an array whose tail is missing. String contents remain untouched.
+    static func completeObjects(inClosedArray key: String, from raw: String) -> [[String: Any]]? {
+        guard let root = raw.firstIndex(of: "{") else { return nil }
+        var index = root
+        var braces = 0, brackets = 0
+        var quoted = false, escaped = false
+        var stringStart: String.Index?
+        var arrayStart: String.Index?
+        while index < raw.endIndex {
+            let char = raw[index]
+            if quoted {
+                if escaped { escaped = false }
+                else if char == "\\" { escaped = true }
+                else if char == "\"" {
+                    quoted = false
+                    if braces == 1, brackets == 0, let start = stringStart,
+                       String(raw[start..<index]) == key {
+                        var next = raw.index(after: index)
+                        while next < raw.endIndex, raw[next].isWhitespace { next = raw.index(after: next) }
+                        if next < raw.endIndex, raw[next] == ":" {
+                            next = raw.index(after: next)
+                            while next < raw.endIndex, raw[next].isWhitespace { next = raw.index(after: next) }
+                            if next < raw.endIndex, raw[next] == "[" { arrayStart = next; break }
+                        }
+                    }
+                }
+            } else {
+                switch char {
+                case "\"": quoted = true; stringStart = raw.index(after: index)
+                case "{": braces += 1
+                case "}": braces -= 1; if braces == 0 { return nil }
+                case "[": brackets += 1
+                case "]": brackets -= 1
+                default: break
+                }
+            }
+            index = raw.index(after: index)
+        }
+        guard let arrayStart else { return nil }
+        index = raw.index(after: arrayStart)
+        braces = 0; brackets = 1; quoted = false; escaped = false
+        var objectStart: String.Index?
+        var entries: [[String: Any]] = []
+        while index < raw.endIndex {
+            let char = raw[index]
+            if quoted {
+                if escaped { escaped = false }
+                else if char == "\\" { escaped = true }
+                else if char == "\"" { quoted = false }
+            } else {
+                switch char {
+                case "\"": quoted = true
+                case "[": brackets += 1
+                case "]":
+                    brackets -= 1
+                    if brackets == 0 { return braces == 0 ? entries : nil }
+                case "{":
+                    if braces == 0, brackets == 1 { objectStart = index }
+                    braces += 1
+                case "}":
+                    // Orphan fields from a broken record cannot invalidate a
+                    // later, independently complete candidate object.
+                    if braces > 0 {
+                        braces -= 1
+                        if braces == 0, let start = objectStart {
+                            let data = Data(raw[start...index].utf8)
+                            if let entry = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                                entries.append(entry)
+                            }
+                            objectStart = nil
+                        }
+                    }
+                default: break
+                }
+            }
+            index = raw.index(after: index)
+        }
+        return nil
+    }
+
     /// Deserializes a JSON object string, repairing the JSON-breaking glitches
     /// small models occasionally emit before giving up. Returns the parsed value
     /// (object or array) or nil.

@@ -102,12 +102,13 @@ final class BrowserAutomationService: BrowserPublishingProtocol, Sendable {
             guard let data = line.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let type = json["type"] as? String, type == "auth_report",
-                  let auth = json["auth"] as? [String: Bool] else {
+                  let auth = json["auth"] as? [String: Any] else {
                 continue
             }
             return BrowserAuthStatus(
-                tiktok: auth["tiktok"] ?? false,
-                youtube: auth["youtube"] ?? false
+                tiktok: auth["tiktok"] as? Bool ?? false,
+                youtube: auth["youtube"] as? Bool ?? false,
+                tiktokHandle: auth["tiktokHandle"] as? String
             )
         }
 
@@ -115,6 +116,10 @@ final class BrowserAutomationService: BrowserPublishingProtocol, Sendable {
     }
 
     func openLoginSession() async throws -> BrowserAuthStatus {
+        try await openLoginSession(tikTokOnly: false)
+    }
+
+    func openLoginSession(tikTokOnly: Bool) async throws -> BrowserAuthStatus {
         guard let nodeBin = Self.resolveNodeBinary() else {
             throw BrowserAutomationError.nodeNotFound
         }
@@ -123,18 +128,19 @@ final class BrowserAutomationService: BrowserPublishingProtocol, Sendable {
         }
 
         Self.logger.notice("Opening interactive browser login session...")
-        let output = try await runProcess(executableURL: nodeBin, arguments: [script.path, "--login"])
+        let output = try await runProcess(executableURL: nodeBin, arguments: [script.path, "--login"] + (tikTokOnly ? ["--tiktok-only"] : []))
 
         for line in output.components(separatedBy: .newlines) {
             guard let data = line.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let type = json["type"] as? String, type == "auth_report",
-                  let auth = json["auth"] as? [String: Bool] else {
+                  let auth = json["auth"] as? [String: Any] else {
                 continue
             }
             return BrowserAuthStatus(
-                tiktok: auth["tiktok"] ?? false,
-                youtube: auth["youtube"] ?? false
+                tiktok: auth["tiktok"] as? Bool ?? false,
+                youtube: auth["youtube"] as? Bool ?? false,
+                tiktokHandle: auth["tiktokHandle"] as? String
             )
         }
 
@@ -155,7 +161,12 @@ final class BrowserAutomationService: BrowserPublishingProtocol, Sendable {
                     // Write job payload to temp file
                     let tempJobURL = FileManager.default.temporaryDirectory
                         .appendingPathComponent("browser-job-\(UUID().uuidString).json")
-                    let jobData = try JSONEncoder().encode(job)
+                    var targetedJob = job
+                    if targetedJob.platforms.contains("tiktok"), targetedJob.expectedTikTokHandle == nil {
+                        let target = await MainActor.run { AppSettings().tiktokTargetHandle.trimmed }
+                        if !target.isEmpty { targetedJob.expectedTikTokHandle = target }
+                    }
+                    let jobData = try JSONEncoder().encode(targetedJob)
                     try jobData.write(to: tempJobURL)
                     defer { try? FileManager.default.removeItem(at: tempJobURL) }
 

@@ -36,6 +36,47 @@ struct TwoStageDirectorTests {
         #expect(parsed.allSatisfy { $0.source == .llm })
     }
 
+    @Test("Saved Drive replies preserve complete candidates despite a broken sibling or outer wrapper", arguments: [1, 2])
+    func savedDriveCandidateReplies(attempt: Int) throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/drive-candidates-malformed-attempt\(attempt).txt")
+        let raw = try String(contentsOf: url, encoding: .utf8)
+        let parsed = LongformThematicService.parseThemeCandidates(from: raw)
+        let expected = attempt == 1 ? ["ВІРНІСТЬ", "ВІДПОВІДАЛЬНІСТЬ", "СВОБОДА"]
+            : ["БІЗНЕС", "ВІДПОВІДАЛЬНІСТЬ", "ВІРНІСТЬ", "СУПРАНІСТЬ"]
+        #expect(parsed.map(\.word) == expected)
+        #expect(parsed.allSatisfy { $0.source == .llm })
+        #expect(parsed.allSatisfy { !$0.tagline.contains("<") })
+        let originalBusinessReason = "Герой змушений виконувати небезпечні замовлення, щоб виплатити борг, що створює замкнений цикл ризику та відповідальності."
+        if attempt == 2 {
+            #expect(DirectorReply(text: raw, info: nil, maxTokens: 1024).completeness == .truncated)
+            #expect(parsed.first?.philosophicalPremise == originalBusinessReason)
+        }
+    }
+
+    @Test("Stage 1 permits only a missing outer brace, not a missing array or unfinished candidate")
+    func completeCandidateArrayIsRequired() {
+        let full = candidateJSON(words: ["СВОБОДА", "ОБМАН"])
+        #expect(LongformThematicService.parseThemeCandidates(from: String(full.dropLast())).count == 2)
+        #expect(LongformThematicService.parseThemeCandidates(from: String(full.dropLast(2))).isEmpty)
+        #expect(LongformThematicService.parseThemeCandidates(from: String(full.dropLast(20))).isEmpty)
+        let nested = "{\"extra\":" + full + "}"
+        #expect(LongformThematicService.parseThemeCandidates(from: nested).isEmpty)
+        let quoted = "{\"text\":\"\\\"candidates\\\":[]\"}"
+        #expect(LongformThematicService.parseThemeCandidates(from: quoted).isEmpty)
+    }
+
+    @Test("Candidate parsing respects escaped quotes and brackets inside the model's prose")
+    func candidateStringsStayUnchanged() throws {
+        let prose = "Він каже \"так\" перед вибором {межі} [життя]."
+        let root: [String: Any] = ["candidates": [["word": "ВИБІР", "tagline": prose, "why": prose, "title": "Коли вибір змінює тебе"]]]
+        let raw = String(decoding: try JSONSerialization.data(withJSONObject: root), as: UTF8.self)
+        let parsed = LongformThematicService.parseThemeCandidates(from: String(raw.dropLast()))
+        #expect(parsed.count == 1)
+        #expect(parsed.first?.tagline == prose)
+        #expect(parsed.first?.philosophicalPremise == prose)
+    }
+
     /// Кандидат-объект без `why` — не кандидат: слоган и обоснование обязана
     /// дать модель, дописывать их мы не умеем.
     @Test("a candidate without the model's own prose is dropped, not completed")
@@ -134,6 +175,21 @@ struct TwoStageDirectorTests {
 
         let parsed = LongformThematicService.parseThemeCandidates(from: truncated.text)
         #expect(parsed.isEmpty, "парсер доклеил хвост там, где модель остановилась")
+    }
+
+    @Test("a literal null, an empty stream and a valid nullable field have different diagnostics")
+    func nullReplyDiagnostics() {
+        let null = DirectorReply(text: "null", info: nil, maxTokens: 512)
+        let empty = DirectorReply(text: " \n", info: nil, maxTokens: 512)
+        let valid = DirectorReply(text: #"{"preferredTheme":null,"verdict":"direct"}"#, info: nil, maxTokens: 512)
+        #expect(null.rejectionReason?.contains("JSON null") == true)
+        #expect(empty.rejectionReason?.contains("пустой ответ") == true)
+        #expect(valid.rejectionReason == nil)
+        #expect(valid.completeness == .complete)
+        for value in ["null", "\"null\"", "\" NULL \""] {
+            let raw = "{\"candidates\":[{\"word\":\(value),\"tagline\":\"Тема\",\"why\":\"Причина\",\"title\":\"Назва\"}]}"
+            #expect(LongformThematicService.parseThemeCandidates(from: raw).isEmpty)
+        }
     }
 
     /// Дайджест прореживается равным шагом по всей хронологии: начало и финал

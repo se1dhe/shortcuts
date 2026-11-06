@@ -77,6 +77,9 @@ final class WorkspaceModel {
 
     /// Активный проект фильма (сохранение прогресса транскрипции, тем и шортсов)
     var currentProject: FilmProject?
+    var channelPerformance: [ChannelPerformance] = []
+    var isRefreshingChannelPerformance = false
+    var channelPerformanceIssue: String?
     let filmProjectService: any FilmProjectServicing
     let thematicService: any ThematicConceptDiscovering
 
@@ -177,6 +180,12 @@ final class WorkspaceModel {
         stagedConcept = project.pendingLongformArc?.concept
         storedTranscript = project.transcript
         detectedMovie = project.tmdbMetadata
+        if let movie = detectedMovie,
+           MovieMetadataService.conflictsWithFileYear(movie, filename: project.sourceMovieURL.lastPathComponent) {
+            Self.log("Discarding cached movie metadata with a conflicting release year: \(movie.title) (\(movie.year))")
+            detectedMovie = nil
+            currentProject?.tmdbMetadata = nil
+        }
         if let edits = project.longformResult?.arc.captionEdits, !edits.isEmpty {
             do {
                 try SubtitleCorrectionStore.shared.update {
@@ -423,7 +432,8 @@ final class WorkspaceModel {
                     (m.originalTitle.map { $0.localizedCaseInsensitiveContains(fileQuery.title) } ?? false)
                 let isPlaceholder = m.overview.isEmpty && (m.posterURL == nil)
 
-                if hasValidFileTitle && !matchesTitle && isPlaceholder {
+                if MovieMetadataService.conflictsWithFileYear(m, filename: originalBaseName)
+                    || (hasValidFileTitle && !matchesTitle && isPlaceholder) {
                     Self.log("Discarding mismatched cached movie metadata: '\(m.title)' vs filename candidate '\(fileQuery.title)'")
                     self.detectedMovie = nil
                     self.currentProject?.tmdbMetadata = nil
@@ -501,7 +511,9 @@ final class WorkspaceModel {
             actTitling: actTitleService,
             editorialReview: makeEditorialReview(model: gateway),
             discussionURL: LongformEditorialSupport.telegramURL(channelID: settings.telegramChannelId),
-            support: settings.essaySupport, modelManager: modelManager)
+            support: settings.essaySupport, modelManager: modelManager,
+            transcriptionModelCache: settings.workingDirectory?.appendingPathComponent("huggingface"),
+            audienceEditor: AudienceEditorialService(model: gateway))
     }
 
     var subtitleCorrectionFilmKey: String {
@@ -561,6 +573,7 @@ final class WorkspaceModel {
 
     func generatePackagingExperiments(modelManager: ModelManager) async throws {
         guard let result = longformResult, let projectID = currentProject?.id else { return }
+        await refreshChannelPerformance()
         let profile = modelManager.momentFinder.profile
         try await modelManager.requireDirector(profile: profile)
         let gateway = makeDirectorGateway(modelManager: modelManager)
@@ -589,6 +602,7 @@ final class WorkspaceModel {
             return act.title + ": " + act.dramaticBeat + "\n" + String(dialogue.prefix(650))
         }.joined(separator: "\n\n")
         var evidencePrompt = prompt + "\nСЦЕНИ ВЖЕ ГОТОВОГО ЕСЕ:\n" + evidence
+        if let feedback = ChannelPerformance.feedback(channelPerformance) { evidencePrompt += "\n" + feedback }
         if let measurements = PackagingExperiment.measurementContext(currentProject?.packagingExperiments ?? []) {
             evidencePrompt += "\nФАКТИЧНІ РУЧНІ ЗАМІРИ (не причинний експеримент):\n" + measurements
         }
@@ -811,6 +825,9 @@ final class WorkspaceModel {
         // перезапускается, и без этой записи longformResult терял основание.
         project.transcript = storedTranscript
         project.discoveredConcepts = thematicAnalysis?.allConcepts ?? project.discoveredConcepts
+        if let analysis = thematicAnalysis, analysis.source == .llm {
+            LongformHistoryService.shared.recordOffered(movieTitle: project.movieTitle, concepts: analysis.allConcepts)
+        }
         currentProject = project
         let savedSource = thematicAnalysis?.source.rawValue ?? "nil"
         Self.log("persistThemeState(\(reason)): theme '\(selectedConcept?.word ?? "—")' saved with analysis source=\(savedSource)")
@@ -1056,6 +1073,7 @@ final class WorkspaceModel {
                 }
                 // Новое редакторское решение требует нового рендера. Старый файл остаётся в Exports.
                 self.longformResult = nil
+                self.stagedArc = nil
                 self.thematicAnalysis = analysis
                 // АВТОНОМНЫЙ ВЫБОР: модель сама выбирает и предлагает ОДНУ главную тему
                 self.selectedConcept = analysis.primaryConcept
@@ -1140,11 +1158,26 @@ final class WorkspaceModel {
                 let titled = await LongformActTitleService(model: gateway).applyTitles(to: reviewed,
                     transcript: transcript, movieTitle: finalMovieTitle, progress: nil)
                 try Task.checkCancellation()
-                self.stagedArc = titled.arc
+                OperationJournal.shared.append("Редактор связывает название, первые 30 секунд и видимый аргумент эссе")
+                var prepared = titled.arc
+                prepared.audienceEditorialRequired = true
+                self.stagedArc = prepared
+                if var project = self.currentProject {
+                    project.pendingLongformArc = prepared
+                    try await filmProjectService.saveProject(project)
+                    try Task.checkCancellation()
+                    guard self.currentProject?.id == project.id else { throw CancellationError() }
+                    self.currentProject = project
+                }
+                let editorialArc = try await AudienceEditorialWorkflow.prepare(prepared, transcript: transcript,
+                    manager: modelManager, preferred: settings.copywriterModel.directorProfile,
+                    feedback: ChannelPerformance.feedback(channelPerformance))
+                try Task.checkCancellation()
+                self.stagedArc = editorialArc
                 self.phase = .editingLongformSubtitles
             } catch {
                 if Task.isCancelled { return }
-                self.phase = .selectingLongformConcept
+                self.phase = self.stagedArc?.audienceEditorialRequired == true ? .editingLongformSubtitles : .selectingLongformConcept
                 self.errorMessage = "Ошибка построения арки: \(error.localizedDescription)"
             }
         }
@@ -1564,6 +1597,7 @@ final class WorkspaceModel {
                 throw ThematicDiscoveryError.noGroundedTheme("анализ не подтверждён текущим транскриптом")
             }
             self.longformResult = nil
+            self.stagedArc = nil
             self.thematicAnalysis = freshAnalysis
             self.selectedConcept = freshAnalysis.primaryConcept
             Self.log("Director regenerated themes for '\(effectiveTitle)': \(freshAnalysis.primaryConcept.word) (source=\(freshAnalysis.source.rawValue))")

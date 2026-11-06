@@ -6,6 +6,22 @@ import AppKit
 @Suite("ThematicConcept & Analysis Result Tests")
 struct ThematicConceptTests {
 
+    @Test("Null placeholders cannot appear as recommended themes from legacy archives")
+    func nullIdentityIsNotATheme() {
+        for word in ["null", " NULL ", "nil", "undefined", "(null)", "<null>"] {
+            let bad = ThematicConcept(word: word, tagline: "Текст", philosophicalPremise: "Текст", suggestedTitle: "Текст", source: .llm)
+            let alternative = ThematicConcept(word: "БОРГ", tagline: "Текст", philosophicalPremise: "Текст", suggestedTitle: "Текст", source: .llm)
+            let result = ThematicAnalysisResult(primaryConcept: bad, aiReasoning: "Текст", alternativeConcepts: [alternative], source: .llm)
+            #expect(!bad.hasUsableIdentity)
+            #expect(result.allConcepts.isEmpty)
+        }
+        #expect(ThematicConcept.isUsableIdentity("БОРГ"))
+        let missingCopy = ThematicConcept(word: "БОРГ", tagline: "null", philosophicalPremise: "Текст", suggestedTitle: "Текст", source: .llm)
+        if case .rejected(_, let code) = DirectorArtifactGate.concept(missingCopy) {
+            #expect(code == .missingProse)
+        } else { Issue.record("A transport placeholder was accepted as viewer-facing copy") }
+    }
+
     @Test("Model theme spelling is checked before it can become a video title card")
     @MainActor
     func themeSpellingGate() {
@@ -278,8 +294,8 @@ struct ThematicConceptTests {
         #expect(decoded.chosenCTAVariant?.text == "Напиши, від чого ти досі не відпустив.")
         // Провенанс не выдумывается: вариант, созданный в коде, не «выбор ИИ».
         #expect(decoded.hookVariants.first?.source == .unknown)
-        // Старая просьба про 10 минут больше не цель: клампим в коридор 4:00–8:00.
-        #expect(decoded.effectiveTargetDuration == EssayDurationPolicy.rendered.upperBound)
+        // Сохранённая длительность 10 минут больше не сокращается до восьми.
+        #expect(decoded.effectiveTargetDuration == 600)
         #expect(decoded.focus(for: .form) == "ритм")
 
         // Подтверждение выбирает хук и сбрасывает хронометраж: его не спрашивают.

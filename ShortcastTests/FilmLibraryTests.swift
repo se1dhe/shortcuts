@@ -6,6 +6,29 @@ import AVFoundation
 
 @Suite("Film plan and torrent safety")
 struct FilmLibraryTests {
+    @MainActor @Test func onlyNewlyCompletedDownloadCanTriggerImport() throws {
+        let suite = "FilmLibraryCompletionTests." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let library = FilmLibrary(defaults: defaults)
+        let folder = URL(fileURLWithPath: "/tmp/shortcast-downloads")
+        func task(_ number: Int, _ state: String) -> FilmLibrary.Download {
+            FilmLibrary.Download(film: PlannedFilm(number: number, title: "Film \(number)", year: 1994, topic: "Topic"),
+                torrent: folder.appendingPathComponent("source.torrent"), folder: folder,
+                file: "film\(number).mkv", index: 1, bytes: 100, state: state)
+        }
+        library.downloads = [task(1, "Скачан"), task(2, "Приостановлено")]
+        let beforeStart = library.downloadStatuses
+        library.downloads[1].state = "Загрузка"
+        #expect(library.newlyCompletedDownload(previous: beforeStart) == nil)
+        let beforeCompletion = library.downloadStatuses
+        library.downloads[1].state = "Скачан"
+        #expect(library.newlyCompletedDownload(previous: beforeCompletion)?.film.number == 2)
+        #expect(library.newlyCompletedDownload(previous: library.downloadStatuses) == nil)
+        library.downloads.removeLast()
+        #expect(library.newlyCompletedDownload(previous: beforeCompletion) == nil)
+    }
+
     @Test func shippedPlanIncludesFiftyAndOriginalThree() throws {
         let url = try #require(Bundle.main.url(forResource: "essays_20_films", withExtension: "md"))
         let films = PlannedFilm.parse(try String(contentsOf: url, encoding: .utf8))

@@ -740,3 +740,66 @@ extension UkrainianTranscriptionLanguageTests {
         #expect(TranscriptionService.sidecarDecision(forSidecar: sidecar, requestedLanguage: "ru").isVerified)
     }
 }
+
+
+extension UkrainianTranscriptionLanguageTests {
+    @Test("Selected caption drift is repaired from audio without changing source or scene timing")
+    func focusedCaptionRepair() async throws {
+        let source = [
+            TranscriptSegment(start: 5969.58, end: 5972.04, text: "Для девчонок первый раз это очень важно."),
+            TranscriptSegment(start: 5972.84, end: 5975.28, text: "Це визначає все її сексуальне життя."),
+            TranscriptSegment(start: 7000, end: 7003, text: "Это было очень важно для меня.")
+        ]
+        let repaired = try await TranscriptionService.repairCaptionLanguage(segments: source,
+            ranges: [.init(start: 5960, end: 5980)]) { range in
+                #expect(range.start == source[0].start && range.end == source[0].end)
+                return [.init(start: range.start, end: range.end,
+                    text: "Для дівчат перший раз це дуже важливо.")]
+            }
+        #expect(repaired[0].text == "Для дівчат перший раз це дуже важливо.")
+        #expect(repaired[0].start == source[0].start && repaired[0].end == source[0].end)
+        #expect(repaired[1] == source[1] && repaired[2] == source[2])
+        #expect(source[0].text.contains("девчонок"))
+        let edits = LongformEditorialSupport.captionEdits(original: source, updated: repaired)
+        #expect(edits.count == 1)
+        try TranscriptionService.validateRenderedCaptions(
+            LongformEditorialSupport.captions(source, edits: edits), ranges: [.init(start: 5960, end: 5980)], requestedLanguage: "uk")
+    }
+
+    @Test("Failed or empty audio retries cannot clear the language gate", arguments: ["", "Для девчонок первый раз это очень важно."])
+    func failedCaptionRepair(text: String) async {
+        let source = [TranscriptSegment(start: 5969.58, end: 5972.04, text: "Для девчонок первый раз это очень важно.")]
+        await #expect(throws: TranscriptionError.self) {
+            try await TranscriptionService.repairCaptionLanguage(segments: source, ranges: [.init(start: 5960, end: 5980)]) { range in
+                [.init(start: range.start, end: range.end, text: text)]
+            }
+        }
+    }
+
+    @Test("Word timestamps exclude neighboring dialogue in an audio retry")
+    func repairKeepsOnlyWordsInCaption() async throws {
+        let source = [TranscriptSegment(start: 10, end: 13, text: "Для девчонок первый раз это очень важно.")]
+        let repaired = try await TranscriptionService.repairCaptionLanguage(segments: source, ranges: [.init(start: 9, end: 15)]) { _ in
+            [.init(start: 8, end: 15, text: "Попередня репліка. Для дівчат це важливо. Наступна репліка.", words: [
+                .init(word: "Попередня репліка.", start: 8, end: 9),
+                .init(word: " Для дівчат це важливо.", start: 10, end: 13),
+                .init(word: " Наступна репліка.", start: 14, end: 15)
+            ])]
+        }
+        #expect(repaired[0].text == "Для дівчат це важливо.")
+    }
+
+    @MainActor
+    @Test("Optional saved Leon audio retry uses Whisper, never text translation")
+    func savedLeonAudioRepair() async throws {
+        guard let path = ProcessInfo.processInfo.environment["SHORTCAST_LEON_AUDIO_REPAIR"] else { return }
+        let source = [TranscriptSegment(start: 5969.57958984375, end: 5972.0400390625,
+            text: "Для девчонок первый раз это очень важно.")]
+        let repaired = try await TranscriptionService().repairUkrainianCaptions(
+            sourceURL: URL(fileURLWithPath: path), segments: source, ranges: [.init(start: 5960, end: 5980)])
+        #expect(repaired.count == 1)
+        #expect(repaired[0].text != source[0].text)
+        print("Leon audio caption repair: " + repaired[0].text)
+        try JSONEncoder().encode(repaired).write(to: URL(fileURLWithPath: "/private/tmp/shortcast-leon-caption-asr.json"))
+    }
+}

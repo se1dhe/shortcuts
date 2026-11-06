@@ -22,22 +22,25 @@ export function classifyYouTubeStatus(snapshot) {
   const checking = /checks? (?:running|in progress)|checking|still checking|проверяется|перевіряється|проверка(?:\s+.*)?(?:выполняется|продолжается)|ид[её]т проверка|перевірка триває/i.test(checks);
   const footerChecksComplete = /checks complete|проверка завершена|проверки завершены|перевірки завершено|перевірка завершена/i.test(progress);
   const checksComplete = !checking && (footerChecksComplete ||
-    /checks complete|проверки завершены|проверка завершена|перевірки завершено|no issues found|проблем не (?:обнаружено|выявлено|найдено)|порушень не виявлено|проблем не виявлено/i.test(checks)
+    /checks complete|проверки завершены|проверка завершена|перевірки завершено|no issues found|(?:проблем|нарушений) не (?:обнаружено|выявлено|найдено)|порушень не виявлено|проблем не виявлено/i.test(checks)
   );
-  const copyrightClaim = /copyright.protected content (?:found|detected)|copyright claim(?:\s*:|$)|найден(?:ы)? (?:контент|материалы).*(?:авторск|защищ)|обнаружен.*авторск|на (?:этот )?контент заявлены права|на (?:який|который) заявлен[ыі] права|(?:виявлено|знайдено).*авторськ/i.test(checks);
+  const copyrightClaim = /copyright.protected content (?:found|detected)|copyright claims?\b|найден(?:ы)? (?:контент|материалы).*(?:авторск|защищ)|обнаружен.*авторск|на (?:этот )?контент заявлены права|на (?:який|который) заявлен[ыі] права|(?:виявлено|знайдено).*авторськ/i.test(checks);
   const blocked = /video (?:is )?blocked|blocked (?:worldwide|in)|видео заблокировано|(?:полная|частичная) блокировка|заблокировано (?:во|в)|відео заблоковано/i.test(checks);
   // A claim is not a strike. The user permits claims when Studio explicitly
   // confirms no video restriction. Unknown effects still need review.
   const strike = /(?:received|issued|applied|active) (?:a )?copyright strike|copyright strike (?:issued|received|active)|(?:вынесено|получено|вынесли|получили) (?:вам )?предупреждение|предупреждение за нарушение авторских прав/i.test(checks)
     && !/no copyright strike|not a copyright strike|не вынесли вам предупреждения|предупреждени[ея] (?:не вынесено|нет)/i.test(checks);
-  const claimDoesNotRestrict = /does(?:n't| not) affect (?:your|the) video|no (?:impact|restrictions?) on (?:your|the) video|не (?:повлияло|влияет) на (?:охват )?видео|заявка не повлияла на доступ к видео и его функции|не впливає на (?:ваше )?відео|заявка не вплинула на доступ до відео/i.test(checks);
+  const claimDoesNotRestrict = /does(?:n't| not| not currently) (?:affect|impact) (?:your|the|this) video|no (?:impact|restrictions?) on (?:your|the) video|не (?:повлияло|влияет|влияют) на (?:охват )?(?:(?:ваше|это) )?видео|заявка не повлияла на доступ к видео и его функции|не вплива(?:є|ють) на (?:(?:ваше|це) )?відео|заявка не вплинула на доступ до відео/i.test(checks);
   const monetizationOnly = /(?:only|solely) affects? (?:the |your )?(?:monetization|revenue)|(?:влияет|влияние) (?:только|лишь) на (?:монетизацию|доход)|впливає (?:лише|тільки) на (?:монетизацію|дохід)/i.test(checks);
-  const harmlessClaim = copyrightClaim && (claimDoesNotRestrict || monetizationOnly) && !blocked && !strike;
+  const noViolations = /no issues found|(?:нарушений|проблем) не (?:найдено|обнаружено|выявлено)|(?:порушень|проблем) не виявлено/i.test(checks);
+  const potentialRevenueImpact = /(?:may|could|can) (?:affect|impact) (?:your )?(?:monetization|revenue|earnings)|может (?:отразиться|сказаться) на (?:вашем )?доходе|может (?:повлиять|влиять) на (?:вашу )?(?:монетизацию|доход)|може (?:вплинути|впливати) на (?:ваш(?:у)? )?(?:монетизацію|дохід)/i.test(checks);
+  const communityIssue = /(?:community guidelines? violations? (?:found|detected)|(?:violates|violated) (?:the |our )?community guidelines|(?:обнаружены|найдены|выявлены) нарушения правил сообщества|виявлено порушення правил спільноти)/i.test(checks);
+  const harmlessClaim = copyrightClaim && (claimDoesNotRestrict || monetizationOnly || (noViolations && potentialRevenueImpact)) && !blocked && !strike && !communityIssue;
   const claimPolicy = blocked ? 'blocked' : strike ? 'strike' : harmlessClaim ? 'monetization-or-no-video-impact' : copyrightClaim ? 'unknown' : 'none';
-  const contentIssue = blocked || strike || (copyrightClaim && !harmlessClaim);
+  const contentIssue = blocked || strike || communityIssue || (copyrightClaim && !harmlessClaim);
   const processingPending = /processing.*(?:\d+\s*%|will begin|in progress)|(?:sd|hd) processing(?!.*complete)|обработка.*(?:\d+\s*%|начн|продолж)|обработка в (?:sd|hd)|начн[её]тся обработка|обробка.*(?:\d+\s*%|трива)|обробка у (?:sd|hd)|почнеться обробка/i.test(progress);
   return { progress, checks, uploadPending, uploadComplete: Boolean(uploadComplete), checksComplete,
-    processingPending, checking, contentIssue, copyrightClaim, harmlessClaim, claimPolicy, blocked, strike, error,
+    processingPending, checking, contentIssue, copyrightClaim, harmlessClaim, claimPolicy, blocked, strike, communityIssue, error,
     percentage: percentage ? Number(percentage[1]) : null };
 }
 
@@ -79,7 +82,7 @@ export function requireReadyToPublish(upload, checks, latestSnapshot) {
   // On Visibility the full claim explanation may be hidden and only its short
   // footer remains. Preserve the explicitly verified no-impact result, while
   // never overriding a new block, strike or error.
-  const unresolvedClaim = latest.contentIssue && !(checks?.harmlessClaim && latest.copyrightClaim && !latest.blocked && !latest.strike);
+  const unresolvedClaim = latest.contentIssue && !(checks?.harmlessClaim && latest.copyrightClaim && !latest.blocked && !latest.strike && !latest.communityIssue);
   if (!upload?.uploadComplete || !checks?.checksComplete || checks.processingPending || checks.contentIssue
       || latest.uploadPending || latest.processingPending || latest.checking || unresolvedClaim || latest.error) {
     throw new Error('YouTube ещё не подтвердил готовность файла и проверки контента. Публикация остановлена.');

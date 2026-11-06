@@ -19,6 +19,8 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
     private let discussionURL: String?
     private let support: EssaySupport?
     private let modelManager: ModelManager?
+    private let transcriptionModelCache: URL?
+    private let audienceEditor: AudienceEditorialService?
 
     init(
         director: any LongformNarrativeDirecting = LongformNarrativeDirector(),
@@ -31,7 +33,9 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         editorialReview: LongformEditorialReview = LongformEditorialReview(model: nil),
         discussionURL: String? = nil,
         support: EssaySupport? = nil,
-        modelManager: ModelManager? = nil
+        modelManager: ModelManager? = nil,
+        transcriptionModelCache: URL? = nil,
+        audienceEditor: AudienceEditorialService? = nil
     ) {
         self.director = director
         self.audioMastering = audioMastering
@@ -44,6 +48,8 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         self.discussionURL = discussionURL
         self.support = support
         self.modelManager = modelManager
+        self.transcriptionModelCache = transcriptionModelCache
+        self.audienceEditor = audienceEditor
     }
 
     func buildLongformVideo(
@@ -70,6 +76,10 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         // 1. Построение арки: аналитическая 5-актная или прежняя 4-актная
         var arc: LongformNarrativeArc
         if let existing = existingArc {
+            guard existing.concept.word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    == concept.word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+                throw EssayReleaseError.invalid("Сохранённый монтаж относится к другой теме. Откройте проверку сцен выбранной темы; прежний экспорт сохранён.")
+            }
             progressHandler?(0.10, "Использование утвержденного монтажа «\(concept.word)»...")
             arc = existing
         } else {
@@ -102,6 +112,30 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             arc = outcome.arc
         }
 
+        if let plan = arc.audienceEditorial {
+            do {
+                _ = try AudienceEditorialService.parse(String(decoding: JSONEncoder().encode(plan), as: UTF8.self), arc: arc, transcript: transcript)
+            } catch {
+                progressHandler?(0.18, "Обновление аргумента после изменения сцен...")
+                if let manager = modelManager {
+                    let profile = await manager.momentFinder.profile
+                    arc = try await AudienceEditorialWorkflow.prepare(arc, transcript: transcript, manager: manager, preferred: profile)
+                } else if let audienceEditor {
+                    arc = try await audienceEditor.apply(to: arc, transcript: transcript)
+                } else { throw error }
+            }
+        } else if existingArc == nil || arc.audienceEditorialRequired == true {
+            if let manager = modelManager {
+                progressHandler?(0.18, "Проверка обещания и первых 30 секунд...")
+                let profile = await manager.momentFinder.profile
+                arc = try await AudienceEditorialWorkflow.prepare(arc, transcript: transcript, manager: manager, preferred: profile)
+            } else if let audienceEditor {
+                progressHandler?(0.18, "Проверка обещания и первых 30 секунд...")
+                arc = try await audienceEditor.apply(to: arc, transcript: transcript)
+            } else if arc.audienceEditorialRequired == true {
+                throw EssayReleaseError.invalid("Сцены сохранены, но редактура обещания ещё не завершена. Загрузите Director и повторите сборку.")
+            }
+        }
         arc.viewerPromise = arc.viewerPromise ?? arc.thesis ?? concept.philosophicalPremise
         arc.discussionURL = discussionURL ?? arc.discussionURL
         arc.support = arc.support ?? support
@@ -140,6 +174,14 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         }
 
         let sourceAudioTrack = sourceAudioTracks.first
+        var openingFrameHold: OpeningFrameRecovery.Hold?
+        if arc.audienceEditorial != nil, let openingScene = segments.first {
+            progressHandler?(0.26, "Проверка первого видимого кадра хука...")
+            openingFrameHold = try await OpeningFrameRecovery.prepare(asset: sourceAsset, scene: openingScene)
+            if let hold = openingFrameHold {
+                DirectorRunLog.write("opening: leading blackout \(hold.duration)s covered with a real frame from the same selected scene; audio unchanged")
+            }
+        }
 
         // 2. Кинематографический Cold Open (нарастание саундтрека в затемнении)
         arc.editorialNotes = LongformEditorialSupport.refreshedNotes(for: arc, transcript: transcript)
@@ -152,12 +194,21 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         var cutTransitions: [LongformCutTransition] = []
         let interActGap = LongformTimeline.interActGap
         let intraActGap = LongformTimeline.intraActGap
-        let captionSegments = LongformEditorialSupport.captions(transcript.segments, edits: arc.captionEdits)
+        var captionSegments = LongformEditorialSupport.captions(transcript.segments, edits: arc.captionEdits)
         // An archive can predate language checks. Validate only the subtitles
         // actually selected for this Ukrainian essay, after approved edits.
         let captionLanguage = transcript.contentLanguage == "uk" || transcript.language == "uk" ? "uk" : transcript.language
-        try TranscriptionService.validateRenderedCaptions(captionSegments, ranges: arc.segments,
-            requestedLanguage: captionLanguage)
+        do {
+            try TranscriptionService.validateRenderedCaptions(captionSegments, ranges: arc.segments,
+                requestedLanguage: captionLanguage)
+        } catch TranscriptionError.languageDrift {
+            progressHandler?(0.26, "Повторное распознавание проблемных субтитров по звуку...")
+            await modelManager?.freeDirectorIfMemoryTight()
+            let service = await TranscriptionService()
+            captionSegments = try await service.repairUkrainianCaptions(sourceURL: sourceURL,
+                segments: captionSegments, ranges: arc.segments, modelCacheDir: transcriptionModelCache)
+            arc.captionEdits = LongformEditorialSupport.captionEdits(original: transcript.segments, updated: captionSegments)
+        }
 
 
         // Вставляем нарезанные сцены фильма по актам с кинематографическим разделением
@@ -358,8 +409,9 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         // Затемнения на ВСЕХ монтажных склейках, включая сцены внутри акта.
         // План ограничивает рампы концом видео и исключает их пересечения.
         let opacityRamps = LongformTransitionPlan.ramps(
-            intro: introPadding, speechEnd: speechFinishTime, cuts: cutTransitions)
-        layerInstruction.setOpacity(0, at: .zero)
+            intro: introPadding, speechEnd: speechFinishTime, cuts: cutTransitions,
+            immediateOpening: arc.audienceEditorial != nil)
+        layerInstruction.setOpacity(arc.audienceEditorial == nil ? 0 : 1, at: .zero)
         for ramp in opacityRamps {
             layerInstruction.setOpacityRamp(
                 fromStartOpacity: ramp.from, toEndOpacity: ramp.to,
@@ -386,7 +438,6 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             hookText: arc.hookText,
             ctaText: LongformEditorialSupport.finalCard(for: arc)
         )
-
         if let support = arc.support, support.showsCredits {
             progressHandler?(0.72, "Финальная карточка: благодарности \(support.nicknames.count) донатерам…")
             let finalText = LongformEditorialSupport.finalCard(for: arc)
@@ -417,6 +468,9 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
 
         outputParentLayer.addSublayer(blackBackgroundLayer)
         outputParentLayer.addSublayer(videoLayer)
+        if let hold = openingFrameHold {
+            outputParentLayer.addSublayer(OpeningFrameRecovery.layer(for: hold, size: renderSize, totalDuration: totalDuration))
+        }
 
         // Кинематографические матовые черные полосы леттербоксинга (Hardware Matte Letterbox Fix)
         // Физически перекрывают верх и низ кадра чистым матовым черным цветом (YUV 16,128,128)
@@ -465,6 +519,9 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
             postProcessingAsVideoLayer: videoLayer,
             in: outputParentLayer
         )
+        // The compositor also receives layers built on the export executor,
+        // which has no UI run loop to commit implicit Core Animation updates.
+        CATransaction.flush()
 
         // 5. Экспорт в файл (строго в папку Exports/<Название Фильма>/ рабочего каталога)
         progressHandler?(0.85, "Экспорт видео в 1080p...")
@@ -531,7 +588,7 @@ final class LongformPipelineCoordinator: LongformPipelineCoordinating, Sendable 
         let validationResult = await validationService.validateLongform(
             outputURL: finalVideoURL,
             expectedDurationRange: allowUserApprovedScenes ? 0.1...Double.greatestFiniteMagnitude
-                : EssayDurationPolicy.rendered.lowerBound...(EssayDurationPolicy.rendered.upperBound + timeline.supportExtraDuration),
+                : EssayDurationPolicy.rendered,
             workingDirectory: workingDirectory
         )
         if validationResult.hasIssues {

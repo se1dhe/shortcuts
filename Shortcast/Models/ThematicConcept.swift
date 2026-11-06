@@ -19,6 +19,15 @@ struct ThematicConcept: Codable, Identifiable, Equatable, Hashable, Sendable {
     /// Одно центральное слово крупными буквами: називний відмінок, іменник або
     /// інфінітив. Никакого списка допустимых слов: тему обязано найти модель.
     var word: String
+    /// Reserved transport placeholders cannot identify a film theme, including
+    /// in legacy archives that bypassed the current model-response parser.
+    var hasUsableIdentity: Bool {
+        Self.isUsableIdentity(word)
+    }
+    static func isUsableIdentity(_ word: String) -> Bool {
+        let value = word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return !value.isEmpty && !["null", "nil", "none", "undefined", "(null)", "<null>"].contains(value)
+    }
     /// User-edited spelling for publication; the original model identity stays
     /// intact for source fingerprints, semantic proof and cached scene plans.
     var publicationWord: String? = nil
@@ -140,8 +149,9 @@ struct ThematicAnalysisResult: Codable, Sendable, Equatable {
 
     /// Все концепты в едином списке, где главный выбор всегда идет первым
     var allConcepts: [ThematicConcept] {
+        guard primaryConcept.hasUsableIdentity else { return [] }
         var list = [primaryConcept]
-        for alt in alternativeConcepts where alt.word.caseInsensitiveCompare(primaryConcept.word) != .orderedSame {
+        for alt in alternativeConcepts where alt.hasUsableIdentity && alt.word.caseInsensitiveCompare(primaryConcept.word) != .orderedSame {
             list.append(alt)
         }
         return list
@@ -296,7 +306,7 @@ struct EssayPlan: Codable, Equatable, Sendable {
     var ctaVariants: [TextVariant]
     var selectedCTA: TextVariant?
     /// Legacy: до 2026-10-28 хронометраж запрашивался у пользователя. Теперь его
-    /// не выбирают: длина рождается из пула сцен внутри коридора 4:00–8:00. Поле
+    /// не выбирают: длина рождается из пула сцен без верхнего ограничения. Поле
     /// остаётся только чтобы честно прочесть старый проект и отклэмпить его.
     var targetDuration: Double?
     /// promptKey акта -> что именно доказывает акт в этом фильме

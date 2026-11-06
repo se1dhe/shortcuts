@@ -60,9 +60,9 @@ struct DropZoneView: View {
             if let directory = settings.workingDirectory { FilmTorrentBrowser(film: film, workingDirectory: directory) }
         }
         .sheet(isPresented: $showFilmPlan) { FilmPlanLibraryView(onChooseFile: onChooseFile) }
-        .onChange(of: library.downloads.map { $0.state }) { _, _ in
+        .onChange(of: library.downloadStatuses) { previous, _ in
             guard !workspace.isBusy, workspace.pendingAudioSelection == nil,
-                  let task = library.downloads.first(where: { $0.state == "Скачан" }),
+                  let task = library.newlyCompletedDownload(previous: previous),
                   FileManager.default.fileExists(atPath: task.sourceURL.path) else { return }
             plannedFilm = nil; showFilmPlan = false
             onChooseFile(task.sourceURL, VideoSourceMetadata(title: task.film.title))

@@ -553,6 +553,102 @@ struct EssaySelectionQualityTests {
         }
     }
 
+    @Test func catalogueRejectsASROverlapAcrossAFlush() {
+        let transcript = Transcript(segments: [
+            TranscriptSegment(start: 0, end: 25, text: "Герой ще обмірковує своє рішення"),
+            TranscriptSegment(start: 24, end: 50, text: "Його рішення змінює наслідки."),
+            TranscriptSegment(start: 51, end: 81, text: "Наслідки визначають подальший вибір героя.")
+        ], language: "uk")
+        let catalogue = EssaySceneCatalogue(transcript: transcript)
+        #expect(catalogue.scenes.count == 2)
+        #expect(catalogue.scenes[0].end <= catalogue.scenes[1].start)
+    }
+
+    @Test func evidenceAndArcAcceptMoreThanEightMinutes() async throws {
+        var (analysis, _) = fixture()
+        analysis.selectedMoments = analysis.selectedMoments.map { moment in
+            SelectedMoment(startTime: moment.startTime, endTime: moment.startTime + 40,
+                reason: moment.reason, dramaticWeight: moment.dramaticWeight,
+                actRole: moment.actRole, supports: moment.supports,
+                featured: moment.featured, evidenceQuote: moment.evidenceQuote)
+        }
+        let transcript = Transcript(segments: analysis.selectedMoments.map { moment in
+            TranscriptSegment(start: moment.startTime, end: moment.endTime,
+                text: moment.evidenceQuote! + ".")
+        }, language: "uk")
+        try EssaySceneEvidence.validate(analysis, transcript: transcript)
+        let arc = try await LongformNarrativeDirector().buildArc(from: transcript,
+            concept: analysis.primaryConcept, selectedMoments: analysis.selectedMoments,
+            movieTitle: "Test", essayPlan: analysis.essayPlan)
+        #expect(LongformTimeline(arc: arc).duration > 480)
+        #expect(arc.acts.flatMap(\.segments).count == analysis.selectedMoments.count)
+        try EssaySceneEvidence.validateArc(arc, selectedMoments: analysis.selectedMoments, coldOpenEnabled: true)
+    }
+
+    @Test func asymmetricDialogueHandlesNeverExceedFortySeconds() throws {
+        for duration in [38.0, 38.5, 38.89990234375, 39.5, 39.99, 40.0] {
+            for leadingGap in [0.1, 0.4, 1.0, 3.0] {
+                for trailingGap in [0.02, 0.080078125, 0.4, 1.0, 3.0] {
+                    let start = 4418.0400390625, end = start + duration
+                    let transcript = Transcript(segments: [
+                        .init(start: start - leadingGap - 30, end: start - leadingGap, text: "Герой приймає важливе рішення."),
+                        .init(start: start, end: end, text: "Вони приходили до мене додому. Це змінює його вибір."),
+                        .init(start: end + trailingGap, end: end + trailingGap + 2, text: "Наступна репліка."),
+                        .init(start: end + 12, end: end + 42, text: "Наслідки рішення змінюють подальший шлях героя.")
+                    ], language: "uk")
+                    let scenes = EssaySceneCatalogue(transcript: transcript).scenes
+                    let scene = try #require(scenes.first { $0.text.contains("Вони приходили") })
+                    #expect(EssayDurationPolicy.sceneLength.contains(scene.end - scene.start))
+                    #expect(scene.start <= start && scene.end >= end, "Padding must not cut the original speech")
+                    for (previous, next) in zip(scenes, scenes.dropFirst()) { #expect(previous.end <= next.start) }
+                }
+            }
+        }
+    }
+
+    @Test func savedScenePlansPassEvidenceWithoutRegeneration() throws {
+        guard let path = ProcessInfo.processInfo.environment["SHORTCAST_SCENE_EVIDENCE_PROJECT"],
+              let replies = ProcessInfo.processInfo.environment["SHORTCAST_SCENE_EVIDENCE_REPLIES"] else { return }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let project = try decoder.decode(FilmProject.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        let transcript = try #require(project.transcript)
+        let catalogue = EssaySceneCatalogue(transcript: transcript)
+        let digest = MomentFinderService.downsampleChronologically(catalogue.digest, to: 17_000).text
+        let presented = catalogue.presented(in: digest).denselyNumbered()
+        for path in replies.components(separatedBy: "|") {
+            let raw = try String(contentsOfFile: path, encoding: .utf8)
+            let analysis = try LongformThematicService.decodeCatalogueAnalysis(from: raw, catalogue: presented)
+            let seventh = try #require(analysis.selectedMoments.dropFirst(6).first)
+            print("Saved plan scene 7: start=\(seventh.startTime) end=\(seventh.endTime) duration=\(seventh.endTime - seventh.startTime)")
+            try EssaySceneEvidence.validate(analysis, transcript: transcript)
+        }
+    }
+
+    @Test func adjacentCatalogueHandlesPassEvidenceValidation() throws {
+        for gap in [0.2, 1.0, 2.0, 2.5, 3.0] {
+            var (analysis, _) = fixture()
+            let transcript = Transcript(segments: (0..<14).map { index in
+                let start = 10 + Double(index) * (30 + gap)
+                return TranscriptSegment(start: start, end: start + 30,
+                    text: "Моє рішення номер \(index) має ціну. Вибір визначає наслідки.")
+            }, language: "uk")
+            let catalogue = EssaySceneCatalogue(transcript: transcript)
+            #expect(catalogue.scenes.count == 14)
+            let rows: [[Any]] = catalogue.scenes.enumerated().map { index, scene in
+                [scene.id, analysis.selectedMoments[index].actRole!.promptKey,
+                 0.8, false, "Рішення героя змінює наслідки"]
+            }
+            analysis.selectedMoments = try catalogue.decodeMoments(from: rows)
+            try EssaySceneEvidence.validate(analysis, transcript: transcript)
+            for (index, scene) in catalogue.scenes.enumerated() {
+                #expect(scene.start <= transcript.segments[index].start)
+                #expect(scene.end >= transcript.segments[index].end)
+                if index > 0 { #expect(catalogue.scenes[index - 1].end <= scene.start) }
+            }
+        }
+    }
+
     @Test func compactCatalogueReplyUsesSourceInsteadOfModelTimecodes() throws {
         let (_, transcript) = fixture()
         let catalogue = EssaySceneCatalogue(transcript: transcript)

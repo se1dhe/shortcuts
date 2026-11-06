@@ -365,7 +365,7 @@ struct ActBalancingAndCreditsTests {
 
         let poolSeconds = moments.reduce(0.0) { $0 + ($1.endTime - $1.startTime) }
         let window = EssayDurationPolicy.renderedTarget(poolSeconds: poolSeconds)
-        #expect(window == EssayDurationPolicy.rendered.upperBound)
+        #expect(window == poolSeconds + EssayDurationPolicy.fixedPadding)
         let total = arc.acts.flatMap(\.segments).reduce(0.0) { $0 + $1.duration }
         #expect(total >= window * 0.85, "богатый пул собран на \(total) с при окне \(window) с")
         #expect(total <= window * 1.12)

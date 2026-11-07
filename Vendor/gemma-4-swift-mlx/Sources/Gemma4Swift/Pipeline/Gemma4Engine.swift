@@ -145,7 +145,7 @@ public final class Gemma4Engine: @unchecked Sendable {
         let temp = temperature
         let tokenCallback = onToken
 
-        return await container.perform { context in
+        return try await container.perform { context in
             if let mm = context.model as? Gemma4MultimodalLLMModel {
                 mm.pendingPixelValues = inPixels
                 if let inVideo {
@@ -159,7 +159,7 @@ public final class Gemma4Engine: @unchecked Sendable {
             }
 
             let params = GenerateParameters(maxTokens: maxTok, temperature: temp, topP: 0.95)
-            let cache = context.model.newCache(parameters: params)
+            let cache = try context.model.newCache(parameters: params)
 
             // Prefill the full multimodal prompt.
             let prefill = context.model(inputIds.reshaped(1, -1), cache: cache)

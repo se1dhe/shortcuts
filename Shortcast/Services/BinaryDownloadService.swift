@@ -52,6 +52,10 @@ enum BinaryDownloadService {
 
     /// Looks for a binary: first in `<workingDirectory>/bin`, then in PATH.
     static func resolveBinary(_ relativePath: String, workingDirectory: URL?) -> URL? {
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("bin").appendingPathComponent(relativePath),
+           FileManager.default.isExecutableFile(atPath: bundled.path) {
+            return bundled
+        }
         if let local = resolveInWorkingDirectory(relativePath, workingDirectory: workingDirectory) {
             return local
         }

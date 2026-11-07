@@ -327,13 +327,13 @@ struct LongformEditorialReview: Sendable {
             return "Верни строго: {\"edits\":[],\"notes\":[\"конкретное решение\"]}. Не добавляй title, hook и captionSuggestions."
         }
         let range = arc.acts[ai].segments[si]
-        let options = Self.options(for: range, transcript: transcript, anchor: LongformEditorialSupport.anchor(for: range, role: arc.acts[ai].type, in: arc))
+        let optionDescriptions = Self.options(for: range, transcript: transcript, anchor: LongformEditorialSupport.anchor(for: range, role: arc.acts[ai].type, in: arc))
             .map { "\($0.id) = \(String(format: "%.2f", $0.range.start))–\(String(format: "%.2f", $0.range.end))" }
             .joined(separator: "; ")
         let nearby = transcript.segments.filter { $0.end > range.start - 8 && $0.start < range.end + 8 }
             .map { "\(String(format: "%.2f", $0.start))–\(String(format: "%.2f", $0.end)): \($0.text)" }
             .joined(separator: "\n")
-        return "Проблема: \(issue)\nИСПРАВЬ ТОЛЬКО SCENE \(scene). Допустимые варианты именно этой сцены: \(options). Контекст реплик:\n\(nearby)\nОтклонённый ответ: \(String(json.prefix(1200)))"
+        return "Проблема: \(issue)\nИСПРАВЬ ТОЛЬКО SCENE \(scene). Допустимые варианты именно этой сцены: \(optionDescriptions). Контекст реплик:\n\(nearby)\nОтклонённый ответ: \(String(json.prefix(1200)))"
     }
 
     private static func repairInvalidOption(_ raw: String, issue: String, arc: LongformNarrativeArc,

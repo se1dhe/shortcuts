@@ -38,7 +38,9 @@ struct DirectorReply: Sendable {
         case .length: self.stopReason = "length"
         case .cancelled: self.stopReason = "cancelled"
         case .stop: self.stopReason = "stop"
+        case .steered: self.stopReason = "steered"
         case nil: self.stopReason = "unknown"
+        @unknown default: self.stopReason = "unknown"
         }
     }
 

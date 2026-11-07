@@ -31,6 +31,13 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      - name: Restore build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build
+          key: shortcast-release-arm64-xcode26-${{ github.run_id }}
+          restore-keys: shortcast-release-arm64-xcode26-
+
       - name: Build КАДР & СЕНС (Release, unsigned)
         run: |
           xcodebuild \
@@ -43,7 +50,14 @@ jobs:
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO \
-            clean build
+            build
+
+      - name: Save build cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: build
+          key: shortcast-release-arm64-xcode26-${{ github.run_id }}
 
       - name: Package .dmg
         run: |

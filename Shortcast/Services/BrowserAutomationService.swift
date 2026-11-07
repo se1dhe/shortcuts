@@ -14,6 +14,10 @@ final class BrowserAutomationService: BrowserPublishingProtocol, Sendable {
     // MARK: - Node & Script Resolution
 
     static func resolveNodeBinary() -> URL? {
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("bin/node"),
+           FileManager.default.isExecutableFile(atPath: bundled.path) {
+            return bundled
+        }
         let home = FileManager.default.homeDirectoryForCurrentUser
 
         // 1. Поиск в PATH окружения

@@ -40,6 +40,8 @@ jobs:
             -derivedDataPath build \
             -skipMacroValidation \
             -skipPackagePluginValidation \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO \
             clean build
 

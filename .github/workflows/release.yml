@@ -5,6 +5,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    branches: ["codex/macos-release-2026-11-07"]
   workflow_dispatch:
 
 permissions:
